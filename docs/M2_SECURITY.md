@@ -1,0 +1,220 @@
+# RagBait M2 — Security, Encryption & Privacy Specification
+
+## 1. Security Architecture & Threat Boundaries
+
+RagBait M2 introduces two sensitive operational boundaries:
+1. **Third-Party AI Credentials**: Protecting contributor API keys against exfiltration, misuse, unauthorized disclosure, and lateral database compromise.
+2. **Community Local Nodes**: Preventing unauthorized access, SSRF, prompt snooping, replay attacks, or arbitrary code execution across student-hosted compute.
+
+---
+
+## 2. Explicit Key Hierarchy & Envelope Encryption
+
+Plaintext API keys are **never** persisted to disk, stored in the database, logged, or returned across API boundaries after creation.
+
+```
++---------------------------------------------------------------------------------------------------------+
+|                                      ENVELOPE ENCRYPTION HIERARCHY                                      |
+|                                                                                                         |
+|  [Raw API Key] ─────────────────► AES-256-GCM Encrypt ──────────────────► [Ciphertext + Auth Tag]      |
+|                                         ▲                                                               |
+|                                         │                                                               |
+|                              [Ephemeral 256-bit DEK]                                                    |
+|                                         │                                                               |
+|                                         ▼                                                               |
+|  [Master KEK] ──────────────────► AES-256-GCM Wrap ────────────────────► [Encrypted DEK + Wrap Tag]    |
+|  (Production: KMS HSM)                  ▲                                                               |
+|  (Dev: HKDF-derived KEK)                │                                                               |
+|                                         │                                                               |
+|                              [Context-Bound AAD]                                                        |
+|                    ("owner_id:credential_id:provider:version")                                          |
++---------------------------------------------------------------------------------------------------------+
+```
+
+### 2.1 The Two-Tier Key Hierarchy
+1. **Data Encryption Key (DEK)**:
+   - A unique, cryptographically secure random 256-bit key (`os.urandom(32)`) generated per credential.
+   - Encrypts the raw API key using **AES-256-GCM** with a unique 96-bit (12-byte) initialization vector (nonce) and 128-bit authentication tag.
+2. **Key Encryption Key (KEK / Master Key)**:
+   - Dedicated master key held outside the database.
+   - **Production Mode**: Managed via Cloud KMS (Google Cloud KMS or AWS KMS) using an HSM-backed symmetric key (`AES-256`). The KMS handles DEK wrapping and unwrapping operations.
+   - **Local Development Mode**:
+     - Master key secret supplied via `VAULT_MASTER_KEY` environment variable (at least 32 characters).
+     - An authenticated 256-bit KEK is derived using **HKDF-SHA256** (`cryptography.hazmat.primitives.kdf.hkdf.HKDF`) with salt and application info `ragbait-m2-vault-kek-v1`.
+     - **Important**: HKDF is strictly a Key Derivation Function. The wrapping algorithm is **authenticated AES-256-GCM**, which encrypts the DEK with its own distinct 96-bit nonce and 128-bit authentication tag (`wrapped_dek`, `dek_nonce`, `dek_auth_tag`).
+
+### 2.2 Authenticated Additional Data (AAD) Context Binding
+To prevent ciphertext transplant attacks (where an attacker swaps ciphertexts between different rows or users):
+$$\text{AAD} = \text{"owner\_id:"} \parallel \text{owner\_id} \parallel \text{":cred\_id:"} \parallel \text{credential\_id} \parallel \text{":prov:"} \parallel \text{provider\_id} \parallel \text{":v:"} \parallel \text{key\_version}$$
+- This AAD string is fed into the AES-256-GCM cipher during both encryption and decryption.
+- If an encrypted secret is transplanted to another record or user, GCM tag verification fails immediately.
+
+### 2.3 Independent Keyed HMAC Fingerprint Pepper
+- To detect duplicate credentials without revealing the plaintext key or storing unsalted hashes:
+$$\text{Fingerprint} = \text{HMAC-SHA256}(\text{VAULT\_PEPPER\_SECRET}, \text{raw\_key})$$
+- `VAULT_PEPPER_SECRET` is completely separate from `VAULT_MASTER_KEY`.
+- Stored as `key_fingerprint` with a unique index `(provider_id, key_fingerprint)`.
+
+### 2.4 Backup Retention, Storage Realities & Cryptographic Key Destruction
+
+RagBait distinguishes carefully between storage lifecycle policies and cryptographic invalidation:
+
+1. **Active Revocation & Deletion**:
+   - Deleting a credential immediately purges the active record from PostgreSQL (`public.api_key_credentials` cascades to `private.api_key_secrets`).
+   - Flushes cached decrypted credentials and connection state from Redis and process memory. The credential can no longer be dispatched.
+2. **Backup & WAL Retention Lifecycle**:
+   - **Write-Ahead Log (WAL) Retention**: WAL archives for point-in-time recovery are retained for **7 days**.
+   - **Database Snapshot Retention**: Full database backups are retained on a **30-day lifecycle schedule**.
+   - **Snapshot Expiry vs Physical Overwrite**: After 30 days, backup snapshots reach their retention limit and are marked for deletion by cloud storage lifecycle rules. Physical block overwrite depends on the underlying cloud storage provider's garbage collection; RagBait does not falsely claim immediate physical disk zeroing.
+3. **Cryptographic Key Destruction (True Invalidation)**:
+   - Because ciphertexts and wrapped DEKs remain in 30-day backup snapshots, true forward secrecy is achieved cryptographically:
+     - **Master KEK Rotation**: When the master KEK is rotated, all active DEKs in `private.api_key_secrets` are rewrapped under `key_version = key_version + 1`.
+     - **Decommissioning Old KEK**: The old KEK is destroyed. Once the old KEK is gone, historical backups containing DEKs wrapped under that KEK become permanently and mathematically undecryptable, regardless of physical backup storage persistence.
+4. **Disaster Recovery**:
+   - **Compromise of Master KEK**:
+     1. Rotate KMS key or cycle `VAULT_MASTER_KEY`.
+     2. Immediately mark all credentials `revoked` in `public.api_key_metadata`.
+     3. Truncate `private.api_key_secrets`.
+     4. Notify contributors to generate fresh keys in their provider dashboards.
+   - **Loss of Master KEK**: Stored credentials become unrecoverable (no backdoors). Contributors re-enter keys; metadata is preserved.
+
+---
+
+## 3. Vault Access Isolation & Process Boundary
+
+A private PostgreSQL schema alone does not provide sufficient isolation if the application connection pool connects with broad permissions. RagBait enforces database role isolation:
+
+```
+[General FastAPI Handlers]                        [Isolated Gateway Credential Service]
+ (Users, Access, Presence, Admin)                  (Vault Encrypt / Decrypt Only)
+             │                                                         │
+             ▼                                                         ▼
+[Standard Connection Pool: app_pool]               [Restricted Connection Pool: vault_pool]
+ (Role: authenticated / ragbait_app)                (Role: ragbait_vault_service)
+             │                                                         │
+             ├──────────────────────────┐                              │
+             ▼                          ▼                              ▼
+    public.profiles           public.api_key_metadata        private.api_key_secrets
+    (SELECT, UPDATE name)     (RLS: owner_id = auth.uid())   (SELECT, INSERT, UPDATE, DELETE)
+             │                          │                              ▲
+             │                          │                              │
+             x NO ACCESS                x NO ACCESS                    │ (Exclusive Access)
+             └──────────────────────────┴──────────────────────────────┘
+```
+
+### 3.1 Dedicated Least-Privilege Database Role
+1. **`ragbait_vault_service` Database Role**:
+   - Granted `USAGE` on schema `private`.
+   - Granted `SELECT, INSERT, UPDATE, DELETE` on `private.api_key_secrets`.
+   - Has zero privileges to modify database schema or inspect auth tables.
+2. **Standard Application Role (`authenticated` / `ragbait_app`)**:
+   - `REVOKE ALL ON SCHEMA private FROM authenticated, anon, PUBLIC;`
+   - Has **NO USAGE** on schema `private` and **NO ACCESS** to `private.api_key_secrets`.
+   - If an ordinary API handler or route has an injection vulnerability, it cannot read the vault.
+3. **Dedicated Restricted Connection Pool (`vault_pool`)**:
+   - FastAPI maintains a separate, minimal connection pool (size 1–3 connections) authenticated as `ragbait_vault_service`.
+   - This pool is invoked **only** within `apps/api/app/modules/credentials/vault.py` during encryption/decryption routines.
+
+### 3.2 Honest Process-Level Security Boundary & Hardening Recommendation
+> [!WARNING]
+> **Process-Level Security Boundary**: Because FastAPI runs in a monolithic process space, the Python runtime memory holds both connection credentials and pools (`app_pool` and `vault_pool`). An application-level Remote Code Execution (RCE) or arbitrary memory-read vulnerability in any endpoint could theoretically read the `ragbait_vault_service` connection credentials or inspect in-memory plaintext keys.
+> 
+> **Internal Encapsulation**:
+> - The `vault_pool` is strictly private to `apps/api/app/modules/credentials/vault.py`.
+> - It is **never** exported, shared, or imported by general route handlers or middleware.
+> - Plaintext keys are cleared from local Python variables immediately after use.
+> 
+> **Future Deployment Hardening Recommendation**:
+> - In higher-threat environments, vault operations should be extracted into a dedicated, isolated microservice or local sidecar process communicating over a restricted Unix domain socket with mutual authentication. For the initial 30–100 college student deployment, maintaining the dedicated database role and strictly encapsulated internal pool prevents SQL-level privilege escalation without premature microservice complexity.
+
+---
+
+## 4. Node Agent Authentication via Ed25519 Asymmetric Cryptography
+
+Symmetric HMAC hashes cannot be verified if the server does not store the raw secret. RagBait implements **Ed25519 asymmetric public-key authentication** for all student inference nodes:
+
+```mermaid
+sequenceDiagram
+    participant Agent as RagBait Node Agent (Student PC)
+    participant WorkerA as FastAPI Worker A (WSS Handler)
+    participant Redis as Redis (Challenge Cache)
+    participant DB as PostgreSQL (inference_nodes)
+
+    Note over Agent: Node generates Ed25519 Keypair<br/>(Private key never leaves student PC)
+    Agent->>DB: One-Time Registration: POST /me/nodes (Stores ed25519_public_key)
+
+    Agent->>WorkerA: WSS Handshake Initiation (Headers: X-Node-ID)
+    WorkerA->>WorkerA: Generate 32-byte crypto random server_nonce
+    WorkerA->>Redis: SETEX ragbait:node:challenge:{node_id} 60 <server_nonce>
+    WorkerA-->>Agent: 101 Switching Protocols + CHALLENGE {server_nonce, session_context}
+
+    Note over Agent: Sign b"ragbait-node-auth-v1:" + node_id + ":" + server_nonce + ":" + timestamp
+    Agent->>Agent: signature = Ed25519_Sign(private_key, payload)
+    Agent->>WorkerA: RESPONSE {signature, timestamp}
+
+    WorkerA->>Redis: GETDEL ragbait:node:challenge:{node_id} (Replay Protection)
+    WorkerA->>DB: Fetch ed25519_public_key for node_id (Check is_revoked = false)
+    WorkerA->>WorkerA: Ed25519_Verify(public_key, signature, payload)
+    alt Signature Valid & Not Revoked
+        WorkerA->>WorkerA: Mint short-lived session token (15m JWT, role: node_session)
+        WorkerA-->>Agent: AUTH_OK {session_token, expires_at: 1771427700}
+        WorkerA->>Redis: Mark Node Online
+    else Signature Invalid or Expired
+        WorkerA-->>Agent: AUTH_FAILED {code: "INVALID_SIGNATURE"}
+        WorkerA->>WorkerA: Terminate WSS Connection (Close 1008)
+    end
+```
+
+### 4.1 Handshake Steps & Cryptographic Invariants
+1. **Client-Side Key Generation**:
+   - The Node Agent generates an Ed25519 keypair (`cryptography.hazmat.primitives.asymmetric.ed25519.Ed25519PrivateKey.generate()`).
+   - The private key is saved locally in the student's protected configuration directory with strict filesystem permissions (`0600`).
+   - The private key is **never transmitted over the network and never stored on the server**.
+2. **One-Time Registration**:
+   - Contributor registers the node via authenticated endpoint `POST /api/v1/me/nodes` supplying `node_name`, `device_specs`, and the base64-encoded `ed25519_public_key`.
+   - The server stores the public key in `public.inference_nodes.ed25519_public_key`.
+3. **Challenge Nonce & Replay Prevention**:
+   - Server generates a 32-byte cryptographically secure hex nonce `server_nonce`.
+   - Nonce is cached in Redis with a **60-second TTL** under key `ragbait:node:challenge:{node_id}`.
+   - Nonce is consumed atomically via Redis `GETDEL`. Even if intercepted, a signature cannot be replayed.
+4. **Context-Bound Signature**:
+   - The agent signs:
+     $$\text{payload} = \text{"ragbait-node-auth-v1:"} \parallel \text{node\_id} \parallel \text{":"} \parallel \text{server\_nonce} \parallel \text{":"} \parallel \text{timestamp}$$
+   - Verified on the server using `public_key.verify(signature, payload)`.
+5. **Key Rotation & Immediate Revocation**:
+   - Contributor can rotate keys via `PUT /api/v1/me/nodes/{id}/key`.
+   - Node can be immediately revoked via `PATCH /api/v1/me/nodes/{id}` (`is_revoked = true`), instantly severing active WebSocket sessions and blocking subsequent handshakes.
+
+### 4.2 Server-Signed Job Authorization Tokens
+When the gateway dispatches a job to a node, the frame includes a short-lived **server-signed job authorization token** (`job_token`):
+- **Issuer**: `"ragbait-gateway"`.
+- **Target Node**: `node_id`.
+- **Job ID**: `job_id`.
+- **Allowed Operation**: `"inference"`.
+- **Payload Digest**: $\text{SHA-256}(\text{canonical\_json}(\text{messages}, \text{parameters}))$.
+- **Expiration**: Ephemeral timestamp (e.g. 60 seconds from dispatch).
+- The Node Agent independently verifies the gateway's signature and payload digest before initiating local inference, ensuring only legitimate platform dispatches consume student GPU/CPU.
+
+---
+
+## 5. Dual-Consent Community Inference Privacy Model
+
+```
+                  ┌──────────────────────────────────────────────────┐
+                  │ Does Contributor Allow Sharing for this Model?   │
+                  └─────────────────────────┬────────────────────────┘
+                                            │ YES
+                                            ▼
+                  ┌──────────────────────────────────────────────────┐
+                  │ Does Requester Consent to Community Inference?   │
+                  └─────────────────────────┬────────────────────────┘
+                                            │ YES
+                                            ▼
+                  ┌──────────────────────────────────────────────────┐
+                  │ Eligible for Local Community Node Execution      │
+                  └──────────────────────────────────────────────────┘
+```
+
+1. **Contributor Consent**: Node owner explicitly enables community sharing per model (`inference_node_models.is_shared = true`).
+2. **Requester Consent**: Requester toggles `allow_community_nodes = true` in their AI Preferences.
+3. **Revocation**: Contributor or requester can toggle off consent at any time; routing adapts within milliseconds via Redis cache invalidation.
