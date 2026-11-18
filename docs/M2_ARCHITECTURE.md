@@ -273,7 +273,14 @@ flowchart TD
    - Configurable daily/monthly request limits and optional daily/monthly spending caps per credential.
    - Owner-facing Next.js management interface (`/credentials`) with secret input masking, immediate in-memory wipe, live validation probes, and deletion confirmation dialog explaining cryptographic purge.
 4. **M2.4 — Admission Control, Multi-Tier Rate Limiting & Usage Ledger**:
-   - Redis Lua scripts for 4-tier rate limits, common 5-RPM / 1-concurrency baseline safety envelope, provider-account quota scopes, atomic reservations, and transactional usage recording (`public.api_key_usage`) established **before** shared dispatch.
+   - Multi-tier sliding window rate limiting via atomic Redis Lua scripts (`reserve_rate_slots`, `release_rate_slots`) across user, credential, provider, and model scopes with microsecond precision and burst headroom.
+   - Distributed concurrency lease management (`acquire_concurrency_lease`, `renew_concurrency_lease`, `release_concurrency_lease`) via atomic Redis `ZSET` leases (user cap: 2, credential cap: 1, 30s TTL with heartbeat renewal).
+   - Transactional PostgreSQL budget and request accounting (`SELECT ... FOR UPDATE` on `public.llm_usage_budget_counters`) preventing overselling across concurrent workers.
+   - Durable attempt persistence in `public.llm_usage_reservations` with `(user_id, idempotency_key)` uniqueness.
+   - Append-only immutable audit trail in `public.llm_usage_events` protected by trigger `tr_llm_usage_events_immutable` raising error `42501` on mutation or deletion.
+   - Fail-closed error handling and automatic rollback compensation across Redis and PostgreSQL.
+   - Provider cooldown tracking with `Retry-After` delta-seconds and HTTP-date parsing.
+   - Read-only contributor usage summary endpoint `GET /api/v1/me/usage` and Next.js dashboard at `/credentials/usage`.
 5. **M2.5 — Core Free/Low-Cost Cloud Adapters**:
    - Normalized streaming and non-streaming adapters for Google Gemini, GroqCloud, OpenRouter, and Cerebras.
 6. **M2.6 — Optional Paid Provider Adapters**:

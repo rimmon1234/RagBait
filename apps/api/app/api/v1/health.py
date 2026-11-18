@@ -13,6 +13,7 @@ class HealthResponse(BaseModel):
     status: str
     database: bool
     redis: bool
+    admission_ready: bool
 
 
 @router.get("/live", response_model=dict[str, str])
@@ -35,4 +36,5 @@ async def readiness(response: Response) -> HealthResponse:
         status="ready" if is_healthy else "degraded",
         database=db_ok,
         redis=redis_ok,
+        admission_ready=is_healthy,
     )

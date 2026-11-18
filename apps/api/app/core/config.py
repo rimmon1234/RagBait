@@ -61,6 +61,17 @@ class Settings(BaseSettings):
     HEARTBEAT_INTERVAL_SECONDS: int = 60
     ACTIVE_THRESHOLD_SECONDS: int = 120
 
+    # Admission Control & Gateway Safeguards (M2.4)
+    LLM_USER_RPM: int = 10
+    LLM_USER_MAX_CONCURRENT: int = 2
+    LLM_CREDENTIAL_RPM: int = 5
+    LLM_CREDENTIAL_MAX_CONCURRENT: int = 1
+    LLM_RATE_WINDOW_SECONDS: int = 60
+    LLM_RATE_BURST: int = 1
+    LLM_RESERVATION_LEASE_SECONDS: int = 120
+    LLM_RESERVATION_HEARTBEAT_SECONDS: int = 30
+    LLM_MAX_RESERVATION_LIFETIME_SECONDS: int = 1800
+
     # Credential Vault & Encryption (M2.2)
     VAULT_DATABASE_URL: str = Field(
         default="postgresql://ragbait_vault_user:vault_service_secret_pass@127.0.0.1:54322/postgres",
@@ -100,7 +111,29 @@ class Settings(BaseSettings):
         if self.VAULT_MASTER_KEY == self.VAULT_PEPPER_SECRET:
             raise ValueError("VAULT_MASTER_KEY and VAULT_PEPPER_SECRET must be distinct secrets")
 
-        # 2. Strict checks for staging and production environments
+        # 2. Admission control numeric constraints
+        if self.LLM_USER_RPM <= 0:
+            raise ValueError("LLM_USER_RPM must be a positive integer")
+        if self.LLM_USER_MAX_CONCURRENT <= 0:
+            raise ValueError("LLM_USER_MAX_CONCURRENT must be a positive integer")
+        if self.LLM_CREDENTIAL_RPM <= 0:
+            raise ValueError("LLM_CREDENTIAL_RPM must be a positive integer")
+        if self.LLM_CREDENTIAL_MAX_CONCURRENT <= 0:
+            raise ValueError("LLM_CREDENTIAL_MAX_CONCURRENT must be a positive integer")
+        if self.LLM_RATE_WINDOW_SECONDS <= 0:
+            raise ValueError("LLM_RATE_WINDOW_SECONDS must be a positive integer")
+        if self.LLM_RATE_BURST < 0:
+            raise ValueError("LLM_RATE_BURST cannot be negative")
+        if self.LLM_RESERVATION_LEASE_SECONDS <= 0:
+            raise ValueError("LLM_RESERVATION_LEASE_SECONDS must be a positive integer")
+        if self.LLM_RESERVATION_HEARTBEAT_SECONDS <= 0:
+            raise ValueError("LLM_RESERVATION_HEARTBEAT_SECONDS must be a positive integer")
+        if self.LLM_MAX_RESERVATION_LIFETIME_SECONDS <= self.LLM_RESERVATION_LEASE_SECONDS:
+            raise ValueError(
+                "LLM_MAX_RESERVATION_LIFETIME_SECONDS must exceed LLM_RESERVATION_LEASE_SECONDS"
+            )
+
+        # 3. Strict checks for staging and production environments
         if self.ENVIRONMENT in ("staging", "production"):
             if self.VAULT_MASTER_KEY.startswith("dev-") or "dev-master" in self.VAULT_MASTER_KEY:
                 raise ValueError(

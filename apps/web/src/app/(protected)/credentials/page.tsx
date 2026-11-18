@@ -1,7 +1,9 @@
 "use client";
 
+import Link from "next/link";
 import { useEffect, useState } from "react";
 import {
+  Activity,
   AlertCircle,
   AlertTriangle,
   CheckCircle2,
@@ -360,6 +362,13 @@ export default function CredentialsPage() {
           </p>
         </div>
         <div className="flex items-center gap-3">
+          <Link
+            href="/credentials/usage"
+            className="inline-flex items-center gap-1.5 rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm font-medium text-gray-700 shadow-sm hover:bg-gray-50"
+          >
+            <Activity className="h-4 w-4 text-blue-600" />
+            Usage Ledger
+          </Link>
           <button
             onClick={loadData}
             disabled={loading}

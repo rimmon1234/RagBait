@@ -530,3 +530,147 @@ Upon validating the gateway's `job_token` and checking local idempotency, the No
     ]
   }
   ```
+
+---
+
+## 7. Contributor Usage Ledger & Admission Contracts (M2.4)
+
+### 7.1 Contributor Personal Usage & Quota Ledger
+- **Route**: `GET /api/v1/me/usage`
+- **Rate Limit**: 60 requests / minute
+- **Authorization**: `require_approved_user`
+- **Response** (`200 OK`):
+  ```json
+  {
+    "total_dispatched_requests": 42,
+    "total_settled_requests": 40,
+    "total_input_tokens": 154200,
+    "total_output_tokens": 82100,
+    "total_actual_cost_cents": 128,
+    "total_reserved_cost_cents": 140,
+    "daily_request_usage": 15,
+    "daily_request_limit": 500,
+    "monthly_request_usage": 120,
+    "monthly_request_limit": 15000,
+    "daily_spending_cents": 35,
+    "daily_spending_budget_cents": 250,
+    "monthly_spending_cents": 128,
+    "monthly_spending_budget_cents": 2500,
+    "unknown_outcome_count": 0,
+    "recent_reservations": [
+      {
+        "id": "9b1deb4d-3b7d-4bad-9bdd-2b0d7b3dcb6d",
+        "provider_id": "groq",
+        "model_id": "openai/gpt-oss-120b",
+        "credential_id": "7a3e9c4b-3d2f-41e8-a5b8-d4c3b2a10987",
+        "status": "settled",
+        "estimated_input_tokens": 500,
+        "estimated_output_tokens": 1000,
+        "actual_input_tokens": 480,
+        "actual_output_tokens": 620,
+        "estimated_cost_cents": 5,
+        "actual_cost_cents": 3,
+        "currency": "USD",
+        "created_at": "2026-02-04T12:00:00Z",
+        "dispatched_at": "2026-02-04T12:00:01Z",
+        "settled_at": "2026-02-04T12:00:03Z"
+      }
+    ]
+  }
+  ```
+
+### 7.2 Internal Admission Pipeline Contracts
+Admission is orchestrated strictly within backend services before external upstream API calls. Plaintext credentials and prompt contents are strictly forbidden from entering these interfaces.
+
+#### Step 1: Pre-Dispatch Admission Reservation
+```python
+async def reserve_generation(req: AdmissionRequest) -> AdmissionReservation: ...
+```
+- **Prerequisites**: Validates credential status (`active`), credential validation (`valid`), model availability (`active`), and community sharing consent if cross-owner.
+- **Ceiling Cost Estimation**: `math.ceil((in_tokens * in_cost + out_tokens * out_cost) / 1_000_000)`.
+- **Cooldown Verification**: Verifies no active cooldown exists on provider, model, or credential.
+- **Step A (Rate Reservation)**: Atomic sliding-window rate slot check and reservation across all applicable scopes via Redis Lua (`reserve_rate_slots`).
+- **Step B (Concurrency Reservation)**: Atomic distributed concurrency lease reservation (user cap: 2, credential cap: 1) via Redis Lua (`acquire_concurrency_lease`).
+- **Step C (Transactional Budget Locking)**: PostgreSQL `SELECT FOR UPDATE` on `llm_usage_budget_counters` to evaluate daily/monthly request caps and spending limits, persisting durable `llm_usage_reservations` and immutable `llm_usage_events` records.
+- **Fail-Closed Compensation**: If Step B or C fails, previously acquired Redis rate slots or concurrency leases are immediately rolled back.
+
+#### Step 2: Dispatch Commitment
+```python
+async def mark_dispatched(reservation_id: UUID) -> None: ...
+```
+- Transitions reservation status from `reserved` to `dispatched` in PostgreSQL and emits a `dispatched` event immediately prior to opening upstream socket connections.
+
+#### Step 3: Concurrency Heartbeat Extension
+```python
+async def renew_reservation_lease(user_id: UUID, credential_id: UUID, reservation_id: UUID, lease_token: str) -> LeaseRenewalResult: ...
+```
+- Extends the TTL of active concurrency leases during long-running streaming generations (up to `LLM_MAX_RESERVATION_LIFETIME_SECONDS = 300s`).
+
+#### Step 4: Final Settlement
+```python
+async def settle_reservation(reservation_id: UUID, req: SettlementRequest, model_id: str | None = None) -> SettlementResult: ...
+```
+- Calculates final cost based on actual tokens, updates transactional budget counters, transitions reservation to `settled`, releases the Redis concurrency lease, and emits an immutable `settled` audit event.
+
+#### Step 5: Cancellation / Pre-Dispatch Release
+```python
+async def release_reservation(reservation_id: UUID, reason: str = "cancelled") -> None: ...
+```
+- Rolls back reserved budget from PostgreSQL counters, transitions reservation to `released`, releases the Redis concurrency lease, and emits an immutable `released` audit event.
+
+#### Step 6: Ambiguous Network Partition / Outcome Unknown
+```python
+async def mark_outcome_unknown(reservation_id: UUID, provider_status_code: int | None = None, error_message: str | None = None) -> None: ...
+```
+- When upstream network drops after dispatch commitment, marks reservation as `outcome_unknown`, frees Redis concurrency to prevent deadlocks, but **conservatively retains** reserved spending budget until administrator or reconciliation intervention.
+
+### 7.3 Admission Error Responses
+
+#### Rate Limit Exceeded (`429 Too Many Requests`)
+```json
+{
+  "code": "RATE_LIMIT_EXCEEDED",
+  "message": "Admission rejected: Rate limit exceeded on credential (limit: 15 RPM)",
+  "details": {
+    "category": "rate_limit_credential",
+    "retry_after": 14,
+    "scope": "credential",
+    "limit": 15
+  }
+}
+```
+
+#### Concurrency Limit Exceeded (`429 Too Many Requests`)
+```json
+{
+  "code": "CONCURRENCY_LIMIT_EXCEEDED",
+  "message": "Admission rejected: Maximum simultaneous operations reached (1)",
+  "details": {
+    "scope": "credential",
+    "current_limit": 1
+  }
+}
+```
+
+#### Budget or Request Limit Exhausted (`429 Too Many Requests`)
+```json
+{
+  "code": "BUDGET_EXHAUSTED",
+  "message": "Admission rejected: Daily request limit reached (100)",
+  "details": {
+    "scope": "daily_requests",
+    "limit": 100,
+    "current_usage": 100
+  }
+}
+```
+
+#### Infrastructure Fail-Closed (`503 Service Unavailable`)
+```json
+{
+  "code": "SERVICE_UNAVAILABLE",
+  "message": "Admission coordination service temporarily unavailable",
+  "details": null
+}
+```
+

@@ -188,3 +188,47 @@ export interface ValidationResult {
   diagnostic_message: string;
   probed_at: string;
 }
+
+export interface ReservationView {
+  id: string;
+  request_id: string;
+  provider_id: string;
+  model_id: string;
+  status:
+    | "reserved"
+    | "dispatched"
+    | "settled"
+    | "released"
+    | "outcome_unknown"
+    | "reconciliation_required"
+    | "expired";
+  estimated_input_tokens: number;
+  estimated_output_tokens: number;
+  estimated_cost_cents: number;
+  actual_input_tokens?: number | null;
+  actual_output_tokens?: number | null;
+  actual_cost_cents?: number | null;
+  currency: string;
+  created_at: string;
+  dispatched_at?: string | null;
+  settled_at?: string | null;
+}
+
+export interface UsageSummaryResponse {
+  total_dispatched_requests: number;
+  total_settled_requests: number;
+  total_input_tokens: number;
+  total_output_tokens: number;
+  total_actual_cost_cents: number;
+  total_reserved_cost_cents: number;
+  daily_request_usage: number;
+  daily_request_limit: number;
+  monthly_request_usage: number;
+  monthly_request_limit: number;
+  daily_spending_cents: number;
+  daily_spending_budget_cents?: number | null;
+  monthly_spending_cents: number;
+  monthly_spending_budget_cents?: number | null;
+  unknown_outcome_count: number;
+  recent_reservations: ReservationView[];
+}

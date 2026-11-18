@@ -249,3 +249,30 @@ When the gateway dispatches a job to a node, the frame includes a short-lived **
 1. **Contributor Consent**: Node owner explicitly enables community sharing per model (`inference_node_models.is_shared = true`).
 2. **Requester Consent**: Requester toggles `allow_community_nodes = true` in their AI Preferences.
 3. **Revocation**: Contributor or requester can toggle off consent at any time; routing adapts within milliseconds via Redis cache invalidation.
+
+---
+
+## 6. Admission Control, Rate Limiting & Usage Ledger Security (M2.4)
+
+### 6.1 Fail-Closed Policy
+Admission control strictly adheres to a **fail-closed** security posture:
+- **Redis Outage**: If Redis becomes unreachable, `reserve_rate_slots` and `acquire_concurrency_lease` raise HTTP 503 (`SERVICE_UNAVAILABLE`). No requests are admitted unmetered.
+- **PostgreSQL Outage**: If the database pool is exhausted or unreachable, budget locking fails immediately and acquired Redis rate slots and concurrency leases are rolled back.
+- **Missing Pricing Metadata**: If a non-free model has zero or missing pricing, admission is rejected with HTTP 422 to prevent unmetered spending against contributor budgets.
+
+### 6.2 Data Minimization & Secret Isolation
+The admission and accounting subsystems are strictly decoupled from credential decryption and prompt generation:
+- Tables `public.llm_usage_reservations`, `public.llm_usage_events`, and `public.llm_usage_budget_counters` contain **no** credential secrets, API keys, decrypted payloads, user prompts, system instructions, or completion texts.
+- Only technical accounting metadata is stored: UUID references, model identifiers, token quantities, integer cost cents, duration milliseconds, and provider HTTP status codes.
+- The dedicated vault database role (`ragbait_vault_service`) is explicitly denied permissions on the usage ledger tables, preserving defense-in-depth isolation.
+
+### 6.3 Immutable Audit Logging
+Historical usage accounting is safeguarded against manipulation:
+- Table `public.llm_usage_events` is append-only.
+- The PostgreSQL trigger `tr_llm_usage_events_immutable` intercepts any direct `UPDATE` or `DELETE` statements and raises SQLSTATE `42501` (`insufficient_privilege`), ensuring audit durability even in the event of administrative error.
+
+### 6.4 Concurrency Isolation & Race Protection
+- **Distributed Concurrency Leases**: Redis `ZSET` leases guarantee hard bounds on simultaneous operations (user cap: 2, credential cap: 1) with atomic Lua evaluation. Dead worker leases expire automatically after 30 seconds unless renewed by a live heartbeat.
+- **Pessimistic Row Locking**: All budget and request limit checks execute inside database transactions holding row-level `SELECT ... FOR UPDATE` locks on `public.llm_usage_budget_counters`. This prevents race conditions, overselling, and budget overdrafts across horizontally scaled API replicas.
+- **Two-Phase Compensation**: In the event of a database transaction failure or cancellation prior to dispatch, acquired Redis rate slots and concurrency leases are automatically released via atomic Lua compensation scripts.
+
