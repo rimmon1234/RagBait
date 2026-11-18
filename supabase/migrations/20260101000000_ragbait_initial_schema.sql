@@ -61,15 +61,13 @@ SET search_path = ''
 AS $$
 DECLARE
   caller_role text;
-  jwt_role text;
 BEGIN
   IF (OLD.role IS DISTINCT FROM NEW.role OR OLD.approval_status IS DISTINCT FROM NEW.approval_status) THEN
-    caller_role := pg_catalog.current_user;
-    jwt_role := pg_catalog.coalesce(pg_catalog.current_setting('request.jwt.claim.role', true), '');
+    SELECT current_user INTO caller_role;
 
-    -- Only postgres superuser or service_role is allowed to alter role and approval_status
-    IF (caller_role NOT IN ('postgres', 'supabase_admin', 'service_role') AND jwt_role != 'service_role') THEN
-      RAISE EXCEPTION 'Unauthorized: Caller (user=%, jwt_role=%) cannot modify role or approval_status', caller_role, jwt_role
+    -- Only postgres superuser, supabase_admin, or service_role is allowed to alter role and approval_status
+    IF (caller_role NOT IN ('postgres', 'supabase_admin', 'service_role')) THEN
+      RAISE EXCEPTION 'Unauthorized: Caller (user=%) cannot modify role or approval_status', caller_role
         USING ERRCODE = '42501'; -- insufficient_privilege
     END IF;
   END IF;
@@ -185,7 +183,7 @@ AS $$
 DECLARE
   extracted_name text;
 BEGIN
-  extracted_name := pg_catalog.coalesce(
+  extracted_name := coalesce(
     NEW.raw_user_meta_data->>'full_name',
     NEW.raw_user_meta_data->>'name',
     pg_catalog.split_part(NEW.email, '@', 1)

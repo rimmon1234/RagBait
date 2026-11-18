@@ -84,11 +84,18 @@ flowchart TD
 
 ## 3. Future Extension Points
 
-- **M2 (Provider Credential Management & LLM Gateway)**:
-  - Encryption-at-rest in a dedicated private PostgreSQL schema (`vault` or `credentials`).
-  - Provider adapters (Gemini, OpenAI, OpenRouter) with unified quota and spending metrics.
-- **M3 & M4 (Document Repository & Subject-Scoped RAG)**:
-  - Shared knowledge base with document-level ownership.
-  - Chunking, metadata preservation, and `pgvector` indexing.
-- **M5 (AI Study Assistant & Exam Generator)**:
-  - Streaming responses, multi-turn chat persistence, citation verification.
+- **M2 (Secure API Credential Management & Shared LLM Gateway)**:
+  - Envelope encryption at rest in a dedicated private PostgreSQL schema (`vault`).
+  - Provider adapters (Gemini, OpenAI, OpenRouter) with unified spending tracking and failover routing.
+  - Contributor key validation and spending quota enforcement.
+- **M3 (Collaborative Subject-Wise Knowledge Base & Document Ingestion)**:
+  - Subject hierarchy with collaborative access permissions.
+  - Strict upload validation (MIME, magic bytes, 25MB, 500 pages).
+  - Secure document storage, download signing, and text/table parsing.
+- **M4 (RAG Engine & Vector Retrieval)**:
+  - Document chunking, token tracking, and embedding generation via `pgvector`.
+  - Hybrid vector + keyword search scoped by subject with page-level citations.
+- **M5 (AI Study Assistant)**:
+  - Streaming conversational study assistant, citation verification, and practice exam generation.
+- **M6 (Production Hardening & Deployment)**:
+  - Multi-region deployment, connection pooling, tracing with OpenTelemetry, and compliance auditing.

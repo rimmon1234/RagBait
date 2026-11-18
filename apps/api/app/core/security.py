@@ -5,6 +5,7 @@ from typing import Any
 from uuid import UUID
 
 import jwt
+from jwt import PyJWKClient
 from jwt.exceptions import ExpiredSignatureError, InvalidTokenError
 from pydantic import BaseModel
 from supabase import Client, create_client
@@ -13,6 +14,17 @@ from app.core.config import settings
 from app.core.errors import AuthenticationError
 
 logger = logging.getLogger("ragbait.security")
+
+_jwks_client: PyJWKClient | None = None
+
+
+def get_jwks_client() -> PyJWKClient:
+    """Return cached JWKS client for verifying asymmetric tokens."""
+    global _jwks_client
+    if _jwks_client is None:
+        jwks_url = f"{settings.SUPABASE_URL.rstrip('/')}/auth/v1/.well-known/jwks.json"
+        _jwks_client = PyJWKClient(jwks_url, cache_jwk_set=True, lifespan=3600)
+    return _jwks_client
 
 
 class AuthenticatedUser(BaseModel):
@@ -29,7 +41,7 @@ def verify_supabase_jwt(token: str) -> AuthenticatedUser:
     """Validate cryptographic signature and mandatory claims of a Supabase JWT.
 
     Enforces:
-    - Signature check using SUPABASE_JWT_SECRET.
+    - Signature check using JWKS (for ES256/RS256) or SUPABASE_JWT_SECRET (for HS256).
     - aud == 'authenticated'.
     - role == 'authenticated' (rejects unexpected database roles).
     - Valid non-expired timestamp.
@@ -40,9 +52,15 @@ def verify_supabase_jwt(token: str) -> AuthenticatedUser:
         unverified_header = jwt.get_unverified_header(token)
         alg = unverified_header.get("alg", "HS256")
 
+        if alg in ("ES256", "RS256"):
+            signing_key = get_jwks_client().get_signing_key_from_jwt(token)
+            key: Any = signing_key.key
+        else:
+            key = settings.SUPABASE_JWT_SECRET
+
         payload: dict[str, Any] = jwt.decode(
             token,
-            settings.SUPABASE_JWT_SECRET,
+            key,
             algorithms=[alg],
             audience="authenticated",
             options={

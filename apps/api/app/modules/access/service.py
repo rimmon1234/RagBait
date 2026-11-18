@@ -31,14 +31,9 @@ async def resolve_effective_access_state(
        - approved + user -> "contribution_required"
        - pending -> "pending"
     """
+    # Authoritative check: strictly verify email_confirmed_at via Supabase Auth
+    # Never rely on client-supplied claims or default email_verified JWT attributes
     is_confirmed, _ = await fetch_authoritative_auth_user(token, user_id)
-
-    # In local test/dev environments without external auth server connectivity,
-    # fallback to inspecting the verified token claims if confirmed
-    if not is_confirmed and claims.get("email_confirmed_at"):
-        is_confirmed = True
-    elif not is_confirmed and claims.get("user_metadata", {}).get("email_verified") is True:
-        is_confirmed = True
 
     if not is_confirmed:
         return AccessStateResponse(

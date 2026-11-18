@@ -23,7 +23,7 @@ router = APIRouter(prefix="/me", tags=["Identity"])
 
 @router.get("", response_model=UserProfile, dependencies=[Depends(rate_limit_general)])
 async def get_my_profile(
-    profile: UserProfile = Depends(get_current_profile),
+    profile: UserProfile = Depends(require_not_suspended),
 ) -> UserProfile:
     """Return the profile of the currently authenticated user."""
     return profile
