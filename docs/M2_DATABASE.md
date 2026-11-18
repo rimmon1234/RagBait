@@ -142,11 +142,13 @@ Stores encrypted payload material. Completely isolated from public schemas and r
 CREATE SCHEMA IF NOT EXISTS private;
 REVOKE ALL ON SCHEMA private FROM PUBLIC, anon, authenticated;
 
--- Dedicated least-privilege role for the credential vault
+-- Dedicated least-privilege capability role for the credential vault (NOLOGIN)
 DO $$
 BEGIN
   IF NOT EXISTS (SELECT FROM pg_catalog.pg_roles WHERE rolname = 'ragbait_vault_service') THEN
-    CREATE ROLE ragbait_vault_service WITH LOGIN;
+    CREATE ROLE ragbait_vault_service WITH NOLOGIN NOBYPASSRLS;
+  ELSE
+    ALTER ROLE ragbait_vault_service WITH NOLOGIN NOBYPASSRLS;
   END IF;
 END $$;
 
@@ -155,10 +157,13 @@ GRANT USAGE ON SCHEMA private TO ragbait_vault_service;
 CREATE TABLE private.api_key_secrets (
   id uuid PRIMARY KEY REFERENCES public.api_key_metadata(id) ON DELETE CASCADE,
   encrypted_dek bytea NOT NULL, -- Ephemeral DEK wrapped with Master KEK via AES-256-GCM
+  dek_nonce bytea NOT NULL,     -- 96-bit AES-GCM IV for wrapped DEK
   dek_auth_tag bytea NOT NULL,  -- 16-byte authentication tag for wrapped DEK
   ciphertext bytea NOT NULL,    -- AES-256-GCM ciphertext of raw key + 16-byte auth tag
   nonce bytea NOT NULL,         -- 96-bit AES-GCM IV for raw key
-  key_version integer NOT NULL DEFAULT 1,
+  data_encryption_version integer NOT NULL DEFAULT 1,
+  kek_version integer NOT NULL DEFAULT 1,
+  wrapping_context_version integer NOT NULL DEFAULT 1,
   created_at timestamptz NOT NULL DEFAULT now(),
   updated_at timestamptz NOT NULL DEFAULT now()
 );

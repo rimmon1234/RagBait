@@ -44,15 +44,21 @@ Plaintext API keys are **never** persisted to disk, stored in the database, logg
      - **Important**: HKDF is strictly a Key Derivation Function. The wrapping algorithm is **authenticated AES-256-GCM**, which encrypts the DEK with its own distinct 96-bit nonce and 128-bit authentication tag (`wrapped_dek`, `dek_nonce`, `dek_auth_tag`).
 
 ### 2.2 Authenticated Additional Data (AAD) Context Binding
-To prevent ciphertext transplant attacks (where an attacker swaps ciphertexts between different rows or users):
-$$\text{AAD} = \text{"owner\_id:"} \parallel \text{owner\_id} \parallel \text{":cred\_id:"} \parallel \text{credential\_id} \parallel \text{":prov:"} \parallel \text{provider\_id} \parallel \text{":v:"} \parallel \text{key\_version}$$
-- This AAD string is fed into the AES-256-GCM cipher during both encryption and decryption.
-- If an encrypted secret is transplanted to another record or user, GCM tag verification fails immediately.
+To prevent ciphertext transplant attacks (where an attacker swaps ciphertexts across records, providers, or users), RagBait separates context binding into distinct authenticated additional data strings:
+
+1. **Payload AAD (Bound to Payload AES-256-GCM)**:
+   $$\text{Payload AAD} = \text{"payload:owner:"} \parallel \text{owner\_id} \parallel \text{":cred:"} \parallel \text{credential\_id} \parallel \text{":prov:"} \parallel \text{provider\_id} \parallel \text{":v:"} \parallel \text{data\_encryption\_version}$$
+   - Binds payload ciphertext directly to the owner, credential, provider, and payload encryption algorithm version.
+
+2. **Wrapping AAD (Bound to DEK Key Wrapping AES-256-GCM)**:
+   $$\text{Wrapping AAD} = \text{"wrap:owner:"} \parallel \text{owner\_id} \parallel \text{":cred:"} \parallel \text{credential\_id} \parallel \text{":prov:"} \parallel \text{provider\_id} \parallel \text{":kek\_v:"} \parallel \text{kek\_version} \parallel \text{":ctx\_v:"} \parallel \text{wrapping\_context\_version}$$
+   - Binds the wrapped DEK to the credential metadata, master KEK version, and wrapping context version.
+   - **Crucial Security Invariant**: When rotating master KEKs via `rewrap_credential_dek`, **only the DEK is rewrapped** using the new KEK and new Wrapping AAD. The underlying payload ciphertext and nonce are never decrypted or re-encrypted during KEK rotation.
 
 ### 2.3 Independent Keyed HMAC Fingerprint Pepper
 - To detect duplicate credentials without revealing the plaintext key or storing unsalted hashes:
 $$\text{Fingerprint} = \text{HMAC-SHA256}(\text{VAULT\_PEPPER\_SECRET}, \text{raw\_key})$$
-- `VAULT_PEPPER_SECRET` is completely separate from `VAULT_MASTER_KEY`.
+- `VAULT_PEPPER_SECRET` is completely separate from `VAULT_MASTER_KEY` and validated to be at least 32 decoded bytes.
 - Stored as `key_fingerprint` with a unique index `(provider_id, key_fingerprint)`.
 
 ### 2.4 Backup Retention, Storage Realities & Cryptographic Key Destruction
@@ -68,7 +74,7 @@ RagBait distinguishes carefully between storage lifecycle policies and cryptogra
    - **Snapshot Expiry vs Physical Overwrite**: After 30 days, backup snapshots reach their retention limit and are marked for deletion by cloud storage lifecycle rules. Physical block overwrite depends on the underlying cloud storage provider's garbage collection; RagBait does not falsely claim immediate physical disk zeroing.
 3. **Cryptographic Key Destruction (True Invalidation)**:
    - Because ciphertexts and wrapped DEKs remain in 30-day backup snapshots, true forward secrecy is achieved cryptographically:
-     - **Master KEK Rotation**: When the master KEK is rotated, all active DEKs in `private.api_key_secrets` are rewrapped under `key_version = key_version + 1`.
+     - **Master KEK Rotation**: When the master KEK is rotated, all active DEKs in `private.api_key_secrets` are rewrapped under `kek_version = kek_version + 1`.
      - **Decommissioning Old KEK**: The old KEK is destroyed. Once the old KEK is gone, historical backups containing DEKs wrapped under that KEK become permanently and mathematically undecryptable, regardless of physical backup storage persistence.
 4. **Disaster Recovery**:
    - **Compromise of Master KEK**:
@@ -90,7 +96,7 @@ A private PostgreSQL schema alone does not provide sufficient isolation if the a
              │                                                         │
              ▼                                                         ▼
 [Standard Connection Pool: app_pool]               [Restricted Connection Pool: vault_pool]
- (Role: authenticated / ragbait_app)                (Role: ragbait_vault_service)
+ (Role: authenticated / ragbait_app)                (User: ragbait_vault_user -> Role: ragbait_vault_service)
              │                                                         │
              ├──────────────────────────┐                              │
              ▼                          ▼                              ▼
@@ -103,16 +109,21 @@ A private PostgreSQL schema alone does not provide sufficient isolation if the a
 ```
 
 ### 3.1 Dedicated Least-Privilege Database Role
-1. **`ragbait_vault_service` Database Role**:
+1. **`ragbait_vault_service` Capability Role (`NOLOGIN`, `NOBYPASSRLS`)**:
+   - Defined in database migrations as a pure permission-holding capability role. Never has a login password.
    - Granted `USAGE` on schema `private`.
    - Granted `SELECT, INSERT, UPDATE, DELETE` on `private.api_key_secrets`.
-   - Has zero privileges to modify database schema or inspect auth tables.
-2. **Standard Application Role (`authenticated` / `ragbait_app`)**:
+   - Has zero privileges to modify database schema, read `public.profiles`, or inspect audit logs.
+2. **Provisioned Vault Login User (`ragbait_vault_user`)**:
+   - Provisioned out-of-band via `scripts/provision_vault_user.py` (for production/staging) or `supabase/roles.sql` (for local development).
+   - Granted membership in `ragbait_vault_service`, inheriting vault permissions while maintaining `NOBYPASSRLS`.
+   - Database passwords are generated uniquely per environment and kept in cloud secret managers; never committed to source code or migrations.
+3. **Standard Application Role (`authenticated` / `ragbait_app`)**:
    - `REVOKE ALL ON SCHEMA private FROM authenticated, anon, PUBLIC;`
    - Has **NO USAGE** on schema `private` and **NO ACCESS** to `private.api_key_secrets`.
    - If an ordinary API handler or route has an injection vulnerability, it cannot read the vault.
-3. **Dedicated Restricted Connection Pool (`vault_pool`)**:
-   - FastAPI maintains a separate, minimal connection pool (size 1–3 connections) authenticated as `ragbait_vault_service`.
+4. **Dedicated Restricted Connection Pool (`vault_pool`)**:
+   - FastAPI maintains a separate, minimal connection pool (size 1–3 connections) authenticated as `ragbait_vault_user`.
    - This pool is invoked **only** within `apps/api/app/modules/credentials/vault.py` during encryption/decryption routines.
 
 ### 3.2 Honest Process-Level Security Boundary & Hardening Recommendation

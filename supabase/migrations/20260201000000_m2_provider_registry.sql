@@ -275,8 +275,12 @@ ON CONFLICT (provider_id, scope_id, model_id, limit_type) DO UPDATE SET
   provenance = EXCLUDED.provenance;
 
 -- ------------------------------------------------------------------------------
--- 6. Audit Logs Foreign Key Integrity (Preserve Immutable Audit History)
+-- 6. Foreign Key Integrity (Preserve Immutable History & Safe Reviewer Deletion)
 -- ------------------------------------------------------------------------------
 ALTER TABLE public.audit_logs
   DROP CONSTRAINT IF EXISTS audit_logs_actor_id_fkey,
   ADD CONSTRAINT audit_logs_actor_id_fkey FOREIGN KEY (actor_id) REFERENCES public.profiles(id) ON DELETE SET NULL;
+
+ALTER TABLE public.access_requests
+  DROP CONSTRAINT IF EXISTS access_requests_reviewed_by_fkey,
+  ADD CONSTRAINT access_requests_reviewed_by_fkey FOREIGN KEY (reviewed_by) REFERENCES public.profiles(id) ON DELETE SET NULL;
