@@ -138,6 +138,26 @@ A private PostgreSQL schema alone does not provide sufficient isolation if the a
 > **Future Deployment Hardening Recommendation**:
 > - In higher-threat environments, vault operations should be extracted into a dedicated, isolated microservice or local sidecar process communicating over a restricted Unix domain socket with mutual authentication. For the initial 30–100 college student deployment, maintaining the dedicated database role and strictly encapsulated internal pool prevents SQL-level privilege escalation without premature microservice complexity.
 
+### 3.3 Credential Ownership & Cross-Owner Isolation (M2.3 Invariants)
+1. **Authenticated Principal Derivation**:
+   - The owner identifier is derived strictly and exclusively from the cryptographically verified JWT subject (`current_user.id`).
+   - Request payloads cannot supply or override `owner_id`.
+2. **Cross-Owner Isolation**:
+   - Every lookup (`GET`, `PATCH`, `POST /validate`, `POST /enable`, `POST /disable`, `DELETE`) includes `AND owner_id = :owner_id`.
+   - Access attempts to credentials owned by other users or non-existent IDs return an identical HTTP `404 Not Found`, giving zero information about whether a credential exists.
+   - Platform administrators and super administrators cannot query, validate, enable, disable, or decrypt other contributors' API keys through management endpoints.
+3. **Non-Generative Validation Probes**:
+   - Probes against provider APIs strictly target metadata, account status, or model listing endpoints (0 inference tokens consumed).
+   - Generative endpoints (`/chat/completions`, `/generateContent`) are strictly prohibited during validation to avoid unexpected token charges or quota consumption.
+   - Network timeouts (8 seconds) and strict redirect following disabling prevent SSRF during validation probes.
+4. **Community Sharing Eligibility & Consent**:
+   - Community pooling requires explicit contributor opt-in (`shared_consent = true`).
+   - Provider-level sharing eligibility is checked against `public.llm_providers.allows_community_sharing`. Ineligible providers (e.g. Gemini with terms restrictions, paid accounts with variable billing) are blocked from community pooling.
+5. **Secret Sanitization & Masking**:
+   - Raw keys are stripped of whitespace and masked upon input (preserving prefix and trailing 4 characters, e.g. `gsk_...7890`).
+   - Raw keys are never serialized in API responses or logged in `public.audit_logs`.
+   - Frontend state clears the raw API key immediately following submission.
+
 ---
 
 ## 4. Node Agent Authentication via Ed25519 Asymmetric Cryptography

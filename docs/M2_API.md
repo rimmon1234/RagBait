@@ -15,6 +15,8 @@ The WebSocket endpoint for Node Agents (`WSS /api/v1/nodes/stream`) uses **Ed255
 
 ## 2. API Key Credential Management
 
+All credential endpoints derive ownership strictly from the authenticated principal (`current_user.id`). Attempts to query or mutate another user's credential return a uniform HTTP `404 Not Found` without distinction.
+
 ### 2.1 Submit New Credential
 - **Route**: `POST /api/v1/me/api-keys`
 - **Rate Limit**: 5 requests / minute
@@ -22,31 +24,27 @@ The WebSocket endpoint for Node Agents (`WSS /api/v1/nodes/stream`) uses **Ed255
   ```json
   {
     "provider_id": "groq",
-    "raw_key": "gsk_exampleSecretKey1234567890",
     "nickname": "StudyGroup Free Groq",
+    "api_key": "gsk_exampleSecretKey1234567890",
+    "account_scope_id": "org_groq_university_lab",
     "sharing_scope": "community_shared",
     "shared_consent": true,
-    "account_scope_id": "org_groq_university_lab",
     "daily_request_limit": 500,
     "monthly_request_limit": 15000,
-    "daily_spending_limit_cents": null
+    "daily_spending_limit_cents": null,
+    "monthly_spending_limit_cents": null
   }
   ```
 - **Validation Rules**:
   - `provider_id`: Must exist in `public.llm_providers` and be marked `is_enabled = true`.
-  - **OpenAI Multi-Stage Credential Validation**:
-    1. *Format Check*: Must match regex `^sk-proj-[A-Za-z0-9_-]{48,}$`.
-       - Keys prefixed with `org-...` are rejected with `400 INVALID_CREDENTIAL_FORMAT` (an organization identifier is metadata, not an API credential).
-       - Legacy personal keys `^sk-[A-Za-z0-9]{32,}$` are rejected with `422 SHARING_POLICY_VIOLATION`.
-    2. *Provider-Side Verification Probe*: Non-mutating `GET https://api.openai.com/v1/models` using candidate key.
-    3. *Project/Org Eligibility Verification*: Inspect response headers `openai-organization` and `openai-project` to verify the key is an authorized project-scoped service account.
-    4. *Personal Key Prohibition*: Personal key pooling is permanently disabled. Supported strictly through administrator-managed project-scoped service accounts.
-  - **Groq Credential Validation**:
-    - Must match regex: `^gsk_[A-Za-z0-9]{48,}$`.
+  - `api_key`: Must not be empty. Stripped of whitespace before encryption.
   - **Duplicate Prevention**:
-    - Generates a keyed SHA-256 HMAC fingerprint (`key_fingerprint`) using `VAULT_PEPPER_SECRET`.
-    - If `(provider_id, key_fingerprint)` already exists in `public.api_key_credentials`, returns `409 DUPLICATE_CREDENTIAL`.
-  - `sharing_scope = 'community_shared'` requires `shared_consent = true`.
+    - Computes keyed HMAC-SHA256 fingerprint (`key_fingerprint`) using `VAULT_PEPPER_SECRET`.
+    - If `(provider_id, key_fingerprint)` already exists in `public.api_key_metadata`, returns `409 Conflict`.
+  - **Community Sharing Eligibility**:
+    - `sharing_scope = 'community_shared'` requires `public.llm_providers.allows_community_sharing = true` (eligible: Groq, OpenRouter, Cerebras).
+    - Requires `shared_consent = true`. Missing consent returns `422 Unprocessable Entity`.
+    - Providers without community sharing approval (Gemini, OpenAI, xAI) return `409 Conflict`.
 - **Response** (`201 Created`):
   ```json
   {
@@ -54,18 +52,24 @@ The WebSocket endpoint for Node Agents (`WSS /api/v1/nodes/stream`) uses **Ed255
     "provider_id": "groq",
     "nickname": "StudyGroup Free Groq",
     "masked_key": "gsk_...7890",
-    "status": "active",
+    "status": "disabled",
     "sharing_scope": "community_shared",
     "shared_consent": true,
+    "sharing_consent_timestamp": "2026-02-01T12:00:00Z",
+    "consent_version": "v1",
+    "validation_status": "unvalidated",
+    "last_validated_at": null,
+    "validation_error_code": null,
+    "account_scope_id": "org_groq_university_lab",
     "daily_request_limit": 500,
     "monthly_request_limit": 15000,
-    "created_at": "2026-02-01T12:00:00Z"
+    "daily_spending_limit_cents": null,
+    "monthly_spending_limit_cents": null,
+    "created_at": "2026-02-01T12:00:00Z",
+    "updated_at": "2026-02-01T12:00:00Z"
   }
   ```
-- **Error Codes**:
-  - `400 INVALID_CREDENTIAL_FORMAT`: Key format does not match provider specifications or is an org identifier.
-  - `409 DUPLICATE_CREDENTIAL`: Key has already been registered for this provider.
-  - `422 SHARING_POLICY_VIOLATION`: Provider terms forbid pooling personal keys for this provider.
+- **Security Invariant**: Credentials always start in `status: "disabled"` and `validation_status: "unvalidated"`. Plaintext keys are never serialized or logged.
 
 ### 2.2 List Own Credentials
 - **Route**: `GET /api/v1/me/api-keys`
@@ -73,57 +77,96 @@ The WebSocket endpoint for Node Agents (`WSS /api/v1/nodes/stream`) uses **Ed255
 - **Response** (`200 OK`):
   ```json
   {
-    "items": [
+    "credentials": [
       {
         "id": "7a3e9c4b-3d2f-41e8-a5b8-d4c3b2a10987",
         "provider_id": "groq",
         "nickname": "StudyGroup Free Groq",
         "masked_key": "gsk_...7890",
-        "status": "active",
+        "status": "disabled",
         "sharing_scope": "community_shared",
         "shared_consent": true,
+        "sharing_consent_timestamp": "2026-02-01T12:00:00Z",
+        "consent_version": "v1",
+        "validation_status": "unvalidated",
+        "last_validated_at": null,
+        "validation_error_code": null,
+        "account_scope_id": "org_groq_university_lab",
         "daily_request_limit": 500,
         "monthly_request_limit": 15000,
-        "today_usage": {
-          "requests": 42,
-          "total_tokens": 18450
-        },
-        "created_at": "2026-02-01T12:00:00Z"
+        "daily_spending_limit_cents": null,
+        "monthly_spending_limit_cents": null,
+        "created_at": "2026-02-01T12:00:00Z",
+        "updated_at": "2026-02-01T12:00:00Z"
       }
     ],
     "total": 1
   }
   ```
 
-### 2.3 Modify Credential Settings
+### 2.3 Get Specific Credential Details
+- **Route**: `GET /api/v1/me/api-keys/{id}`
+- **Rate Limit**: 60 requests / minute
+- **Response** (`200 OK`): Returns single `CredentialResponse` matching the authenticated owner. Returns `404 Not Found` if nonexistent or owned by another user.
+
+### 2.4 Modify Credential Settings
 - **Route**: `PATCH /api/v1/me/api-keys/{id}`
+- **Rate Limit**: 20 requests / minute
 - **Request Body**:
   ```json
   {
     "nickname": "Updated Nickname",
+    "account_scope_id": "org-revised",
     "sharing_scope": "owner_only",
     "shared_consent": false,
-    "daily_request_limit": 200
+    "daily_request_limit": 200,
+    "monthly_request_limit": 5000,
+    "daily_spending_limit_cents": 100,
+    "monthly_spending_limit_cents": 2500
   }
   ```
-- **Response** (`200 OK`): Updated metadata record.
+- **Response** (`200 OK`): Updated `CredentialResponse`.
 
-### 2.4 Test Credential
-- **Route**: `POST /api/v1/me/api-keys/{id}/test`
+### 2.5 Run Non-Generative Validation Probe
+- **Route**: `POST /api/v1/me/api-keys/{id}/validate`
 - **Rate Limit**: 5 requests / minute
-- **Behavior**: Executes an isolated, non-mutating capability probe (e.g. `GET /v1/models` or lightweight single-token ping) against the provider using decrypted credentials via `ragbait_vault_service`.
+- **Behavior**: Decrypts the secret in memory via the dedicated vault session and fires a lightweight, non-generative metadata/model probe (consuming 0 inference tokens):
+  - **Gemini**: `GET https://generativelanguage.googleapis.com/v1beta/models`
+  - **Groq**: `GET https://api.groq.com/openai/v1/models`
+  - **OpenRouter**: `GET https://openrouter.ai/api/v1/auth/key`
+  - **Cerebras**: `GET https://api.cerebras.ai/v1/models`
+  - **OpenAI**: `GET https://api.openai.com/v1/models`
+  - **xAI**: `GET https://api.x.ai/v1/models`
 - **Response** (`200 OK`):
   ```json
   {
-    "status": "ok",
-    "latency_ms": 142,
-    "models_discovered": ["openai/gpt-oss-120b", "openai/gpt-oss-20b", "qwen/qwen3.8-27b"]
+    "is_valid": true,
+    "outcome": "valid",
+    "http_status": 200,
+    "error_code": null,
+    "diagnostic_message": "Authentication successful (0 inference tokens consumed)",
+    "probed_at": "2026-02-01T12:05:00Z"
   }
   ```
+- Automatically updates `public.api_key_metadata.validation_status` to `"valid"` or diagnostic error code (`"invalid"`, `"rate_limited"`, etc.).
 
-### 2.5 Delete / Revoke Credential (Active Revocation)
+### 2.6 Enable Credential
+- **Route**: `POST /api/v1/me/api-keys/{id}/enable`
+- **Rate Limit**: 20 requests / minute
+- **Behavior**: Transitions `status` from `disabled` to `active`.
+- **Precondition**: `validation_status` MUST be `"valid"`. Unvalidated or invalid credentials return `422 Unprocessable Entity` ("Credential must pass an active validation probe before being enabled").
+- **Response** (`200 OK`): Updated `CredentialResponse` with `status: "active"`.
+
+### 2.7 Disable Credential
+- **Route**: `POST /api/v1/me/api-keys/{id}/disable`
+- **Rate Limit**: 20 requests / minute
+- **Behavior**: Transitions `status` to `disabled`. The credential is immediately bypassed during provider dispatch routing.
+- **Response** (`200 OK`): Updated `CredentialResponse` with `status: "disabled"`.
+
+### 2.8 Delete Credential (Purge Secret)
 - **Route**: `DELETE /api/v1/me/api-keys/{id}`
-- **Behavior**: Transactionally deletes the record from `public.api_key_credentials` and cascades deletion of `private.api_key_secrets`. Flushes any in-memory or Redis caches. Active dispatches cease immediately. (Historical database backups retain encrypted ciphertexts and wrapped DEKs until the 30-day backup retention window expires).
+- **Rate Limit**: 10 requests / minute
+- **Behavior**: Permanently deletes the metadata record from `public.api_key_metadata` and cascades deletion of `private.api_key_secrets` (destroying ciphertext, wrapped DEK, and nonces). Records an audit event in `public.audit_logs`.
 - **Response** (`204 No Content`).
 
 ---

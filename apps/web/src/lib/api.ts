@@ -58,5 +58,9 @@ export async function fetchWithAuth<T>(
     throw new ApiError(errCode, errMsg, res.status, errDetails);
   }
 
+  if (res.status === 204) {
+    return {} as T;
+  }
+
   return res.json() as Promise<T>;
 }

@@ -266,9 +266,12 @@ flowchart TD
    - Isolated FastAPI `vault_pool` (min 1, max 3 connections).
    - AES-256-GCM envelope encryption with context-bound AAD and HMAC key fingerprinting via independent `VAULT_PEPPER_SECRET`.
 3. **M2.3 — Owner-Only Credential Management**:
-   - Endpoints `/api/v1/me/api-keys` (CRUD, masked presentation, active revocation).
-   - Validation rejecting OpenAI `org-...` and legacy personal keys via format and provider probe checks.
-   - Non-mutating credential validation probes.
+   - Authenticated endpoints `/api/v1/me/api-keys` (CRUD, masked key presentation, active status control, secret purge).
+   - Strict cross-owner isolation: owner ID derived exclusively from verified JWT subject (`current_user.id`); uniform 404 returned for foreign or nonexistent IDs.
+   - Non-generative validation probes across supported providers (Gemini, Groq, OpenRouter, Cerebras, OpenAI, xAI), verifying authentication with 0 inference tokens.
+   - Community sharing policy enforcement via `public.llm_providers.allows_community_sharing` and mandatory explicit contributor consent (`shared_consent = true`, versioned timestamp).
+   - Configurable daily/monthly request limits and optional daily/monthly spending caps per credential.
+   - Owner-facing Next.js management interface (`/credentials`) with secret input masking, immediate in-memory wipe, live validation probes, and deletion confirmation dialog explaining cryptographic purge.
 4. **M2.4 — Admission Control, Multi-Tier Rate Limiting & Usage Ledger**:
    - Redis Lua scripts for 4-tier rate limits, common 5-RPM / 1-concurrency baseline safety envelope, provider-account quota scopes, atomic reservations, and transactional usage recording (`public.api_key_usage`) established **before** shared dispatch.
 5. **M2.5 — Core Free/Low-Cost Cloud Adapters**:

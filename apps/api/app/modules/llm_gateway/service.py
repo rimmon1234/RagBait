@@ -33,6 +33,9 @@ def _row_to_provider(row: asyncpg.Record) -> LLMProviderResponse:
         description=row["description"],
         is_enabled=row["is_enabled"],
         requires_account_scope=row["requires_account_scope"],
+        allows_community_sharing=row["allows_community_sharing"]
+        if "allows_community_sharing" in row
+        else False,
         account_tier=row["account_tier"],
         billing_status=row["billing_status"],
         created_at=row["created_at"],

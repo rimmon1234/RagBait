@@ -27,6 +27,7 @@ class LLMProviderBase(BaseModel):
     description: str | None = None
     is_enabled: bool = True
     requires_account_scope: bool = False
+    allows_community_sharing: bool = False
     account_tier: ProviderAccountTier = "standard"
     billing_status: ProviderBillingStatus = "active"
 

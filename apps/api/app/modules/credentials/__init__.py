@@ -1,7 +1,9 @@
-"""Encrypted Credential Vault Module (RagBait M2.2)."""
+"""Encrypted Credential Vault & Management Module (RagBait M2.2 & M2.3)."""
 
 from app.modules.credentials.crypto import (
     build_aad,
+    build_payload_aad,
+    build_wrapping_aad,
     compute_fingerprint,
     decrypt_payload,
     encrypt_payload,
@@ -23,15 +25,30 @@ from app.modules.credentials.kms import KEKProvider, LocalHKDFKEKProvider
 from app.modules.credentials.repository import (
     delete_credential_secret,
     get_credential_metadata,
+    list_credentials_by_owner,
     retrieve_decrypted_credential,
     rewrap_credential_dek,
+    set_credential_status,
     store_credential,
+    update_credential_metadata,
+    update_validation_status,
 )
 from app.modules.credentials.schemas import (
     ApiKeyMetadataRecord,
+    CredentialCreateRequest,
+    CredentialListResponse,
+    CredentialResponse,
+    CredentialUpdateRequest,
     DecryptedCredential,
     EncryptedSecretRecord,
     StoredCredentialResult,
+    ValidationResultResponse,
+    ValidationStatus,
+)
+from app.modules.credentials.validator import (
+    ValidationOutcome,
+    ValidationResult,
+    validate_provider_credential,
 )
 from app.modules.credentials.vault import (
     close_vault_pool,
@@ -42,11 +59,19 @@ from app.modules.credentials.vault import (
 
 __all__ = [
     "ApiKeyMetadataRecord",
+    "CredentialCreateRequest",
+    "CredentialListResponse",
+    "CredentialResponse",
+    "CredentialUpdateRequest",
     "DecryptedCredential",
     "EncryptedSecretRecord",
     "KEKProvider",
     "LocalHKDFKEKProvider",
     "StoredCredentialResult",
+    "ValidationOutcome",
+    "ValidationResult",
+    "ValidationResultResponse",
+    "ValidationStatus",
     "VaultAuthorizationError",
     "VaultConfigurationError",
     "VaultDatabaseError",
@@ -56,6 +81,8 @@ __all__ = [
     "VaultKeyError",
     "VaultTamperError",
     "build_aad",
+    "build_payload_aad",
+    "build_wrapping_aad",
     "close_vault_pool",
     "compute_fingerprint",
     "decrypt_payload",
@@ -67,8 +94,13 @@ __all__ = [
     "get_vault_pool",
     "get_vault_session",
     "init_vault_pool",
+    "list_credentials_by_owner",
     "mask_credential",
     "retrieve_decrypted_credential",
     "rewrap_credential_dek",
+    "set_credential_status",
     "store_credential",
+    "update_credential_metadata",
+    "update_validation_status",
+    "validate_provider_credential",
 ]

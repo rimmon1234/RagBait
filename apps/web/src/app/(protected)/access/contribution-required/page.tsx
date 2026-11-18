@@ -1,4 +1,5 @@
-import { CheckCircle2, Sparkles } from "lucide-react";
+import Link from "next/link";
+import { CheckCircle2, Key, Sparkles } from "lucide-react";
 
 export default function ContributionRequiredPage() {
   return (
@@ -20,15 +21,21 @@ export default function ContributionRequiredPage() {
           </div>
           <p className="mt-2 text-blue-800">
             Interactive AI study features and subject-scoped RAG queries require AI provider credentials.
-            The private API credential management module will be deployed in <strong>Milestone M2</strong>.
+            Contribute your own provider API keys to unlock platform inference.
           </p>
-          <p className="mt-3 text-xs text-blue-700">
-            Once Milestone M2 is active, you will be able to supply your shared or individual API credentials (Gemini, OpenAI, OpenRouter) to begin interactive study sessions.
-          </p>
+          <div className="mt-4">
+            <Link
+              href="/credentials"
+              className="inline-flex items-center gap-2 rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white shadow-sm hover:bg-blue-700"
+            >
+              <Key className="h-4 w-4" />
+              Manage API Credentials
+            </Link>
+          </div>
         </div>
 
         <div className="mt-8 rounded-lg bg-gray-50 p-4 text-xs text-gray-500">
-          RagBait M0 & M1 Foundation Verified • User authorization state active
+          RagBait M0, M1 & M2 Foundation Active • Secure Owner-Only Credential Vault
         </div>
       </div>
     </div>

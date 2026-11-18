@@ -1,6 +1,8 @@
 """Repository for Encrypted Storage and Retrieval of API Credentials."""
 
 import logging
+from datetime import datetime
+from typing import Any
 from uuid import UUID, uuid4
 
 import asyncpg
@@ -42,12 +44,15 @@ async def store_credential(
     wrapping_context_version: int | None = None,
     sharing_scope: str = "owner_only",
     shared_consent: bool = False,
+    sharing_consent_timestamp: datetime | None = None,
+    consent_version: str | None = None,
     account_scope_id: str | None = None,
     daily_request_limit: int = 500,
     monthly_request_limit: int = 15000,
     daily_spending_limit_cents: int | None = None,
     monthly_spending_limit_cents: int | None = None,
     credential_id: UUID | None = None,
+    status: str = "active",
 ) -> StoredCredentialResult:
     """Securely store an API credential using envelope encryption.
 
@@ -96,24 +101,28 @@ async def store_credential(
         # 4. Wrap DEK with master KEK
         encrypted_dek, dek_nonce, dek_auth_tag = provider.wrap_dek(dek, wrapping_aad, kek_ver)
 
-        # 5. Insert public metadata
+        # 5. Insert public metadata (default status: disabled, unvalidated)
         try:
             meta_row = await conn.fetchrow(
                 """
                 INSERT INTO public.api_key_metadata (
                     id, owner_id, provider_id, nickname, masked_key, key_fingerprint,
-                    status, sharing_scope, shared_consent, account_scope_id,
+                    status, sharing_scope, shared_consent, sharing_consent_timestamp,
+                    consent_version, validation_status, account_scope_id,
                     daily_request_limit, monthly_request_limit,
                     daily_spending_limit_cents, monthly_spending_limit_cents
                 )
                 VALUES (
                     $1, $2, $3, $4, $5, $6,
-                    'active', $7, $8, $9,
-                    $10, $11,
-                    $12, $13
+                    $7, $8, $9, $10,
+                    $11, 'unvalidated', $12,
+                    $13, $14,
+                    $15, $16
                 )
                 RETURNING id, owner_id, provider_id, nickname, masked_key, key_fingerprint,
-                          status, sharing_scope, shared_consent, account_scope_id,
+                          status, sharing_scope, shared_consent, sharing_consent_timestamp,
+                          consent_version, validation_status, last_validated_at,
+                          validation_error_code, account_scope_id,
                           daily_request_limit, monthly_request_limit,
                           daily_spending_limit_cents, monthly_spending_limit_cents,
                           created_at, updated_at
@@ -124,8 +133,11 @@ async def store_credential(
                 nickname,
                 masked,
                 fingerprint,
+                status,
                 sharing_scope,
                 shared_consent,
+                sharing_consent_timestamp,
+                consent_version,
                 account_scope_id,
                 daily_request_limit,
                 monthly_request_limit,
@@ -172,6 +184,11 @@ async def store_credential(
         status=meta_row["status"],
         sharing_scope=meta_row["sharing_scope"],
         shared_consent=meta_row["shared_consent"],
+        sharing_consent_timestamp=meta_row["sharing_consent_timestamp"],
+        consent_version=meta_row["consent_version"],
+        validation_status=meta_row["validation_status"],
+        last_validated_at=meta_row["last_validated_at"],
+        validation_error_code=meta_row["validation_error_code"],
         account_scope_id=meta_row["account_scope_id"],
         daily_request_limit=meta_row["daily_request_limit"],
         monthly_request_limit=meta_row["monthly_request_limit"],
@@ -218,14 +235,14 @@ async def retrieve_decrypted_credential(
             code="CREDENTIAL_NOT_FOUND",
         )
 
-    # 1. Authorize caller ownership
+    # 1. Authorize caller ownership (NO admin bypass)
     if row["owner_id"] != caller_id:
         raise VaultAuthorizationError(
             "Caller is not authorized to decrypt this credential",
             code="VAULT_UNAUTHORIZED",
         )
 
-    # 2. Check active status
+    # 2. Check active status if requested
     if check_active and row["status"] != "active":
         raise VaultAuthorizationError(
             f"Credential '{credential_id}' is not active (status: {row['status']})",
@@ -410,7 +427,9 @@ async def get_credential_metadata(credential_id: UUID, caller_id: UUID) -> Store
         row = await conn.fetchrow(
             """
             SELECT m.id, m.owner_id, m.provider_id, m.nickname, m.masked_key, m.key_fingerprint,
-                   m.status, m.sharing_scope, m.shared_consent, m.account_scope_id,
+                   m.status, m.sharing_scope, m.shared_consent, m.sharing_consent_timestamp,
+                   m.consent_version, m.validation_status, m.last_validated_at,
+                   m.validation_error_code, m.account_scope_id,
                    m.daily_request_limit, m.monthly_request_limit,
                    m.daily_spending_limit_cents, m.monthly_spending_limit_cents,
                    s.data_encryption_version, s.kek_version,
@@ -443,6 +462,11 @@ async def get_credential_metadata(credential_id: UUID, caller_id: UUID) -> Store
         status=row["status"],
         sharing_scope=row["sharing_scope"],
         shared_consent=row["shared_consent"],
+        sharing_consent_timestamp=row["sharing_consent_timestamp"],
+        consent_version=row["consent_version"],
+        validation_status=row["validation_status"],
+        last_validated_at=row["last_validated_at"],
+        validation_error_code=row["validation_error_code"],
         account_scope_id=row["account_scope_id"],
         daily_request_limit=row["daily_request_limit"],
         monthly_request_limit=row["monthly_request_limit"],
@@ -453,3 +477,151 @@ async def get_credential_metadata(credential_id: UUID, caller_id: UUID) -> Store
         created_at=row["created_at"],
         updated_at=row["updated_at"],
     )
+
+
+async def list_credentials_by_owner(owner_id: UUID) -> list[StoredCredentialResult]:
+    """List all credential metadata records owned by an authenticated contributor."""
+    async with get_vault_session() as conn:
+        rows = await conn.fetch(
+            """
+            SELECT m.id, m.owner_id, m.provider_id, m.nickname, m.masked_key, m.key_fingerprint,
+                   m.status, m.sharing_scope, m.shared_consent, m.sharing_consent_timestamp,
+                   m.consent_version, m.validation_status, m.last_validated_at,
+                   m.validation_error_code, m.account_scope_id,
+                   m.daily_request_limit, m.monthly_request_limit,
+                   m.daily_spending_limit_cents, m.monthly_spending_limit_cents,
+                   s.data_encryption_version, s.kek_version,
+                   m.created_at, m.updated_at
+            FROM public.api_key_metadata m
+            LEFT JOIN private.api_key_secrets s ON m.id = s.id
+            WHERE m.owner_id = $1
+            ORDER BY m.created_at DESC
+            """,
+            owner_id,
+        )
+
+    return [
+        StoredCredentialResult(
+            id=r["id"],
+            owner_id=r["owner_id"],
+            provider_id=r["provider_id"],
+            nickname=r["nickname"],
+            masked_key=r["masked_key"],
+            key_fingerprint=r["key_fingerprint"],
+            status=r["status"],
+            sharing_scope=r["sharing_scope"],
+            shared_consent=r["shared_consent"],
+            sharing_consent_timestamp=r["sharing_consent_timestamp"],
+            consent_version=r["consent_version"],
+            validation_status=r["validation_status"],
+            last_validated_at=r["last_validated_at"],
+            validation_error_code=r["validation_error_code"],
+            account_scope_id=r["account_scope_id"],
+            daily_request_limit=r["daily_request_limit"],
+            monthly_request_limit=r["monthly_request_limit"],
+            daily_spending_limit_cents=r["daily_spending_limit_cents"],
+            monthly_spending_limit_cents=r["monthly_spending_limit_cents"],
+            data_encryption_version=r["data_encryption_version"] or 1,
+            kek_version=r["kek_version"] or 1,
+            created_at=r["created_at"],
+            updated_at=r["updated_at"],
+        )
+        for r in rows
+    ]
+
+
+async def update_credential_metadata(
+    credential_id: UUID,
+    owner_id: UUID,
+    updates: dict[str, Any],
+) -> StoredCredentialResult:
+    """Update permitted non-cryptographic metadata fields on an owned credential."""
+    if not updates:
+        return await get_credential_metadata(credential_id, owner_id)
+
+    set_clauses: list[str] = []
+    params: list[Any] = [credential_id, owner_id]
+
+    for key, val in updates.items():
+        params.append(val)
+        set_clauses.append(f"{key} = ${len(params)}")
+
+    set_clause = ", ".join(set_clauses)
+
+    async with get_vault_session() as conn:
+        updated_row = await conn.fetchrow(
+            f"""
+            UPDATE public.api_key_metadata
+            SET {set_clause}, updated_at = now()
+            WHERE id = $1 AND owner_id = $2
+            RETURNING id
+            """,
+            *params,
+        )
+
+        if not updated_row:
+            raise VaultAuthorizationError(
+                "Caller is not authorized to update this credential or credential does not exist",
+                code="VAULT_UNAUTHORIZED",
+            )
+
+    return await get_credential_metadata(credential_id, owner_id)
+
+
+async def update_validation_status(
+    credential_id: UUID,
+    owner_id: UUID,
+    validation_status: str,
+    validation_error_code: str | None = None,
+) -> StoredCredentialResult:
+    """Record validation outcome timestamp and error code."""
+    async with get_vault_session() as conn:
+        updated = await conn.fetchval(
+            """
+            UPDATE public.api_key_metadata
+            SET validation_status = $1,
+                last_validated_at = now(),
+                validation_error_code = $2,
+                updated_at = now()
+            WHERE id = $3 AND owner_id = $4
+            RETURNING id
+            """,
+            validation_status,
+            validation_error_code,
+            credential_id,
+            owner_id,
+        )
+        if not updated:
+            raise VaultAuthorizationError(
+                "Caller is not authorized to validate this credential or credential does not exist",
+                code="VAULT_UNAUTHORIZED",
+            )
+
+    return await get_credential_metadata(credential_id, owner_id)
+
+
+async def set_credential_status(
+    credential_id: UUID,
+    owner_id: UUID,
+    new_status: str,
+) -> StoredCredentialResult:
+    """Change status (active or disabled) on an owned credential."""
+    async with get_vault_session() as conn:
+        updated = await conn.fetchval(
+            """
+            UPDATE public.api_key_metadata
+            SET status = $1, updated_at = now()
+            WHERE id = $2 AND owner_id = $3
+            RETURNING id
+            """,
+            new_status,
+            credential_id,
+            owner_id,
+        )
+        if not updated:
+            raise VaultAuthorizationError(
+                "Caller is not authorized to modify this credential or credential does not exist",
+                code="VAULT_UNAUTHORIZED",
+            )
+
+    return await get_credential_metadata(credential_id, owner_id)

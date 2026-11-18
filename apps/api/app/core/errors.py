@@ -63,6 +63,11 @@ class ConflictError(AppError):
         super().__init__(code=code, message=message, status_code=status.HTTP_409_CONFLICT)
 
 
+class ValidationError(AppError):
+    def __init__(self, message: str = "Validation failed", code: str = "VALIDATION_ERROR"):
+        super().__init__(code=code, message=message, status_code=422)
+
+
 class RateLimitError(AppError):
     def __init__(self, retry_after: int = 60, message: str = "Too many requests"):
         super().__init__(
