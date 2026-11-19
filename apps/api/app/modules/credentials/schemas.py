@@ -56,6 +56,9 @@ class ApiKeyMetadataRecord(BaseModel):
     last_validated_at: datetime | None = None
     validation_error_code: str | None = None
     account_scope_id: str | None = None
+    account_scope_verified: bool = False
+    account_scope_source: str | None = None
+    account_scope_verified_at: datetime | None = None
     daily_request_limit: int = 500
     monthly_request_limit: int = 15000
     daily_spending_limit_cents: int | None = None
@@ -82,6 +85,9 @@ class StoredCredentialResult(BaseModel):
     last_validated_at: datetime | None = None
     validation_error_code: str | None = None
     account_scope_id: str | None = None
+    account_scope_verified: bool = False
+    account_scope_source: str | None = None
+    account_scope_verified_at: datetime | None = None
     daily_request_limit: int
     monthly_request_limit: int
     daily_spending_limit_cents: int | None = None
@@ -104,6 +110,9 @@ class DecryptedCredential(BaseModel):
     sharing_scope: CredentialSharingScope
     shared_consent: bool
     account_scope_id: str | None = None
+    account_scope_verified: bool = False
+    account_scope_source: str | None = None
+    account_scope_verified_at: datetime | None = None
     data_encryption_version: int = 1
     kek_version: int = 1
     wrapping_context_version: int = 1
@@ -137,9 +146,6 @@ class CredentialCreateRequest(BaseModel):
     shared_consent: bool = Field(
         default=False, description="Explicit consent if community_shared is selected"
     )
-    account_scope_id: str | None = Field(
-        default=None, max_length=128, description="Optional account/org scope (e.g. Groq org)"
-    )
     daily_request_limit: int = Field(
         default=500, ge=1, le=1000000, description="Configured daily request limit"
     )
@@ -167,9 +173,6 @@ class CredentialUpdateRequest(BaseModel):
     )
     shared_consent: bool | None = Field(
         default=None, description="Updated explicit community consent"
-    )
-    account_scope_id: str | None = Field(
-        default=None, max_length=128, description="Updated account/org scope"
     )
     daily_request_limit: int | None = Field(
         default=None, ge=1, le=1000000, description="Updated daily request limit"
@@ -206,6 +209,9 @@ class CredentialResponse(BaseModel):
     last_validated_at: datetime | None = None
     validation_error_code: str | None = None
     account_scope_id: str | None = None
+    account_scope_verified: bool = False
+    account_scope_source: str | None = None
+    account_scope_verified_at: datetime | None = None
     daily_request_limit: int
     monthly_request_limit: int
     daily_spending_limit_cents: int | None = None

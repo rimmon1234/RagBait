@@ -114,9 +114,11 @@ Regardless of provider, all contributed cloud credentials in the shared pool rec
 - **Rate-Limit Cooldown**: Exponential cooldown (starting at 60s, up to 15m) upon receiving HTTP 429.
 - **Daily Dispatch Cap**: Enforced by contributor-defined limits (default 500 requests/day).
 
-### 3.3 Dynamic Provider Quota Registry (`public.provider_quotas`)
+### 3.3 Dynamic Provider Quota Registry (`public.provider_quotas`) & Runtime Enforcement
 - **Strict Provenance Standards**: Quotas from public documentation are marked `provider_published`. Quotas confirmed via authenticated response headers or user console probes are marked `account_confirmed`.
-- **Scope Accounting**: Groq keys belonging to the same Organization share an atomic meter (`ragbait:rl:scope:groq:{org_id}:rpm`). Multiple keys from the same org share upstream limits.
+- **Server-Controlled Account Scope**: `account_scope_id` is strictly server-controlled and populated only when authenticated response headers establish verified provenance (`account_scope_verified = true`). Unverified user-submitted scopes are strictly ignored to prevent quota/cooldown poisoning.
+- **Scope Accounting**: Verified credentials belonging to the same Organization share atomic meters in Redis (`ragbait:rate:account:{provider_id}:{account_scope_id}`).
+- **Enforcement Boundaries**: Enforces RPM, TPM, RPD, user/credential concurrency (cap: 2/1), and daily/monthly spending caps in exact integer microcents. TPD (Tokens Per Day) and provider-global concurrency are deferred to M2.5 runtime workers. M2.5 must implement TPD enforcement before dispatching requests against providers/models with known TPD restrictions.
 
 ---
 

@@ -45,7 +45,6 @@ export default function CredentialsPage() {
   const [addNickname, setAddNickname] = useState("");
   const [addApiKey, setAddApiKey] = useState("");
   const [showAddApiKey, setShowAddApiKey] = useState(false);
-  const [addAccountScopeId, setAddAccountScopeId] = useState("");
   const [addSharingScope, setAddSharingScope] = useState<CredentialSharingScope>("owner_only");
   const [addSharedConsent, setAddSharedConsent] = useState(false);
   const [addDailyRequestLimit, setAddDailyRequestLimit] = useState(500);
@@ -58,7 +57,6 @@ export default function CredentialsPage() {
   // Edit Modal State
   const [editingCred, setEditingCred] = useState<ApiKeyCredential | null>(null);
   const [editNickname, setEditNickname] = useState("");
-  const [editAccountScopeId, setEditAccountScopeId] = useState("");
   const [editSharingScope, setEditSharingScope] = useState<CredentialSharingScope>("owner_only");
   const [editSharedConsent, setEditSharedConsent] = useState(false);
   const [editDailyRequestLimit, setEditDailyRequestLimit] = useState(500);
@@ -113,7 +111,6 @@ export default function CredentialsPage() {
     setAddNickname("");
     setAddApiKey("");
     setShowAddApiKey(false);
-    setAddAccountScopeId("");
     setAddSharingScope("owner_only");
     setAddSharedConsent(false);
     setAddDailyRequestLimit(500);
@@ -143,7 +140,6 @@ export default function CredentialsPage() {
       provider_id: addProviderId,
       nickname: addNickname.trim(),
       api_key: addApiKey.trim(),
-      account_scope_id: addAccountScopeId.trim() || undefined,
       sharing_scope: addSharingScope,
       shared_consent: addSharingScope === "community_shared" ? addSharedConsent : false,
       daily_request_limit: addDailyRequestLimit,
@@ -223,7 +219,6 @@ export default function CredentialsPage() {
   const handleOpenEdit = (cred: ApiKeyCredential) => {
     setEditingCred(cred);
     setEditNickname(cred.nickname);
-    setEditAccountScopeId(cred.account_scope_id || "");
     setEditSharingScope(cred.sharing_scope);
     setEditSharedConsent(cred.shared_consent);
     setEditDailyRequestLimit(cred.daily_request_limit);
@@ -255,7 +250,6 @@ export default function CredentialsPage() {
 
     const payload: CredentialUpdateInput = {
       nickname: editNickname.trim(),
-      account_scope_id: editAccountScopeId.trim() || null,
       sharing_scope: editSharingScope,
       shared_consent: editSharingScope === "community_shared" ? editSharedConsent : false,
       daily_request_limit: editDailyRequestLimit,
@@ -461,8 +455,10 @@ export default function CredentialsPage() {
                           <span className="rounded bg-gray-100 px-2 py-0.5 text-xs font-semibold text-gray-700 uppercase">
                             {cred.provider_id}
                           </span>
-                          {cred.account_scope_id && (
-                            <span className="text-xs text-gray-400">({cred.account_scope_id})</span>
+                          {cred.account_scope_id && cred.account_scope_verified && (
+                            <span className="text-xs text-blue-700 bg-blue-50 px-1.5 py-0.5 rounded font-mono">
+                              Verified: {cred.account_scope_id}
+                            </span>
                           )}
                         </div>
                       </td>
@@ -676,20 +672,6 @@ export default function CredentialsPage() {
                 </p>
               </div>
 
-              {/* Account Scope ID (Optional) */}
-              <div>
-                <label className="block text-xs font-semibold text-gray-700">
-                  Account Scope / Organization ID <span className="font-normal text-gray-400">(Optional)</span>
-                </label>
-                <input
-                  type="text"
-                  placeholder="e.g. org-12345, project-name"
-                  value={addAccountScopeId}
-                  onChange={(e) => setAddAccountScopeId(e.target.value)}
-                  className="mt-1 block w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none"
-                />
-              </div>
-
               {/* Sharing Scope & Explicit Consent */}
               <div className="rounded-lg border border-gray-200 bg-gray-50 p-4 space-y-3">
                 <label className="block text-xs font-semibold text-gray-700">Sharing Scope</label>
@@ -871,16 +853,6 @@ export default function CredentialsPage() {
                   required
                   value={editNickname}
                   onChange={(e) => setEditNickname(e.target.value)}
-                  className="mt-1 block w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none"
-                />
-              </div>
-
-              <div>
-                <label className="block text-xs font-semibold text-gray-700">Account Scope ID</label>
-                <input
-                  type="text"
-                  value={editAccountScopeId}
-                  onChange={(e) => setEditAccountScopeId(e.target.value)}
                   className="mt-1 block w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none"
                 />
               </div>

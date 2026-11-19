@@ -59,6 +59,30 @@ RagBait enforces strict criteria for quota provenance. **A quota is NEVER marked
 | `provenance` | text | Provenance category: `'account_confirmed'`, `'provider_published'`, `'observed'`, `'estimated'`, `'unknown'` |
 | `is_active` | boolean | Whether this quota rule is currently enforced in admission control |
 
+### 2.3 Quota Support vs. Runtime Enforcement Matrix (M2.4 Reality vs. M2.5 Deferrals)
+
+Mere presence of a row in `public.provider_quotas` does **not** imply automated gateway enforcement. RagBait strictly distinguishes catalog metadata from actual admission control mechanisms:
+
+| Metric | Scope / Level | Present in `provider_quotas`? | Enforced in M2.4 Gateway? | Enforcement Mechanism & Runtime Behavior |
+| :--- | :--- | :---: | :---: | :--- |
+| **RPM** | Model Level | Yes | **YES** | Redis rolling-window sliding log (`ragbait:rate:model:{model_id}`). Rejections return HTTP 429. |
+| **RPM** | Provider Level | Yes | **YES** | Redis rolling-window sliding log (`ragbait:rate:provider:{provider_id}`). |
+| **RPM** | User / Credential | Configurable | **YES** | Redis rolling-window sliding log (`ragbait:rate:user:{user_id}`, `ragbait:rate:credential:{cred_id}`). |
+| **RPM** | Account Scope | Yes | **CONDITIONAL** | Enforced via Redis (`ragbait:rate:account:{provider_id}:{scope_id}`) **strictly and only when `account_scope_verified` is TRUE**. Unverified user-submitted account scopes are ignored to prevent quota poisoning. |
+| **TPM** | Model / Provider | Yes | **YES** | Redis token-weighted sliding log. Estimated tokens reserved at admission, reconciled to actual tokens post-dispatch. |
+| **TPM** | Account Scope | Yes | **CONDITIONAL** | Enforced via Redis token-weighted log **only when `account_scope_verified` is TRUE**. |
+| **RPD** | Credential / Daily | Yes | **YES** | PostgreSQL `llm_usage_budget_counters` row-locked transaction. Enforces daily requests limit (e.g. 500 RPD). |
+| **Spending Cap** | Daily / Monthly | Configurable | **YES** | PostgreSQL `llm_usage_budget_counters` exact integer microcents accounting. Individual generations are never ceiling-rounded. |
+| **TPD** | Model / Provider | Yes | **DEFERRED (M2.5)** | **Deferred to M2.5**: Tokens-per-day quotas exist in the catalog, but daily token volume aggregation across all requests is not enforced in M2.4. **M2.5 must implement TPD enforcement before dispatching requests against providers/models with known TPD restrictions.** |
+| **Concurrency** | User / Credential | Configurable | **YES** | Redis sorted-set leases with TTL heartbeats (`ragbait:concurrency:user:{user_id}` cap: 2, `ragbait:concurrency:cred:{cred_id}` cap: 1). |
+| **Concurrency** | Provider Global | Yes | **DEFERRED (M2.5)** | Global upstream provider concurrency tracking is deferred to M2.5 runtime workers. |
+
+#### Account Scope Verification Contract (M2.5 Requirement)
+In M2.4, `account_scope_id` is strictly server-controlled:
+- End-users and contributors cannot set, submit, or update `account_scope_id` via API payloads (enforced by Pydantic `extra="forbid"` and database triggers).
+- Unverified account scopes (`account_scope_verified = false`) are never used to construct Redis rate limit keys or cooldown scopes.
+- In M2.5, provider adapters must verify account provenance using explicit provider-specific response header inspection (e.g., `openai-organization`, Groq account headers) or authenticated admin action before calling `set_verified_account_scope`. Arbitrary client headers or unauthenticated response fields must never be trusted.
+
 ---
 
 ## 3. Administrator-Controlled Model Registry & Catalogue

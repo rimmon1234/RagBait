@@ -143,6 +143,9 @@ export interface ApiKeyCredential {
   last_validated_at?: string | null;
   validation_error_code?: string | null;
   account_scope_id?: string | null;
+  account_scope_verified?: boolean;
+  account_scope_source?: string | null;
+  account_scope_verified_at?: string | null;
   daily_request_limit: number;
   monthly_request_limit: number;
   daily_spending_limit_cents?: number | null;
@@ -160,7 +163,6 @@ export interface CredentialCreateInput {
   provider_id: string;
   nickname: string;
   api_key: string;
-  account_scope_id?: string;
   sharing_scope?: CredentialSharingScope;
   shared_consent?: boolean;
   daily_request_limit?: number;
@@ -171,7 +173,6 @@ export interface CredentialCreateInput {
 
 export interface CredentialUpdateInput {
   nickname?: string;
-  account_scope_id?: string | null;
   sharing_scope?: CredentialSharingScope;
   shared_consent?: boolean;
   daily_request_limit?: number;

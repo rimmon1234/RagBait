@@ -86,7 +86,7 @@ async def _get_credential_details(credential_id: UUID) -> dict[str, Any]:
         row = await conn.fetchrow(
             """
             SELECT id, owner_id, provider_id, nickname, status, validation_status,
-                   sharing_scope, shared_consent, account_scope_id,
+                   sharing_scope, shared_consent, account_scope_id, account_scope_verified,
                    daily_request_limit, monthly_request_limit,
                    daily_spending_limit_cents, monthly_spending_limit_cents
             FROM public.api_key_metadata
@@ -155,8 +155,11 @@ async def reserve_generation(
         if cred["sharing_scope"] != "community_shared" or not cred["shared_consent"]:
             raise AuthorizationError("Access to credential denied: private owner-only credential")
 
-    # Trusted account identity comes strictly from stored credential metadata
-    trusted_account_scope_id = cred.get("account_scope_id")
+    # Trusted account identity comes strictly from server-verified credential metadata.
+    # Unverified account scopes are strictly ignored to prevent quota and cooldown poisoning.
+    is_verified = bool(cred.get("account_scope_verified"))
+    raw_scope_id = cred.get("account_scope_id")
+    trusted_account_scope_id = raw_scope_id.strip() if (is_verified and raw_scope_id) else None
 
     # 2. Fetch & verify model
     model = await _get_model_details(req.model_id)

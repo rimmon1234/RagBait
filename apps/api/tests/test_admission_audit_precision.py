@@ -125,6 +125,8 @@ async def create_audit_contributor(
         daily_spending_limit_cents=daily_spend_cents,
         monthly_spending_limit_cents=monthly_spend_cents,
         account_scope_id=account_scope_id,
+        account_scope_verified=bool(account_scope_id),
+        account_scope_source="test_verified" if account_scope_id else None,
     )
     await update_validation_status(stored.id, user_id, "valid")
     return user_id, stored.id

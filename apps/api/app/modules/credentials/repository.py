@@ -47,6 +47,9 @@ async def store_credential(
     sharing_consent_timestamp: datetime | None = None,
     consent_version: str | None = None,
     account_scope_id: str | None = None,
+    account_scope_verified: bool = False,
+    account_scope_source: str | None = None,
+    account_scope_verified_at: datetime | None = None,
     daily_request_limit: int = 500,
     monthly_request_limit: int = 15000,
     daily_spending_limit_cents: int | None = None,
@@ -109,6 +112,7 @@ async def store_credential(
                     id, owner_id, provider_id, nickname, masked_key, key_fingerprint,
                     status, sharing_scope, shared_consent, sharing_consent_timestamp,
                     consent_version, validation_status, account_scope_id,
+                    account_scope_verified, account_scope_source, account_scope_verified_at,
                     daily_request_limit, monthly_request_limit,
                     daily_spending_limit_cents, monthly_spending_limit_cents
                 )
@@ -116,13 +120,15 @@ async def store_credential(
                     $1, $2, $3, $4, $5, $6,
                     $7, $8, $9, $10,
                     $11, 'unvalidated', $12,
-                    $13, $14,
-                    $15, $16
+                    $13, $14, $15,
+                    $16, $17,
+                    $18, $19
                 )
                 RETURNING id, owner_id, provider_id, nickname, masked_key, key_fingerprint,
                           status, sharing_scope, shared_consent, sharing_consent_timestamp,
                           consent_version, validation_status, last_validated_at,
                           validation_error_code, account_scope_id,
+                          account_scope_verified, account_scope_source, account_scope_verified_at,
                           daily_request_limit, monthly_request_limit,
                           daily_spending_limit_cents, monthly_spending_limit_cents,
                           created_at, updated_at
@@ -139,6 +145,9 @@ async def store_credential(
                 sharing_consent_timestamp,
                 consent_version,
                 account_scope_id,
+                account_scope_verified,
+                account_scope_source,
+                account_scope_verified_at,
                 daily_request_limit,
                 monthly_request_limit,
                 daily_spending_limit_cents,
@@ -190,6 +199,9 @@ async def store_credential(
         last_validated_at=meta_row["last_validated_at"],
         validation_error_code=meta_row["validation_error_code"],
         account_scope_id=meta_row["account_scope_id"],
+        account_scope_verified=meta_row["account_scope_verified"],
+        account_scope_source=meta_row["account_scope_source"],
+        account_scope_verified_at=meta_row["account_scope_verified_at"],
         daily_request_limit=meta_row["daily_request_limit"],
         monthly_request_limit=meta_row["monthly_request_limit"],
         daily_spending_limit_cents=meta_row["daily_spending_limit_cents"],
@@ -219,6 +231,7 @@ async def retrieve_decrypted_credential(
             """
             SELECT m.id, m.owner_id, m.provider_id, m.nickname, m.masked_key,
                    m.status, m.sharing_scope, m.shared_consent, m.account_scope_id,
+                   m.account_scope_verified, m.account_scope_source, m.account_scope_verified_at,
                    s.encrypted_dek, s.dek_nonce, s.dek_auth_tag,
                    s.ciphertext, s.nonce,
                    s.data_encryption_version, s.kek_version, s.wrapping_context_version
@@ -287,6 +300,9 @@ async def retrieve_decrypted_credential(
         sharing_scope=row["sharing_scope"],
         shared_consent=row["shared_consent"],
         account_scope_id=row["account_scope_id"],
+        account_scope_verified=row["account_scope_verified"],
+        account_scope_source=row["account_scope_source"],
+        account_scope_verified_at=row["account_scope_verified_at"],
         data_encryption_version=row["data_encryption_version"],
         kek_version=row["kek_version"],
         wrapping_context_version=row["wrapping_context_version"],
@@ -430,6 +446,7 @@ async def get_credential_metadata(credential_id: UUID, caller_id: UUID) -> Store
                    m.status, m.sharing_scope, m.shared_consent, m.sharing_consent_timestamp,
                    m.consent_version, m.validation_status, m.last_validated_at,
                    m.validation_error_code, m.account_scope_id,
+                   m.account_scope_verified, m.account_scope_source, m.account_scope_verified_at,
                    m.daily_request_limit, m.monthly_request_limit,
                    m.daily_spending_limit_cents, m.monthly_spending_limit_cents,
                    s.data_encryption_version, s.kek_version,
@@ -468,6 +485,9 @@ async def get_credential_metadata(credential_id: UUID, caller_id: UUID) -> Store
         last_validated_at=row["last_validated_at"],
         validation_error_code=row["validation_error_code"],
         account_scope_id=row["account_scope_id"],
+        account_scope_verified=row["account_scope_verified"],
+        account_scope_source=row["account_scope_source"],
+        account_scope_verified_at=row["account_scope_verified_at"],
         daily_request_limit=row["daily_request_limit"],
         monthly_request_limit=row["monthly_request_limit"],
         daily_spending_limit_cents=row["daily_spending_limit_cents"],
@@ -488,6 +508,7 @@ async def list_credentials_by_owner(owner_id: UUID) -> list[StoredCredentialResu
                    m.status, m.sharing_scope, m.shared_consent, m.sharing_consent_timestamp,
                    m.consent_version, m.validation_status, m.last_validated_at,
                    m.validation_error_code, m.account_scope_id,
+                   m.account_scope_verified, m.account_scope_source, m.account_scope_verified_at,
                    m.daily_request_limit, m.monthly_request_limit,
                    m.daily_spending_limit_cents, m.monthly_spending_limit_cents,
                    s.data_encryption_version, s.kek_version,
@@ -517,6 +538,9 @@ async def list_credentials_by_owner(owner_id: UUID) -> list[StoredCredentialResu
             last_validated_at=r["last_validated_at"],
             validation_error_code=r["validation_error_code"],
             account_scope_id=r["account_scope_id"],
+            account_scope_verified=r["account_scope_verified"],
+            account_scope_source=r["account_scope_source"],
+            account_scope_verified_at=r["account_scope_verified_at"],
             daily_request_limit=r["daily_request_limit"],
             monthly_request_limit=r["monthly_request_limit"],
             daily_spending_limit_cents=r["daily_spending_limit_cents"],
@@ -536,6 +560,12 @@ async def update_credential_metadata(
     updates: dict[str, Any],
 ) -> StoredCredentialResult:
     """Update permitted non-cryptographic metadata fields on an owned credential."""
+    # Strip any client-injected account scope fields to prevent manual tampering
+    updates.pop("account_scope_id", None)
+    updates.pop("account_scope_verified", None)
+    updates.pop("account_scope_source", None)
+    updates.pop("account_scope_verified_at", None)
+
     if not updates:
         return await get_credential_metadata(credential_id, owner_id)
 
@@ -625,3 +655,37 @@ async def set_credential_status(
             )
 
     return await get_credential_metadata(credential_id, owner_id)
+
+
+async def set_verified_account_scope(
+    credential_id: UUID,
+    account_scope_id: str,
+    source: str = "provider_response_header",
+) -> StoredCredentialResult:
+    """Record server-verified provider account identity.
+
+    Only callable by trusted internal backend components (e.g. M2.5 dispatch adapters).
+    """
+    async with get_vault_session() as conn:
+        row = await conn.fetchrow(
+            """
+            UPDATE public.api_key_metadata
+            SET account_scope_id = $1,
+                account_scope_verified = true,
+                account_scope_source = $2,
+                account_scope_verified_at = now(),
+                updated_at = now()
+            WHERE id = $3
+            RETURNING owner_id
+            """,
+            account_scope_id,
+            source,
+            credential_id,
+        )
+        if not row:
+            raise VaultDecryptionError(
+                f"Credential '{credential_id}' not found",
+                code="CREDENTIAL_NOT_FOUND",
+            )
+
+    return await get_credential_metadata(credential_id, caller_id=row["owner_id"])

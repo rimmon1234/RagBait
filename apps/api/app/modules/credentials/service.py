@@ -72,6 +72,9 @@ def _to_credential_response(
         last_validated_at=res.last_validated_at,
         validation_error_code=res.validation_error_code,
         account_scope_id=res.account_scope_id,
+        account_scope_verified=res.account_scope_verified,
+        account_scope_source=res.account_scope_source,
+        account_scope_verified_at=res.account_scope_verified_at,
         daily_request_limit=res.daily_request_limit,
         monthly_request_limit=res.monthly_request_limit,
         daily_spending_limit_cents=res.daily_spending_limit_cents,
@@ -121,7 +124,6 @@ async def create_user_credential(
         shared_consent=shared_consent,
         sharing_consent_timestamp=consent_timestamp,
         consent_version=consent_version,
-        account_scope_id=payload.account_scope_id.strip() if payload.account_scope_id else None,
         daily_request_limit=payload.daily_request_limit,
         monthly_request_limit=payload.monthly_request_limit,
         daily_spending_limit_cents=payload.daily_spending_limit_cents,
@@ -188,11 +190,6 @@ async def update_user_credential(
 
     if payload.nickname is not None:
         updates["nickname"] = payload.nickname.strip()
-
-    if payload.account_scope_id is not None:
-        updates["account_scope_id"] = (
-            payload.account_scope_id.strip() if payload.account_scope_id else None
-        )
 
     if payload.daily_request_limit is not None:
         updates["daily_request_limit"] = payload.daily_request_limit

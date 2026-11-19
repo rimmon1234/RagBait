@@ -17,10 +17,16 @@ import asyncio
 from unittest.mock import patch
 from uuid import UUID, uuid4
 
+import httpx
 import pytest
+from httpx import ASGITransport
+from pydantic import ValidationError
 
 from app.core.database import close_db_pool, get_pool, init_db_pool
+from app.core.dependencies import get_current_profile, get_current_user
 from app.core.redis import close_redis, get_redis, init_redis
+from app.core.security import AuthenticatedUser
+from app.main import app
 from app.modules.admission.errors import BudgetExhaustedError
 from app.modules.admission.ledger import get_period_boundaries
 from app.modules.admission.schemas import AdmissionRequest, SettlementRequest
@@ -32,10 +38,36 @@ from app.modules.admission.service import (
     reserve_generation,
     settle_reservation,
 )
-from app.modules.credentials.repository import store_credential, update_validation_status
+from app.modules.credentials.repository import (
+    get_credential_metadata,
+    set_verified_account_scope,
+    store_credential,
+    update_credential_metadata,
+    update_validation_status,
+)
+from app.modules.credentials.schemas import (
+    CredentialCreateRequest,
+    CredentialUpdateRequest,
+)
 from app.modules.credentials.vault import close_vault_pool, init_vault_pool
+from tests.conftest import create_test_jwt, make_test_profile
 
 CREATED_TEST_USERS: list[UUID] = []
+
+
+def setup_auth_context(user_id: UUID, email: str = "contributor@university.edu") -> dict[str, str]:
+    """Configure dependency overrides for authenticated user and return auth headers."""
+    profile = make_test_profile(user_id=user_id, email=email)
+    token = create_test_jwt(user_id=user_id, email=email)
+    app.dependency_overrides[get_current_profile] = lambda: profile
+    app.dependency_overrides[get_current_user] = lambda: AuthenticatedUser(
+        user_id=user_id,
+        email=email,
+        role="authenticated",
+        session_id=str(uuid4()),
+        claims={},
+    )
+    return {"Authorization": f"Bearer {token}"}
 
 
 @pytest.fixture(autouse=True)
@@ -63,6 +95,7 @@ async def setup_test_environment():
 
     yield
 
+    app.dependency_overrides.clear()
     if CREATED_TEST_USERS:
         try:
             pool = get_pool()
@@ -429,30 +462,32 @@ async def test_dispatched_and_outcome_unknown_never_expired_by_sweeper():
 
 
 @pytest.mark.anyio
-async def test_500_sequential_subcent_requests_under_1_cent_budget():
-    """Verify exact microcent budget semantics: 500 requests @ 75 microcents cost 37,500 microcents.
+async def test_a_500_requests_under_one_cent_budget():
+    """Test A: 500 requests @ 1 in + 1 out token (75 microcents/req) under 1-cent spending budget.
 
-    A 1-cent spending budget is $0.01 = 1,000,000 microcents.
-    500 * 75 = 37,500 microcents (< 1,000,000).
-    Proves that individual requests are NOT rounded to 1 cent each, avoiding artificial budget exhaustion.
+    - Input tokens: 1, Output tokens: 1
+    - Input cost: 15 microcents, Output cost: 60 microcents -> 75 microcents per request.
+    - Daily request limit: 500 requests.
+    - Daily spending budget: 1 cent ($0.01 = 1,000,000 microcents).
+    - Expected:
+        - 500 requests reserved, dispatched, and settled.
+        - Total actual usage = 37,500 microcents ($0.000375).
+        - Request 501 is rejected because of the daily request-count limit (500/500), NOT spending limit.
+        - Both daily and monthly budget counters reflect exact microcents.
+        - Dashboard display rounds up to 1 cent.
     """
-    # 1 cent daily spending budget, 1000 request limit
     user_id, cred_id = await create_test_contributor(
-        daily_req=1000,
+        daily_req=500,  # 500 requests limit upfront
         monthly_req=50000,
-        daily_spend_cents=1,  # $0.01
+        daily_spend_cents=1,  # 1 cent = 1,000,000 microcents
         provider_id="groq",
     )
 
-    # 1 token in + 1 token out on openai/gpt-oss-120b
-    # Input cost: 15 cents/1M. Output cost: 60 cents/1M.
-    # Total cost = 1 * 15 + 1 * 60 = 75 microcents ($0.00000075 USD).
     NUM_REQUESTS = 500
     EXPECTED_TOTAL_MICROCENTS = NUM_REQUESTS * 75  # 37,500 microcents
 
     redis_conn = get_redis()
     for i in range(NUM_REQUESTS):
-        # Reset sliding-window RPM rate keys so the rapid sub-second loop tests the PostgreSQL budget counters
         if redis_conn:
             rate_keys = await redis_conn.keys("ragbait:rate:*")
             if rate_keys:
@@ -462,8 +497,8 @@ async def test_500_sequential_subcent_requests_under_1_cent_budget():
             credential_id=cred_id,
             provider_id="groq",
             model_id="openai/gpt-oss-120b",
-            idempotency_key=f"subcent_500_{i}",
-            request_id=f"req_subcent_500_{i}",
+            idempotency_key=f"subcent_500_a_{i}",
+            request_id=f"req_subcent_500_a_{i}",
             estimated_input_tokens=1,
             max_output_tokens=1,
         )
@@ -479,11 +514,11 @@ async def test_500_sequential_subcent_requests_under_1_cent_budget():
             ),
         )
 
-    # 1. Verify exact database counter values
+    # 1. Verify exact database counter values (both daily and monthly)
     pool = get_pool()
-    day_start, _ = get_period_boundaries()
+    day_start, month_start = get_period_boundaries()
     async with pool.acquire() as conn:
-        counter = await conn.fetchrow(
+        day_counter = await conn.fetchrow(
             """
             SELECT dispatched_requests, reserved_requests, actual_cost_microcents,
                    reserved_cost_microcents, actual_cost_cents, reserved_cost_cents
@@ -493,13 +528,27 @@ async def test_500_sequential_subcent_requests_under_1_cent_budget():
             cred_id,
             day_start,
         )
-        assert counter["dispatched_requests"] == NUM_REQUESTS
-        assert counter["reserved_requests"] == 0
-        assert counter["actual_cost_microcents"] == EXPECTED_TOTAL_MICROCENTS
-        assert counter["reserved_cost_microcents"] == 0
-        # Display cents: 37,500 microcents rounds up to 1 whole cent on integer dashboard
-        assert counter["actual_cost_cents"] == 1
-        assert counter["reserved_cost_cents"] == 0
+        assert day_counter["dispatched_requests"] == NUM_REQUESTS
+        assert day_counter["reserved_requests"] == 0
+        assert day_counter["actual_cost_microcents"] == EXPECTED_TOTAL_MICROCENTS
+        assert day_counter["reserved_cost_microcents"] == 0
+        assert day_counter["actual_cost_cents"] == 1
+        assert day_counter["reserved_cost_cents"] == 0
+
+        month_counter = await conn.fetchrow(
+            """
+            SELECT dispatched_requests, reserved_requests, actual_cost_microcents,
+                   reserved_cost_microcents, actual_cost_cents, reserved_cost_cents
+            FROM public.llm_usage_budget_counters
+            WHERE credential_id = $1 AND period_type = 'monthly' AND period_start = $2
+            """,
+            cred_id,
+            month_start,
+        )
+        assert month_counter["dispatched_requests"] == NUM_REQUESTS
+        assert month_counter["reserved_requests"] == 0
+        assert month_counter["actual_cost_microcents"] == EXPECTED_TOTAL_MICROCENTS
+        assert month_counter["reserved_cost_microcents"] == 0
 
     # 2. Verify dashboard serialization: display cents vs exact microcents
     summary = await get_usage_summary_for_user(user_id)
@@ -509,28 +558,22 @@ async def test_500_sequential_subcent_requests_under_1_cent_budget():
     assert summary.total_output_tokens == NUM_REQUESTS
     assert summary.total_actual_cost_microcents == EXPECTED_TOTAL_MICROCENTS
     assert summary.daily_spending_microcents == EXPECTED_TOTAL_MICROCENTS
-    assert summary.daily_spending_cents == 1  # 1 cent on whole-cent card
+    assert summary.daily_spending_cents == 1
     assert summary.daily_spending_budget_cents == 1
 
-    # 3. Verify independent request-count limit enforcement
-    # If daily request limit is reduced to 500, request #501 fails on requests, NOT spending!
+    # 3. Request 501 is rejected strictly by request count, NOT spending budget
     if redis_conn:
         rate_keys = await redis_conn.keys("ragbait:rate:*")
         if rate_keys:
             await redis_conn.delete(*rate_keys)
-    async with pool.acquire() as conn:
-        await conn.execute(
-            "UPDATE public.api_key_metadata SET daily_request_limit = 500 WHERE id = $1",
-            cred_id,
-        )
 
     req_501 = AdmissionRequest(
         user_id=user_id,
         credential_id=cred_id,
         provider_id="groq",
         model_id="openai/gpt-oss-120b",
-        idempotency_key="subcent_501",
-        request_id="req_subcent_501",
+        idempotency_key="subcent_501_a",
+        request_id="req_subcent_501_a",
         estimated_input_tokens=1,
         max_output_tokens=1,
     )
@@ -540,3 +583,327 @@ async def test_500_sequential_subcent_requests_under_1_cent_budget():
     assert exc_info.value.status_code == 429
     assert exc_info.value.details.get("limit_type") == "requests"
     assert "Daily request limit exceeded (500/500)" in exc_info.value.message
+
+
+@pytest.mark.anyio
+async def test_b_100_in_100_out_tokens_under_one_cent_budget():
+    """Test B: 100 in + 100 out tokens (7,500 microcents/req) under 1-cent spending budget.
+
+    - 100 input tokens * 15 microcents + 100 output tokens * 60 microcents = 7,500 microcents/req.
+    - 1-cent daily budget = 1,000,000 microcents.
+    - 1,000,000 / 7,500 = 133.33 -> Exactly 133 complete requests allowed.
+    - 133 * 7,500 = 997,500 microcents ($0.009975).
+    - Request 134 requires 7,500 microcents -> 997,500 + 7,500 = 1,005,000 > 1,000,000 -> REJECTED by spending limit.
+    - Daily request limit: 5,000 requests (ensuring request limit is not the bottleneck).
+    """
+    user_id, cred_id = await create_test_contributor(
+        daily_req=5000,
+        monthly_req=50000,
+        daily_spend_cents=1,  # 1 cent = 1,000,000 microcents
+        monthly_spend_cents=100,
+        provider_id="groq",
+    )
+
+    NUM_ALLOWED = 133
+    COST_PER_REQ = 7500  # 100 * 15 + 100 * 60
+    EXPECTED_TOTAL_MICROCENTS = NUM_ALLOWED * COST_PER_REQ  # 997,500 microcents
+
+    redis_conn = get_redis()
+    for i in range(NUM_ALLOWED):
+        if redis_conn:
+            rate_keys = await redis_conn.keys("ragbait:rate:*")
+            if rate_keys:
+                await redis_conn.delete(*rate_keys)
+        req = AdmissionRequest(
+            user_id=user_id,
+            credential_id=cred_id,
+            provider_id="groq",
+            model_id="openai/gpt-oss-120b",
+            idempotency_key=f"b_req_{i}",
+            request_id=f"b_req_id_{i}",
+            estimated_input_tokens=100,
+            max_output_tokens=100,
+        )
+        res = await reserve_generation(req)
+        assert res.estimated_cost_microcents == COST_PER_REQ
+        await mark_dispatched(res.reservation_id)
+        await settle_reservation(
+            res.reservation_id,
+            req=SettlementRequest(
+                actual_input_tokens=100,
+                actual_output_tokens=100,
+                duration_ms=15,
+                provider_status_code=200,
+            ),
+        )
+
+    # 1. Verify exact database counter values (both daily and monthly)
+    pool = get_pool()
+    day_start, month_start = get_period_boundaries()
+    async with pool.acquire() as conn:
+        day_counter = await conn.fetchrow(
+            """
+            SELECT dispatched_requests, reserved_requests, actual_cost_microcents,
+                   reserved_cost_microcents, actual_cost_cents, reserved_cost_cents
+            FROM public.llm_usage_budget_counters
+            WHERE credential_id = $1 AND period_type = 'daily' AND period_start = $2
+            """,
+            cred_id,
+            day_start,
+        )
+        assert day_counter["dispatched_requests"] == NUM_ALLOWED
+        assert day_counter["reserved_requests"] == 0
+        assert day_counter["actual_cost_microcents"] == EXPECTED_TOTAL_MICROCENTS
+        assert day_counter["reserved_cost_microcents"] == 0
+        assert (
+            day_counter["actual_cost_cents"] == 1
+        )  # 997,500 microcents rounds to 1 cent for display
+        assert day_counter["reserved_cost_cents"] == 0
+
+        month_counter = await conn.fetchrow(
+            """
+            SELECT dispatched_requests, reserved_requests, actual_cost_microcents,
+                   reserved_cost_microcents, actual_cost_cents, reserved_cost_cents
+            FROM public.llm_usage_budget_counters
+            WHERE credential_id = $1 AND period_type = 'monthly' AND period_start = $2
+            """,
+            cred_id,
+            month_start,
+        )
+        assert month_counter["dispatched_requests"] == NUM_ALLOWED
+        assert month_counter["reserved_requests"] == 0
+        assert month_counter["actual_cost_microcents"] == EXPECTED_TOTAL_MICROCENTS
+        assert month_counter["reserved_cost_microcents"] == 0
+
+    # 2. Verify dashboard summary presentation logic
+    summary = await get_usage_summary_for_user(user_id)
+    assert summary.total_dispatched_requests == NUM_ALLOWED
+    assert summary.total_settled_requests == NUM_ALLOWED
+    assert summary.total_actual_cost_microcents == EXPECTED_TOTAL_MICROCENTS
+    assert summary.daily_spending_microcents == EXPECTED_TOTAL_MICROCENTS
+    assert summary.daily_spending_cents == 1
+    assert summary.daily_spending_budget_cents == 1
+
+    # 3. Request 134 must be REJECTED strictly by daily spending limit (1,005,000 > 1,000,000)
+    if redis_conn:
+        rate_keys = await redis_conn.keys("ragbait:rate:*")
+        if rate_keys:
+            await redis_conn.delete(*rate_keys)
+
+    req_134 = AdmissionRequest(
+        user_id=user_id,
+        credential_id=cred_id,
+        provider_id="groq",
+        model_id="openai/gpt-oss-120b",
+        idempotency_key="b_req_134",
+        request_id="b_req_id_134",
+        estimated_input_tokens=100,
+        max_output_tokens=100,
+    )
+    with pytest.raises(BudgetExhaustedError) as exc_info:
+        await reserve_generation(req_134)
+
+    assert exc_info.value.status_code == 429
+    assert exc_info.value.details.get("limit_type") in ("spending", "spending_cents")
+    assert "Daily spending" in exc_info.value.message and "exceeded" in exc_info.value.message
+
+
+# ==============================================================================
+# Area 3: Server-Controlled Account Scope Security Tests
+# ==============================================================================
+
+
+@pytest.mark.anyio
+async def test_server_controlled_account_scope_rejection_on_user_create():
+    """User A cannot set arbitrary account scope via create payload (HTTP 422 rejected)."""
+    # 1. Pydantic schema rejection
+    with pytest.raises(ValidationError):
+        CredentialCreateRequest(
+            provider_id="groq",
+            nickname="Forged Key",
+            api_key="gsk_1234567890",
+            account_scope_id="victim_scope",  # type: ignore[call-arg]
+        )
+
+    # 2. HTTP endpoint rejection
+    user_a = uuid4()
+    pool = get_pool()
+    async with pool.acquire() as conn:
+        await conn.execute(
+            """
+            INSERT INTO auth.users (id, instance_id, email, aud, role, raw_user_meta_data)
+            VALUES ($1, '00000000-0000-0000-0000-000000000000', 'forger@university.edu', 'authenticated', 'authenticated', '{"full_name": "Forger"}'::jsonb)
+            """,
+            user_a,
+        )
+        await conn.execute(
+            "UPDATE public.profiles SET role = 'user', approval_status = 'approved' WHERE id = $1",
+            user_a,
+        )
+    CREATED_TEST_USERS.append(user_a)
+
+    headers = setup_auth_context(user_a)
+
+    async with httpx.AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        res = await client.post(
+            "/api/v1/me/api-keys",
+            json={
+                "provider_id": "groq",
+                "nickname": "Forged Scope Key",
+                "api_key": "gsk_test_1234567890",
+                "account_scope_id": "malicious_org",
+            },
+            headers=headers,
+        )
+        assert res.status_code == 422
+        assert "extra inputs are not permitted" in res.text.lower()
+
+
+@pytest.mark.anyio
+async def test_server_controlled_account_scope_rejection_on_user_update():
+    """User A and User B cannot modify account scope via update API or repository."""
+    user_a, cred_a = await create_test_contributor()
+
+    # 1. Pydantic schema rejection
+    with pytest.raises(ValidationError):
+        CredentialUpdateRequest(account_scope_id="stolen_org")  # type: ignore[call-arg]
+
+    # 2. HTTP endpoint rejection
+    headers_a = setup_auth_context(user_a)
+
+    async with httpx.AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        res = await client.patch(
+            f"/api/v1/me/api-keys/{cred_a}",
+            json={"account_scope_id": "stolen_org"},
+            headers=headers_a,
+        )
+        assert res.status_code == 422
+        assert "extra inputs are not permitted" in res.text.lower()
+
+    # 3. Direct repository update strips account_scope_id
+    await update_credential_metadata(
+        cred_a, user_a, {"account_scope_id": "bypassed_org", "nickname": "Updated"}
+    )
+    meta = await get_credential_metadata(cred_a, user_a)
+    assert meta.account_scope_id is None
+    assert meta.account_scope_verified is False
+
+
+@pytest.mark.anyio
+async def test_unverified_account_scope_does_not_share_redis_quota_buckets():
+    """Unverified account identifiers do not create or share Redis quota buckets."""
+    # Manually create two credentials with identical unverified account_scope_id in DB
+    user_1, cred_1 = await create_test_contributor()
+    user_2, cred_2 = await create_test_contributor()
+
+    pool = get_pool()
+    async with pool.acquire() as conn:
+        await conn.execute(
+            """
+            UPDATE public.api_key_metadata
+            SET account_scope_id = 'unverified_shared_org',
+                account_scope_verified = false
+            WHERE id = ANY($1)
+            """,
+            [cred_1, cred_2],
+        )
+
+    redis_conn = get_redis()
+    if redis_conn:
+        await redis_conn.flushdb()
+
+    req = AdmissionRequest(
+        user_id=user_1,
+        credential_id=cred_1,
+        provider_id="groq",
+        model_id="openai/gpt-oss-120b",
+        idempotency_key="unverified_scope_test",
+        request_id="req_unverified_scope_test",
+        estimated_input_tokens=10,
+        max_output_tokens=10,
+    )
+    res = await reserve_generation(req)
+    assert res.status == "reserved"
+
+    if redis_conn:
+        # Assert that NO Redis key exists for the unverified account scope
+        acc_keys = await redis_conn.keys("ragbait:rate:account:*")
+        assert len(acc_keys) == 0
+        tpm_keys = await redis_conn.keys("ragbait:rate:tpm:account:*")
+        assert len(tpm_keys) == 0
+
+
+@pytest.mark.anyio
+async def test_unknown_account_scope_avoids_fabricated_identities():
+    """Credentials with unknown/null account scope never generate fake account rate keys."""
+    user_id, cred_id = await create_test_contributor()
+
+    redis_conn = get_redis()
+    if redis_conn:
+        await redis_conn.flushdb()
+
+    req = AdmissionRequest(
+        user_id=user_id,
+        credential_id=cred_id,
+        provider_id="groq",
+        model_id="openai/gpt-oss-120b",
+        idempotency_key="null_scope_test",
+        request_id="req_null_scope_test",
+        estimated_input_tokens=10,
+        max_output_tokens=10,
+    )
+    res = await reserve_generation(req)
+    assert res.status == "reserved"
+
+    if redis_conn:
+        # Verified: user, credential, provider, and model keys exist, but ZERO account keys exist
+        keys = await redis_conn.keys("ragbait:rate:*")
+        key_str = " ".join([k.decode("utf-8") if isinstance(k, bytes) else str(k) for k in keys])
+        assert f"ragbait:rate:user:{user_id}" in key_str
+        assert f"ragbait:rate:credential:{cred_id}" in key_str
+        assert "ragbait:rate:provider:groq" in key_str
+        assert "ragbait:rate:account:" not in key_str
+
+
+@pytest.mark.anyio
+async def test_verified_account_scope_enforces_shared_quotas_and_provider_protection():
+    """Only backend-verified account scopes establish shared Redis buckets; provider limits remain active."""
+    user_1, cred_1 = await create_test_contributor()
+    user_2, cred_2 = await create_test_contributor()
+
+    # Backend trusted verification marks account_scope_verified = true
+    await set_verified_account_scope(
+        cred_1, "verified_org_alpha", source="provider_response_header"
+    )
+    await set_verified_account_scope(
+        cred_2, "verified_org_alpha", source="provider_response_header"
+    )
+
+    redis_conn = get_redis()
+    if redis_conn:
+        await redis_conn.flushdb()
+
+    # Credential 1 reserves
+    req1 = AdmissionRequest(
+        user_id=user_1,
+        credential_id=cred_1,
+        provider_id="groq",
+        model_id="openai/gpt-oss-120b",
+        idempotency_key="verified_scope_test_1",
+        request_id="req_ver_1",
+        estimated_input_tokens=10,
+        max_output_tokens=10,
+    )
+    await reserve_generation(req1)
+
+    if redis_conn:
+        # Verified account key is properly established in Redis
+        acc_key = "ragbait:rate:account:groq:verified_org_alpha"
+        assert await redis_conn.exists(acc_key) == 1
+        # Provider-wide protection also remains active
+        prov_key = "ragbait:rate:provider:groq"
+        assert await redis_conn.exists(prov_key) == 1
