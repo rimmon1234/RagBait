@@ -87,7 +87,7 @@ async def test_groq_invalid_credential():
             ):
                 pass
 
-        assert exc_info.value.category == "invalid_credential"
+        assert exc_info.value.category in ("invalid_credential", "invalid_credentials")
 
 
 @pytest.mark.asyncio

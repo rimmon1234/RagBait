@@ -60,7 +60,7 @@ class AdmissionReservation(BaseModel):
     resolved_model_id: str | None = None
     upstream_provider: str | None = None
     upstream_generation_id: str | None = None
-    usage_source: str = "authoritative"
+    usage_source: str = "pending"
     created_at: datetime
 
 

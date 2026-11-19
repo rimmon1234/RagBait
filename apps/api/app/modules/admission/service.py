@@ -666,6 +666,7 @@ async def reconcile_reservation(
     actual_output_tokens: int,
     actual_cost_microcents: int | None = None,
     reconciliation_notes: str | None = None,
+    usage_source: str = "authoritative",
 ) -> SettlementResult:
     """Reconcile an outcome_unknown or reconciliation_required reservation with confirmed actual usage."""
     pool = get_pool()
@@ -696,6 +697,7 @@ async def reconcile_reservation(
             actual_output_tokens=actual_output_tokens,
             actual_cost_microcents=actual_cost_microcents,
             reconciliation_notes=reconciliation_notes,
+            usage_source=usage_source,
         )
 
 

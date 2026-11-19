@@ -149,7 +149,7 @@ async def reserve_budget_transactional(
     resolved_model_id: str | None = None,
     upstream_provider: str | None = None,
     upstream_generation_id: str | None = None,
-    usage_source: str = "authoritative",
+    usage_source: str = "pending",
 ) -> AdmissionReservation:
     """Atomically verify and lock daily/monthly limits and persist a durable reservation."""
     pool = get_pool()
@@ -215,7 +215,23 @@ async def reserve_budget_transactional(
             # Check TPD (Tokens Per Day) if limit configured
             estimated_tokens = estimated_input_tokens + estimated_output_tokens
             if effective_daily_token_limit is not None and effective_daily_token_limit > 0:
-                total_daily_tokens = day_counter["actual_tokens"] + day_counter["reserved_tokens"]
+                if account_scope_id:
+                    acc_tokens = await conn.fetchval(
+                        """
+                        SELECT COALESCE(SUM(bc.actual_tokens + bc.reserved_tokens), 0)
+                        FROM public.llm_usage_budget_counters bc
+                        JOIN public.api_key_metadata m ON m.id = bc.credential_id
+                        WHERE m.account_scope_id = $1 AND bc.period_type = 'daily' AND bc.period_start = $2
+                        """,
+                        account_scope_id,
+                        day_start,
+                    )
+                    total_daily_tokens = int(acc_tokens)
+                else:
+                    total_daily_tokens = (
+                        day_counter["actual_tokens"] + day_counter["reserved_tokens"]
+                    )
+
                 if total_daily_tokens + estimated_tokens > effective_daily_token_limit:
                     raise BudgetExhaustedError(
                         reason=f"Daily token limit exceeded ({total_daily_tokens + estimated_tokens}/{effective_daily_token_limit})",
@@ -1017,6 +1033,7 @@ async def reconcile_usage_transactional(
     actual_output_tokens: int,
     actual_cost_microcents: int,
     reconciliation_notes: str | None = None,
+    usage_source: str = "authoritative",
 ) -> SettlementResult:
     """Reconcile an outcome_unknown or reconciliation_required reservation with confirmed actual usage."""
     pool = get_pool()
@@ -1028,6 +1045,7 @@ async def reconcile_usage_transactional(
                 """
                 SELECT id, user_id, credential_id, status, estimated_cost_cents,
                        COALESCE(estimated_cost_microcents, estimated_cost_cents * 1000000) as estimated_cost_microcents,
+                       estimated_input_tokens, estimated_output_tokens,
                        actual_cost_cents, actual_cost_microcents, currency, created_at
                 FROM public.llm_usage_reservations
                 WHERE id = $1
@@ -1062,23 +1080,31 @@ async def reconcile_usage_transactional(
             user_id = res["user_id"]
             estimated_cost_cents = res["estimated_cost_cents"]
             estimated_cost_microcents = res["estimated_cost_microcents"]
+            estimated_tokens = (res["estimated_input_tokens"] or 0) + (
+                res["estimated_output_tokens"] or 0
+            )
+            actual_tokens = actual_input_tokens + actual_output_tokens
             actual_cost_cents = microcents_to_ceiling_cents(actual_cost_microcents)
             day_start, month_start = get_period_boundaries(res["created_at"])
 
-            # In outcome_unknown, conservative estimated cost was retained.
-            # Deduct conservative reservation, apply confirmed actual cost.
+            # In outcome_unknown, conservative estimated cost and tokens were retained.
+            # Deduct conservative reservation, apply confirmed actual cost and tokens.
             await conn.execute(
                 """
                 UPDATE public.llm_usage_budget_counters
                 SET reserved_cost_cents = GREATEST(0, reserved_cost_cents - $1),
                     reserved_cost_microcents = GREATEST(0, reserved_cost_microcents - $2),
-                    actual_cost_microcents = actual_cost_microcents + $3,
-                    actual_cost_cents = CEIL((actual_cost_microcents + $3)::numeric / 1000000)::bigint,
+                    reserved_tokens = GREATEST(0, reserved_tokens - $3),
+                    actual_tokens = actual_tokens + $4,
+                    actual_cost_microcents = actual_cost_microcents + $5,
+                    actual_cost_cents = CEIL((actual_cost_microcents + $5)::numeric / 1000000)::bigint,
                     updated_at = now()
-                WHERE credential_id = $4 AND period_type = 'daily' AND period_start = $5
+                WHERE credential_id = $6 AND period_type = 'daily' AND period_start = $7
                 """,
                 estimated_cost_cents,
                 estimated_cost_microcents,
+                estimated_tokens,
+                actual_tokens,
                 actual_cost_microcents,
                 credential_id,
                 day_start,
@@ -1088,13 +1114,17 @@ async def reconcile_usage_transactional(
                 UPDATE public.llm_usage_budget_counters
                 SET reserved_cost_cents = GREATEST(0, reserved_cost_cents - $1),
                     reserved_cost_microcents = GREATEST(0, reserved_cost_microcents - $2),
-                    actual_cost_microcents = actual_cost_microcents + $3,
-                    actual_cost_cents = CEIL((actual_cost_microcents + $3)::numeric / 1000000)::bigint,
+                    reserved_tokens = GREATEST(0, reserved_tokens - $3),
+                    actual_tokens = actual_tokens + $4,
+                    actual_cost_microcents = actual_cost_microcents + $5,
+                    actual_cost_cents = CEIL((actual_cost_microcents + $5)::numeric / 1000000)::bigint,
                     updated_at = now()
-                WHERE credential_id = $4 AND period_type = 'monthly' AND period_start = $5
+                WHERE credential_id = $6 AND period_type = 'monthly' AND period_start = $7
                 """,
                 estimated_cost_cents,
                 estimated_cost_microcents,
+                estimated_tokens,
+                actual_tokens,
                 actual_cost_microcents,
                 credential_id,
                 month_start,
@@ -1109,7 +1139,8 @@ async def reconcile_usage_transactional(
                     actual_output_tokens = $3,
                     actual_cost_cents = $4,
                     actual_cost_microcents = $5,
-                    settled_at = $6,
+                    usage_source = $6,
+                    settled_at = $7,
                     updated_at = now()
                 WHERE id = $1
                 """,
@@ -1118,6 +1149,7 @@ async def reconcile_usage_transactional(
                 actual_output_tokens,
                 actual_cost_cents,
                 actual_cost_microcents,
+                usage_source,
                 now_utc,
             )
 
@@ -1186,6 +1218,7 @@ async def mark_outcome_unknown_transactional(
                 UPDATE public.llm_usage_reservations
                 SET status = 'outcome_unknown',
                     error_category = $2,
+                    usage_source = 'unknown',
                     updated_at = now()
                 WHERE id = $1
                 """,

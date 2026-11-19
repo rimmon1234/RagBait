@@ -149,7 +149,6 @@ async def test_cross_user_owner_only_credential_rejected(client: httpx.AsyncClie
     user_b = await create_db_user(email="user_b@ragbait.app")
 
     unique_key = f"user-b-secret-gemini-key-{uuid4().hex}"
-    # User B creates an owner-only credential
     cred_b = await store_credential(
         owner_id=user_b,
         provider_id="gemini",
@@ -168,7 +167,6 @@ async def test_cross_user_owner_only_credential_rejected(client: httpx.AsyncClie
             cred_b.id,
         )
 
-    # User A tries to dispatch using User B's owner-only credential
     headers_a = setup_auth_context(user_a, email="user_a@ragbait.app")
 
     resp = await client.post(
@@ -209,7 +207,6 @@ async def test_community_sharing_gated_by_provider_policy(client: httpx.AsyncCli
             )
 
         unique_key = f"user-b-groq-key-{uuid4().hex}"
-        # User B creates a credential and consents to community sharing
         cred_b = await store_credential(
             owner_id=user_b,
             provider_id="groq",
@@ -227,7 +224,6 @@ async def test_community_sharing_gated_by_provider_policy(client: httpx.AsyncCli
                 cred_b.id,
             )
 
-        # User A tries to dispatch with it
         headers_a = setup_auth_context(user_a, email="user_a2@ragbait.app")
 
         resp = await client.post(
@@ -242,11 +238,9 @@ async def test_community_sharing_gated_by_provider_policy(client: httpx.AsyncCli
             headers=headers_a,
         )
 
-        # Must be rejected because provider-level allows_community_sharing is False
         assert resp.status_code == 403
         assert "community" in resp.text.lower()
     finally:
-        # Restore allows_community_sharing for groq
         async with pool.acquire() as conn:
             await conn.execute(
                 """
@@ -255,3 +249,155 @@ async def test_community_sharing_gated_by_provider_policy(client: httpx.AsyncCli
                 WHERE id = 'groq'
                 """
             )
+
+
+@pytest.mark.asyncio
+async def test_missing_contributor_consent_rejected(client: httpx.AsyncClient):
+    """When sharing_scope is community_shared but contributor shared_consent is false, reject with 403."""
+    user_a = await create_db_user(email="requester@ragbait.app")
+    user_b = await create_db_user(email="contributor_noconsent@ragbait.app")
+
+    unique_key = f"noconsent-key-{uuid4().hex}"
+    cred_b = await store_credential(
+        owner_id=user_b,
+        provider_id="groq",
+        raw_key=unique_key,
+        nickname="No Consent Key",
+        sharing_scope="community_shared",
+        shared_consent=False,  # Contributor revoked or withheld consent
+        status="active",
+    )
+    CREATED_TEST_CREDS.append(cred_b.id)
+
+    pool = get_pool()
+    async with pool.acquire() as conn:
+        await conn.execute(
+            "UPDATE public.api_key_metadata SET validation_status = 'valid' WHERE id = $1",
+            cred_b.id,
+        )
+
+    headers_a = setup_auth_context(user_a, email="requester@ragbait.app")
+
+    resp = await client.post(
+        "/api/v1/llm/chat/completions",
+        json={
+            "provider_id": "groq",
+            "model_id": "openai/gpt-oss-120b",
+            "credential_id": str(cred_b.id),
+            "messages": [{"role": "user", "content": "hi"}],
+            "idempotency_key": f"sec_noconsent_{uuid4().hex[:8]}",
+        },
+        headers=headers_a,
+    )
+
+    assert resp.status_code == 403
+    assert "private" in resp.text.lower() or "denied" in resp.text.lower()
+
+
+@pytest.mark.asyncio
+async def test_admin_cannot_dispatch_other_users_private_credential(client: httpx.AsyncClient):
+    """Administrator role alone does not bypass ownership isolation or authorize foreign private keys."""
+    admin_id = await create_db_user(email="admin_user@ragbait.app", role="admin")
+    student_id = await create_db_user(email="student_user@ragbait.app", role="user")
+
+    unique_key = f"student-private-key-{uuid4().hex}"
+    student_cred = await store_credential(
+        owner_id=student_id,
+        provider_id="gemini",
+        raw_key=unique_key,
+        nickname="Student Private Gemini",
+        sharing_scope="owner_only",
+        shared_consent=False,
+        status="active",
+    )
+    CREATED_TEST_CREDS.append(student_cred.id)
+
+    pool = get_pool()
+    async with pool.acquire() as conn:
+        await conn.execute(
+            "UPDATE public.api_key_metadata SET validation_status = 'valid' WHERE id = $1",
+            student_cred.id,
+        )
+
+    admin_headers = setup_auth_context(admin_id, email="admin_user@ragbait.app", role="admin")
+
+    resp = await client.post(
+        "/api/v1/llm/chat/completions",
+        json={
+            "provider_id": "gemini",
+            "model_id": "gemini-3.8-flash",
+            "credential_id": str(student_cred.id),
+            "messages": [{"role": "user", "content": "hi"}],
+            "idempotency_key": f"sec_admin_priv_{uuid4().hex[:8]}",
+        },
+        headers=admin_headers,
+    )
+
+    # Must be 403: Admin cannot use student's private key
+    assert resp.status_code == 403
+    assert "private" in resp.text.lower() or "denied" in resp.text.lower()
+
+
+@pytest.mark.asyncio
+async def test_mismatched_provider_credential_rejected(client: httpx.AsyncClient):
+    """Passing a Gemini credential ID to a Groq dispatch request must be rejected with 409 Conflict."""
+    user_id = await create_db_user(email="mismatch_user@ragbait.app")
+
+    unique_key = f"gemini-mismatch-key-{uuid4().hex}"
+    gemini_cred = await store_credential(
+        owner_id=user_id,
+        provider_id="gemini",
+        raw_key=unique_key,
+        nickname="Gemini Mismatch Key",
+        sharing_scope="owner_only",
+        shared_consent=False,
+        status="active",
+    )
+    CREATED_TEST_CREDS.append(gemini_cred.id)
+
+    pool = get_pool()
+    async with pool.acquire() as conn:
+        await conn.execute(
+            "UPDATE public.api_key_metadata SET validation_status = 'valid' WHERE id = $1",
+            gemini_cred.id,
+        )
+
+    headers = setup_auth_context(user_id, email="mismatch_user@ragbait.app")
+
+    resp = await client.post(
+        "/api/v1/llm/chat/completions",
+        json={
+            "provider_id": "groq",
+            "model_id": "openai/gpt-oss-120b",
+            "credential_id": str(gemini_cred.id),
+            "messages": [{"role": "user", "content": "hi"}],
+            "idempotency_key": f"sec_mismatch_{uuid4().hex[:8]}",
+        },
+        headers=headers,
+    )
+
+    assert resp.status_code == 409
+    assert "belongs to provider 'gemini', not 'groq'" in resp.text.lower()
+
+
+@pytest.mark.asyncio
+async def test_nonexistent_credential_id_returns_404(client: httpx.AsyncClient):
+    """Supplying an unknown credential UUID returns 404 Not Found."""
+    user_id = await create_db_user(email="notfound_user@ragbait.app")
+    headers = setup_auth_context(user_id, email="notfound_user@ragbait.app")
+
+    random_id = uuid4()
+    resp = await client.post(
+        "/api/v1/llm/chat/completions",
+        json={
+            "provider_id": "gemini",
+            "model_id": "gemini-3.8-flash",
+            "credential_id": str(random_id),
+            "messages": [{"role": "user", "content": "hi"}],
+            "idempotency_key": f"sec_404_{uuid4().hex[:8]}",
+        },
+        headers=headers,
+    )
+
+    assert resp.status_code == 404
+    assert "not found" in resp.text.lower()

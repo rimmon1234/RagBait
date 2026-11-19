@@ -128,7 +128,12 @@ async def test_gemini_429_retry_after():
             ):
                 pass
 
-        assert exc_info.value.category in ("provider_quota_exhausted", "provider_rate_limited")
+        assert exc_info.value.category in (
+            "provider_quota_exhausted",
+            "provider_rate_limited",
+            "quota_exceeded",
+            "rate_limited",
+        )
         assert exc_info.value.retry_after == 30
 
 

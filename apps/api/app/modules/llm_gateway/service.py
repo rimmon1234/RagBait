@@ -21,7 +21,7 @@ from app.modules.admission.service import (
     settle_reservation,
 )
 from app.modules.credentials.repository import retrieve_decrypted_credential
-from app.modules.llm_gateway.interfaces import NormalizedUsage
+from app.modules.llm_gateway.interfaces import NormalizedUsage, UsageSourceType
 from app.modules.llm_gateway.providers.cerebras import CerebrasAdapter
 from app.modules.llm_gateway.providers.gemini import GeminiAdapter
 from app.modules.llm_gateway.providers.groq import GroqAdapter
@@ -41,7 +41,10 @@ from app.modules.llm_gateway.schemas import (
     ResolvedModelInfo,
 )
 from app.modules.llm_gateway.streaming import format_sse_event
-from app.modules.llm_gateway.token_estimation import estimate_generation_tokens
+from app.modules.llm_gateway.token_estimation import (
+    estimate_generation_tokens,
+    estimate_text_tokens,
+)
 
 logger = logging.getLogger("ragbait.llm_gateway")
 
@@ -840,6 +843,10 @@ async def dispatch_chat_completion(
             )
             if not row:
                 raise NotFoundError(f"Credential '{cred_id}' not found")
+            if row["provider_id"] != req.provider_id:
+                raise ConflictError(
+                    f"Credential '{cred_id}' belongs to provider '{row['provider_id']}', not '{req.provider_id}'"
+                )
             cred_row = dict(row)
         else:
             # Auto-discover user's own active, validated credential for this provider
@@ -995,16 +1002,15 @@ async def dispatch_chat_completion(
 
                 # If upstream provider omitted trailing usage frame, conservatively derive usage
                 if not usage_received:
-                    output_tokens = (
-                        max(1, int(len(collected_text) / 3.2) + 1) if collected_text else 0
-                    )
+                    output_tokens = estimate_text_tokens(collected_text) if collected_text else 0
+                    source: UsageSourceType = "derived" if collected_text else "unknown"
                     usage_received = NormalizedUsage(
                         input_tokens=token_estimate.estimated_input_tokens,
                         output_tokens=output_tokens,
                         total_tokens=token_estimate.estimated_input_tokens + output_tokens,
                         cached_tokens=0,
                         reasoning_tokens=0,
-                        usage_source="derived",
+                        usage_source=source,
                     )
 
                 # Settle usage accounting
@@ -1130,22 +1136,35 @@ async def dispatch_chat_completion(
         raise
 
     # Settle non-streaming generation
+    usage = gen_result.usage
+    if not usage:
+        out_tokens = estimate_text_tokens(gen_result.content) if gen_result.content else 0
+        src: UsageSourceType = "derived" if gen_result.content else "unknown"
+        usage = NormalizedUsage(
+            input_tokens=token_estimate.estimated_input_tokens,
+            output_tokens=out_tokens,
+            total_tokens=token_estimate.estimated_input_tokens + out_tokens,
+            cached_tokens=0,
+            reasoning_tokens=0,
+            usage_source=src,
+        )
+
     settlement = await settle_reservation(
         reservation_id=reservation.reservation_id,
         req=SettlementRequest(
-            actual_input_tokens=gen_result.usage.input_tokens,
-            actual_output_tokens=gen_result.usage.output_tokens,
+            actual_input_tokens=usage.input_tokens,
+            actual_output_tokens=usage.output_tokens,
             actual_cost_microcents=None,
             resolved_model_id=gen_result.resolved_model,
             upstream_provider=req.provider_id,
             upstream_generation_id=gen_result.upstream_generation_id,
-            usage_source=gen_result.usage.usage_source,
+            usage_source=usage.usage_source,
         ),
         model_id=gen_result.resolved_model,
         resolved_model_id=gen_result.resolved_model,
         upstream_provider=req.provider_id,
         upstream_generation_id=gen_result.upstream_generation_id,
-        usage_source=gen_result.usage.usage_source,
+        usage_source=usage.usage_source,
     )
 
     response_payload = ChatCompletionResponse(
