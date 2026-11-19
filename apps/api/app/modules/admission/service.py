@@ -1,6 +1,5 @@
 """Admission control orchestrator for rate limits, concurrency leases, and usage ledger."""
 
-import math
 from datetime import UTC, datetime
 from typing import Any
 from uuid import UUID
@@ -20,14 +19,19 @@ from app.modules.admission.errors import (
 )
 from app.modules.admission.ledger import (
     commit_dispatch_transactional,
+    compute_cost_microcents,
+    expire_reservation_transactional,
     get_user_usage_summary,
     mark_outcome_unknown_transactional,
+    microcents_to_ceiling_cents,
+    reconcile_usage_transactional,
     release_reservation_transactional,
     reserve_budget_transactional,
     settle_usage_transactional,
 )
 from app.modules.admission.rate_limiter import (
     RateLimitScope,
+    reconcile_rate_slots,
     release_rate_slots,
     reserve_rate_slots,
 )
@@ -48,14 +52,11 @@ def _compute_ceiling_cost(
     input_cost_per_million: int,
     output_cost_per_million: int,
 ) -> int:
-    """Calculate maximum estimated cost in integer cents using ceiling division."""
-    if input_cost_per_million == 0 and output_cost_per_million == 0:
-        return 0
-
-    cost_cents_float = (
-        (input_tokens * input_cost_per_million) + (output_tokens * output_cost_per_million)
-    ) / 1_000_000.0
-    return math.ceil(cost_cents_float)
+    """Legacy helper returning integer cents; delegates to microcents calculation."""
+    micro = compute_cost_microcents(
+        input_tokens, output_tokens, input_cost_per_million, output_cost_per_million
+    )
+    return microcents_to_ceiling_cents(micro)
 
 
 async def _get_model_details(model_id: str) -> dict[str, Any]:
@@ -144,6 +145,9 @@ async def reserve_generation(
         if cred["sharing_scope"] != "community_shared" or not cred["shared_consent"]:
             raise AuthorizationError("Access to credential denied: private owner-only credential")
 
+    # Trusted account identity comes strictly from stored credential metadata
+    trusted_account_scope_id = cred.get("account_scope_id")
+
     # 2. Fetch & verify model
     model = await _get_model_details(req.model_id)
     if model["availability_status"] != "active":
@@ -155,7 +159,7 @@ async def reserve_generation(
             f"Model '{req.model_id}' belongs to provider '{model['provider_id']}', not '{req.provider_id}'"
         )
 
-    # 3. Calculate ceiling estimated cost
+    # 3. Calculate exact estimated cost in microcents and conservative ceiling in cents
     input_cost = model["input_cost_per_million_cents"]
     output_cost = model["output_cost_per_million_cents"]
 
@@ -171,17 +175,20 @@ async def reserve_generation(
     ):
         raise PricingUnavailableError(req.model_id)
 
-    estimated_cost_cents = _compute_ceiling_cost(
+    estimated_cost_microcents = compute_cost_microcents(
         req.estimated_input_tokens,
         req.max_output_tokens,
         input_cost,
         output_cost,
     )
+    estimated_cost_cents = microcents_to_ceiling_cents(estimated_cost_microcents)
 
     pricing_snapshot = {
         "model_id": req.model_id,
         "input_cost_per_million_cents": input_cost,
         "output_cost_per_million_cents": output_cost,
+        "estimated_cost_microcents": estimated_cost_microcents,
+        "estimated_cost_cents": estimated_cost_cents,
         "free_tier_eligible": model["free_tier_eligible"],
         "timestamp": datetime.now(UTC).isoformat(),
     }
@@ -192,8 +199,8 @@ async def reserve_generation(
         ("model", req.model_id),
         ("credential", str(req.credential_id)),
     ]
-    if req.account_scope_id:
-        cooldown_scopes.append(("account", f"{req.provider_id}:{req.account_scope_id}"))
+    if trusted_account_scope_id:
+        cooldown_scopes.append(("account", f"{req.provider_id}:{trusted_account_scope_id}"))
 
     is_cooling, ttl_remaining, active_scope = await check_cooldown(cooldown_scopes)
     if is_cooling:
@@ -204,9 +211,9 @@ async def reserve_generation(
             details={"cooldown_scope": active_scope},
         )
 
-    # 5. Resolve rate limit scopes & strictest applicable policy
+    # 5. Resolve applicable quotas
     applicable_quotas = await _get_applicable_quotas(
-        req.provider_id, req.model_id, req.account_scope_id
+        req.provider_id, req.model_id, trusted_account_scope_id
     )
 
     # Platform baseline safeguards
@@ -214,15 +221,41 @@ async def reserve_generation(
     cred_rpm = settings.LLM_CREDENTIAL_RPM
     burst = settings.LLM_RATE_BURST
 
-    # Inspect provider / model published quotas
+    # Inspect provider / model published quotas across all limit types
     provider_rpm_quota: int | None = None
+    account_rpm_quota: int | None = None
     model_rpm_quota: int | None = None
+
+    provider_tpm_quota: int | None = None
+    account_tpm_quota: int | None = None
+    model_tpm_quota: int | None = None
+
+    provider_rpd_quota: int | None = None
+
     for q in applicable_quotas:
-        if q["limit_type"] == "rpm":
-            if q["model_id"] == req.model_id:
-                model_rpm_quota = min(model_rpm_quota or q["limit_value"], q["limit_value"])
+        l_type = q["limit_type"]
+        val = q["limit_value"]
+        q_scope_id = q.get("scope_id")
+        q_model_id = q.get("model_id")
+
+        if l_type == "rpm":
+            if q_model_id == req.model_id:
+                model_rpm_quota = min(model_rpm_quota or val, val)
+            elif trusted_account_scope_id and q_scope_id == trusted_account_scope_id:
+                account_rpm_quota = min(account_rpm_quota or val, val)
             else:
-                provider_rpm_quota = min(provider_rpm_quota or q["limit_value"], q["limit_value"])
+                provider_rpm_quota = min(provider_rpm_quota or val, val)
+
+        elif l_type == "tpm":
+            if q_model_id == req.model_id:
+                model_tpm_quota = min(model_tpm_quota or val, val)
+            elif trusted_account_scope_id and q_scope_id == trusted_account_scope_id:
+                account_tpm_quota = min(account_tpm_quota or val, val)
+            else:
+                provider_tpm_quota = min(provider_tpm_quota or val, val)
+
+        elif l_type == "rpd":
+            provider_rpd_quota = min(provider_rpd_quota or val, val)
 
     rate_scopes = [
         RateLimitScope(
@@ -230,21 +263,43 @@ async def reserve_generation(
             key=f"ragbait:rate:user:{req.user_id}",
             limit=user_rpm,
             burst=burst,
+            weight=1,
+            unit="requests",
         ),
         RateLimitScope(
             scope_name="credential",
             key=f"ragbait:rate:credential:{req.credential_id}",
             limit=cred_rpm,
             burst=burst,
+            weight=1,
+            unit="requests",
         ),
     ]
+
+    # Shared account scope across credentials with identical account identity
+    if trusted_account_scope_id:
+        acc_limit = account_rpm_quota or provider_rpm_quota or cred_rpm
+        acc_burst = 0 if account_rpm_quota else burst
+        rate_scopes.append(
+            RateLimitScope(
+                scope_name="account",
+                key=f"ragbait:rate:account:{req.provider_id}:{trusted_account_scope_id}",
+                limit=acc_limit,
+                burst=acc_burst,
+                weight=1,
+                unit="requests",
+            )
+        )
+
     if provider_rpm_quota:
         rate_scopes.append(
             RateLimitScope(
                 scope_name="provider",
                 key=f"ragbait:rate:provider:{req.provider_id}",
                 limit=provider_rpm_quota,
-                burst=burst,
+                burst=0,
+                weight=1,
+                unit="requests",
             )
         )
     if model_rpm_quota:
@@ -253,9 +308,48 @@ async def reserve_generation(
                 scope_name="model",
                 key=f"ragbait:rate:model:{req.model_id}",
                 limit=model_rpm_quota,
-                burst=burst,
+                burst=0,
+                weight=1,
+                unit="requests",
             )
         )
+
+    # TPM token-based sliding-window enforcement
+    estimated_tokens = req.estimated_input_tokens + req.max_output_tokens
+    if estimated_tokens > 0:
+        if model_tpm_quota:
+            rate_scopes.append(
+                RateLimitScope(
+                    scope_name="model_tpm",
+                    key=f"ragbait:rate:tpm:model:{req.model_id}",
+                    limit=model_tpm_quota,
+                    burst=0,
+                    weight=estimated_tokens,
+                    unit="tokens",
+                )
+            )
+        if account_tpm_quota and trusted_account_scope_id:
+            rate_scopes.append(
+                RateLimitScope(
+                    scope_name="account_tpm",
+                    key=f"ragbait:rate:tpm:account:{req.provider_id}:{trusted_account_scope_id}",
+                    limit=account_tpm_quota,
+                    burst=0,
+                    weight=estimated_tokens,
+                    unit="tokens",
+                )
+            )
+        elif provider_tpm_quota:
+            rate_scopes.append(
+                RateLimitScope(
+                    scope_name="provider_tpm",
+                    key=f"ragbait:rate:tpm:provider:{req.provider_id}",
+                    limit=provider_tpm_quota,
+                    burst=0,
+                    weight=estimated_tokens,
+                    unit="tokens",
+                )
+            )
 
     # 6. Step A: Atomic distributed rate slot reservation
     await reserve_rate_slots(rate_scopes, member_id=req.request_id)
@@ -291,7 +385,9 @@ async def reserve_generation(
             monthly_request_limit=cred["monthly_request_limit"],
             daily_spending_limit_cents=cred["daily_spending_limit_cents"],
             monthly_spending_limit_cents=cred["monthly_spending_limit_cents"],
-            account_scope_id=req.account_scope_id,
+            account_scope_id=trusted_account_scope_id,
+            estimated_cost_microcents=estimated_cost_microcents,
+            effective_daily_request_limit=provider_rpd_quota,
         )
         return reservation
     except Exception:
@@ -332,7 +428,7 @@ async def settle_reservation(
     async with pool.acquire() as conn:
         res = await conn.fetchrow(
             """
-            SELECT id, user_id, credential_id, model_id, lease_token, status
+            SELECT id, user_id, credential_id, model_id, lease_token, status, request_id
             FROM public.llm_usage_reservations
             WHERE id = $1
             """,
@@ -341,24 +437,30 @@ async def settle_reservation(
         if not res:
             raise NotFoundError(f"Reservation '{reservation_id}' not found")
 
-        # Compute actual cost if not explicitly supplied
-        actual_cost = req.actual_cost_cents
-        if actual_cost is None:
-            active_model_id = model_id or res["model_id"]
-            model = await _get_model_details(active_model_id)
-            actual_cost = _compute_ceiling_cost(
-                req.actual_input_tokens,
-                req.actual_output_tokens,
-                model["input_cost_per_million_cents"],
-                model["output_cost_per_million_cents"],
-            )
+        # Compute actual cost in exact microcents
+        actual_cost_microcents = req.actual_cost_microcents
+        if actual_cost_microcents is None:
+            if req.actual_cost_cents is not None:
+                actual_cost_microcents = req.actual_cost_cents * 1_000_000
+            else:
+                active_model_id = model_id or res["model_id"]
+                model = await _get_model_details(active_model_id)
+                actual_cost_microcents = compute_cost_microcents(
+                    req.actual_input_tokens,
+                    req.actual_output_tokens,
+                    model["input_cost_per_million_cents"],
+                    model["output_cost_per_million_cents"],
+                )
+
+        actual_cost_cents = microcents_to_ceiling_cents(actual_cost_microcents)
 
         settled = await settle_usage_transactional(
             reservation_id=reservation_id,
             actual_input_tokens=req.actual_input_tokens,
             actual_output_tokens=req.actual_output_tokens,
-            actual_cost_cents=actual_cost,
+            actual_cost_cents=actual_cost_cents,
             error_category=req.error_category,
+            actual_cost_microcents=actual_cost_microcents,
         )
 
         # Release concurrency lease
@@ -366,6 +468,20 @@ async def settle_reservation(
             await release_concurrency_lease(
                 res["user_id"], res["credential_id"], res["lease_token"]
             )
+
+        # Reconcile token rate slots in Redis
+        actual_tokens = req.actual_input_tokens + req.actual_output_tokens
+        token_scopes = [
+            RateLimitScope(
+                scope_name="model_tpm",
+                key=f"ragbait:rate:tpm:model:{res['model_id']}",
+                limit=1000000,
+                burst=0,
+                weight=actual_tokens,
+                unit="tokens",
+            )
+        ]
+        await reconcile_rate_slots(token_scopes, res["request_id"], actual_tokens)
 
         return settled
 
@@ -402,10 +518,98 @@ async def release_reservation(
             RateLimitScope("credential", f"ragbait:rate:credential:{res['credential_id']}", 5, 1),
             RateLimitScope("provider", f"ragbait:rate:provider:{res['provider_id']}", 100, 1),
             RateLimitScope("model", f"ragbait:rate:model:{res['model_id']}", 100, 1),
+            RateLimitScope(
+                "model_tpm",
+                f"ragbait:rate:tpm:model:{res['model_id']}",
+                1000000,
+                0,
+                unit="tokens",
+            ),
         ]
         await release_rate_slots(rate_scopes, member_id=res["request_id"])
 
         return released
+
+
+async def expire_reservation(
+    reservation_id: UUID,
+    reason: str = "lease_expired",
+) -> ReleaseResult:
+    """Expire an uncommitted reservation whose lease has timed out."""
+    pool = get_pool()
+    async with pool.acquire() as conn:
+        res = await conn.fetchrow(
+            """
+            SELECT id, user_id, credential_id, provider_id, model_id, request_id, lease_token, status
+            FROM public.llm_usage_reservations
+            WHERE id = $1
+            """,
+            reservation_id,
+        )
+        if not res:
+            raise NotFoundError(f"Reservation '{reservation_id}' not found")
+
+        expired = await expire_reservation_transactional(reservation_id, reason=reason)
+
+        if res["lease_token"]:
+            await release_concurrency_lease(
+                res["user_id"], res["credential_id"], res["lease_token"]
+            )
+
+        rate_scopes = [
+            RateLimitScope("user", f"ragbait:rate:user:{res['user_id']}", 10, 1),
+            RateLimitScope("credential", f"ragbait:rate:credential:{res['credential_id']}", 5, 1),
+            RateLimitScope("provider", f"ragbait:rate:provider:{res['provider_id']}", 100, 1),
+            RateLimitScope("model", f"ragbait:rate:model:{res['model_id']}", 100, 1),
+            RateLimitScope(
+                "model_tpm",
+                f"ragbait:rate:tpm:model:{res['model_id']}",
+                1000000,
+                0,
+                unit="tokens",
+            ),
+        ]
+        await release_rate_slots(rate_scopes, member_id=res["request_id"])
+        return expired
+
+
+async def reconcile_reservation(
+    reservation_id: UUID,
+    actual_input_tokens: int,
+    actual_output_tokens: int,
+    actual_cost_microcents: int | None = None,
+    reconciliation_notes: str | None = None,
+) -> SettlementResult:
+    """Reconcile an outcome_unknown or reconciliation_required reservation with confirmed actual usage."""
+    pool = get_pool()
+    async with pool.acquire() as conn:
+        res = await conn.fetchrow(
+            """
+            SELECT id, user_id, credential_id, model_id, status, request_id
+            FROM public.llm_usage_reservations
+            WHERE id = $1
+            """,
+            reservation_id,
+        )
+        if not res:
+            raise NotFoundError(f"Reservation '{reservation_id}' not found")
+
+        if actual_cost_microcents is None:
+            model = await _get_model_details(res["model_id"])
+            actual_cost_microcents = compute_cost_microcents(
+                actual_input_tokens,
+                actual_output_tokens,
+                model["input_cost_per_million_cents"],
+                model["output_cost_per_million_cents"],
+            )
+
+        return await reconcile_usage_transactional(
+            reservation_id=reservation_id,
+            actual_input_tokens=actual_input_tokens,
+            actual_output_tokens=actual_output_tokens,
+            actual_cost_microcents=actual_cost_microcents,
+            reconciliation_notes=reconciliation_notes,
+        )
 
 
 async def mark_outcome_unknown(

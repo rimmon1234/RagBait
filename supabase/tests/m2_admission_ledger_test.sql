@@ -3,12 +3,19 @@
 -- ==============================================================================
 
 BEGIN;
-SELECT plan(10);
+SELECT plan(15);
 
 -- 1. Verify tables exist
 SELECT has_table('public', 'llm_usage_reservations', 'public.llm_usage_reservations table must exist');
 SELECT has_table('public', 'llm_usage_events', 'public.llm_usage_events table must exist');
 SELECT has_table('public', 'llm_usage_budget_counters', 'public.llm_usage_budget_counters table must exist');
+
+-- 2. Verify microcents precision columns exist
+SELECT has_column('public', 'llm_usage_reservations', 'estimated_cost_microcents', 'reservations must have estimated_cost_microcents');
+SELECT has_column('public', 'llm_usage_reservations', 'actual_cost_microcents', 'reservations must have actual_cost_microcents');
+SELECT has_column('public', 'llm_usage_events', 'cost_microcents_delta', 'events must have cost_microcents_delta');
+SELECT has_column('public', 'llm_usage_budget_counters', 'reserved_cost_microcents', 'counters must have reserved_cost_microcents');
+SELECT has_column('public', 'llm_usage_budget_counters', 'actual_cost_microcents', 'counters must have actual_cost_microcents');
 
 -- 2. Verify RLS is enabled on all ledger tables
 SELECT is(

@@ -273,9 +273,14 @@ flowchart TD
    - Configurable daily/monthly request limits and optional daily/monthly spending caps per credential.
    - Owner-facing Next.js management interface (`/credentials`) with secret input masking, immediate in-memory wipe, live validation probes, and deletion confirmation dialog explaining cryptographic purge.
 4. **M2.4 — Admission Control, Multi-Tier Rate Limiting & Usage Ledger**:
-   - Multi-tier sliding window rate limiting via atomic Redis Lua scripts (`reserve_rate_slots`, `release_rate_slots`) across user, credential, provider, and model scopes with microsecond precision and burst headroom.
-   - Distributed concurrency lease management (`acquire_concurrency_lease`, `renew_concurrency_lease`, `release_concurrency_lease`) via atomic Redis `ZSET` leases (user cap: 2, credential cap: 1, 30s TTL with heartbeat renewal).
+   - Multi-tier sliding window rate limiting via atomic Redis Lua scripts (`reserve_rate_slots`, `release_rate_slots`, `reconcile_rate_slots`) across user, credential, account, provider, model RPM, and model TPM scopes with microsecond precision.
+   - Exact integer microcents ($10^{-6}$ cents = $10^{-8}$ USD) financial accounting: zero floating-point arithmetic drift; small generations accumulate fractional cents accurately without premature truncation.
+   - Conservative ceiling rounding at budget reservation and dashboard display boundaries ($\lceil \text{microcents} / 1{,}000{,}000 \rceil$).
+   - Account-level rate limits and cooldowns derived strictly from `account_scope_id` in credential metadata, preventing quota bypass across multiple credentials sharing the same provider account; unscoped credentials never fabricate artificial account scopes.
+   - Token-based sliding window quotas (TPM) atomically enforced in Redis using server-side estimates and outstanding reservations, dynamically reconciled upon settlement.
+   - Distributed concurrency lease management (`acquire_concurrency_lease`, `renew_concurrency_lease`, `release_concurrency_lease`) via atomic Redis `ZSET` leases (user cap: 2, credential cap: 1, 30s TTL with heartbeat renewal strictly bounded by a 300s hard maximum operation lifetime).
    - Transactional PostgreSQL budget and request accounting (`SELECT ... FOR UPDATE` on `public.llm_usage_budget_counters`) preventing overselling across concurrent workers.
+   - Explicit lifecycle management with safe, idempotent `expire_reservation` and `reconcile_reservation` operations handling uncommitted lease timeouts and ambiguous post-dispatch network outcomes.
    - Durable attempt persistence in `public.llm_usage_reservations` with `(user_id, idempotency_key)` uniqueness.
    - Append-only immutable audit trail in `public.llm_usage_events` protected by trigger `tr_llm_usage_events_immutable` raising error `42501` on mutation or deletion.
    - Fail-closed error handling and automatic rollback compensation across Redis and PostgreSQL.

@@ -55,6 +55,7 @@ class AdmissionReservation(BaseModel):
     estimated_input_tokens: int
     estimated_output_tokens: int
     estimated_cost_cents: int
+    estimated_cost_microcents: int = 0
     currency: str = "USD"
     created_at: datetime
 
@@ -74,6 +75,7 @@ class SettlementRequest(BaseModel):
     actual_input_tokens: int = Field(..., ge=0)
     actual_output_tokens: int = Field(..., ge=0)
     actual_cost_cents: int | None = Field(default=None, ge=0)
+    actual_cost_microcents: int | None = Field(default=None, ge=0)
     error_category: str | None = None
 
 
@@ -85,6 +87,7 @@ class SettlementResult(BaseModel):
     actual_input_tokens: int
     actual_output_tokens: int
     actual_cost_cents: int
+    actual_cost_microcents: int = 0
     currency: str = "USD"
     settled_at: datetime
 
@@ -109,9 +112,11 @@ class ReservationView(BaseModel):
     estimated_input_tokens: int
     estimated_output_tokens: int
     estimated_cost_cents: int
+    estimated_cost_microcents: int = 0
     actual_input_tokens: int | None = None
     actual_output_tokens: int | None = None
     actual_cost_cents: int | None = None
+    actual_cost_microcents: int | None = None
     currency: str = "USD"
     created_at: datetime
     dispatched_at: datetime | None = None
@@ -126,14 +131,17 @@ class UsageSummaryResponse(BaseModel):
     total_input_tokens: int
     total_output_tokens: int
     total_actual_cost_cents: int
+    total_actual_cost_microcents: int = 0
     total_reserved_cost_cents: int
     daily_request_usage: int
     daily_request_limit: int
     monthly_request_usage: int
     monthly_request_limit: int
     daily_spending_cents: int
+    daily_spending_microcents: int = 0
     daily_spending_budget_cents: int | None
     monthly_spending_cents: int
+    monthly_spending_microcents: int = 0
     monthly_spending_budget_cents: int | None
     unknown_outcome_count: int
     recent_reservations: list[ReservationView] = Field(default_factory=list)

@@ -276,3 +276,15 @@ Historical usage accounting is safeguarded against manipulation:
 - **Pessimistic Row Locking**: All budget and request limit checks execute inside database transactions holding row-level `SELECT ... FOR UPDATE` locks on `public.llm_usage_budget_counters`. This prevents race conditions, overselling, and budget overdrafts across horizontally scaled API replicas.
 - **Two-Phase Compensation**: In the event of a database transaction failure or cancellation prior to dispatch, acquired Redis rate slots and concurrency leases are automatically released via atomic Lua compensation scripts.
 
+### 6.5 Financial Precision & Exact Subunit Accounting
+- **Integer Microcents Arithmetic**: The ledger operates strictly in integer microcents ($10^{-6}$ cents = $10^{-8}$ USD), eliminating floating-point rounding drift and truncation vulnerabilities. Small generations accumulate fractional cents accurately.
+- **Conservative Ceiling Bounds**: Ceiling rounding ($\lceil \text{microcents} / 1{,}000{,}000 \rceil$) is applied strictly at budget reservation and UI display boundaries, guaranteeing that reservations never under-reserve financial resources.
+
+### 6.6 Trusted Account-Scope Derivation & Anti-Bypass
+- **Strict Server-Side Derivation**: Account scope identity is derived strictly from `account_scope_id` in `public.api_key_metadata`, verified by the trusted backend. Client-supplied account overrides are rejected.
+- **No Identity Fabrication**: If a provider or credential does not expose account identity, the system does not fabricate or guess one.
+- **Shared Quota Enforcement**: Multiple credentials sharing the same `account_scope_id` are subject to a shared Redis sliding-window bucket, preventing users or organizations from bypassing provider account rate limits by rotating API keys.
+
+### 6.7 Hard Operation Lifetime Bound (300s Max)
+- **Zombie Process Elimination**: Concurrency lease renewals are constrained by a hard maximum lifetime (`LLM_MAX_RESERVATION_LIFETIME_SECONDS = 300s`). Even with valid lease tokens, renewals beyond 300 seconds are rejected with `max_lifetime_exceeded`, evicting the lease from Redis and preventing runaway workers from permanently exhausting concurrency pools.
+

@@ -45,6 +45,10 @@ end
 redis.call('ZADD', user_key, expires_at_us, lease_token)
 redis.call('ZADD', cred_key, expires_at_us, lease_token)
 
+-- Record the hard maximum lifetime bound for this lease (e.g. 300s)
+local max_expires_at_us = now_us + (max_lifetime_sec * 1000000)
+redis.call('SET', 'ragbait:lease:max:' .. lease_token, string.format('%.0f', max_expires_at_us), 'EX', max_lifetime_sec + 60)
+
 -- Set safety TTL on sets to ensure cleanup
 redis.call('EXPIRE', user_key, max_lifetime_sec + 60)
 redis.call('EXPIRE', cred_key, max_lifetime_sec + 60)
@@ -75,7 +79,22 @@ if tonumber(u_score) <= now_us or tonumber(c_score) <= now_us then
     -- Already expired
     redis.call('ZREM', user_key, lease_token)
     redis.call('ZREM', cred_key, lease_token)
+    redis.call('DEL', 'ragbait:lease:max:' .. lease_token)
     return {0, "lease_expired"}
+end
+
+-- Check hard maximum lifetime bound
+local max_exp = redis.call('GET', 'ragbait:lease:max:' .. lease_token)
+if not max_exp or now_us >= tonumber(max_exp) then
+    redis.call('ZREM', user_key, lease_token)
+    redis.call('ZREM', cred_key, lease_token)
+    redis.call('DEL', 'ragbait:lease:max:' .. lease_token)
+    return {0, "max_lifetime_exceeded"}
+end
+
+local max_exp_us = tonumber(max_exp)
+if new_expires_at_us > max_exp_us then
+    new_expires_at_us = max_exp_us
 end
 
 -- Extend lease expiration
@@ -92,6 +111,7 @@ local lease_token = ARGV[1]
 
 redis.call('ZREM', user_key, lease_token)
 redis.call('ZREM', cred_key, lease_token)
+redis.call('DEL', 'ragbait:lease:max:' .. lease_token)
 
 return 1
 """

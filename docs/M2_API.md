@@ -547,29 +547,34 @@ Upon validating the gateway's `job_token` and checking local idempotency, the No
     "total_input_tokens": 154200,
     "total_output_tokens": 82100,
     "total_actual_cost_cents": 128,
+    "total_actual_cost_microcents": 127850000,
     "total_reserved_cost_cents": 140,
     "daily_request_usage": 15,
     "daily_request_limit": 500,
     "monthly_request_usage": 120,
     "monthly_request_limit": 15000,
     "daily_spending_cents": 35,
+    "daily_spending_microcents": 34620000,
     "daily_spending_budget_cents": 250,
     "monthly_spending_cents": 128,
+    "monthly_spending_microcents": 127850000,
     "monthly_spending_budget_cents": 2500,
     "unknown_outcome_count": 0,
     "recent_reservations": [
       {
         "id": "9b1deb4d-3b7d-4bad-9bdd-2b0d7b3dcb6d",
+        "request_id": "req_8f12a4b8",
         "provider_id": "groq",
         "model_id": "openai/gpt-oss-120b",
-        "credential_id": "7a3e9c4b-3d2f-41e8-a5b8-d4c3b2a10987",
         "status": "settled",
         "estimated_input_tokens": 500,
         "estimated_output_tokens": 1000,
+        "estimated_cost_cents": 5,
+        "estimated_cost_microcents": 67500,
         "actual_input_tokens": 480,
         "actual_output_tokens": 620,
-        "estimated_cost_cents": 5,
         "actual_cost_cents": 3,
+        "actual_cost_microcents": 44400,
         "currency": "USD",
         "created_at": "2026-02-04T12:00:00Z",
         "dispatched_at": "2026-02-04T12:00:01Z",
@@ -579,6 +584,13 @@ Upon validating the gateway's `job_token` and checking local idempotency, the No
   }
   ```
 
+#### Monetary Subunit Precision Specifications
+- **Unit Scale**: Microcents ($10^{-6}$ cents = $10^{-8}$ USD).
+- **Exact Pricing Formula**:
+  $$\text{cost\_microcents} = (\text{input\_tokens} \times \text{input\_cost\_per\_million\_cents}) + (\text{output\_tokens} \times \text{output\_cost\_per\_million\_cents})$$
+- **Zero Floating-Point Drift**: Pure integer arithmetic throughout all ledger and counter operations. Small generations (< 1 cent) accumulate exact subcent fractions without premature truncation.
+- **Reservation & Display Boundary Rounding**: Conservative ceiling $\lceil \text{microcents} / 1{,}000{,}000 \rceil$ ensures budget reservations never under-reserve and non-zero expenditures are reflected in whole-cent dashboards.
+
 ### 7.2 Internal Admission Pipeline Contracts
 Admission is orchestrated strictly within backend services before external upstream API calls. Plaintext credentials and prompt contents are strictly forbidden from entering these interfaces.
 
@@ -587,42 +599,56 @@ Admission is orchestrated strictly within backend services before external upstr
 async def reserve_generation(req: AdmissionRequest) -> AdmissionReservation: ...
 ```
 - **Prerequisites**: Validates credential status (`active`), credential validation (`valid`), model availability (`active`), and community sharing consent if cross-owner.
-- **Ceiling Cost Estimation**: `math.ceil((in_tokens * in_cost + out_tokens * out_cost) / 1_000_000)`.
-- **Cooldown Verification**: Verifies no active cooldown exists on provider, model, or credential.
-- **Step A (Rate Reservation)**: Atomic sliding-window rate slot check and reservation across all applicable scopes via Redis Lua (`reserve_rate_slots`).
-- **Step B (Concurrency Reservation)**: Atomic distributed concurrency lease reservation (user cap: 2, credential cap: 1) via Redis Lua (`acquire_concurrency_lease`).
-- **Step C (Transactional Budget Locking)**: PostgreSQL `SELECT FOR UPDATE` on `llm_usage_budget_counters` to evaluate daily/monthly request caps and spending limits, persisting durable `llm_usage_reservations` and immutable `llm_usage_events` records.
+- **Microcents Cost Estimation**: Integer calculation via `compute_cost_microcents(...)`, followed by conservative whole-cent ceiling `microcents_to_ceiling_cents(...)`.
+- **Cooldown Verification**: Verifies no active cooldown exists on provider, model, credential, or shared account scope.
+- **Step A (Multi-Tier Rate Reservation)**: Atomic sliding-window rate slot check and reservation across all applicable scopes via Redis Lua (`reserve_rate_slots`):
+  - `user`: Per-user RPM limit (platform baseline).
+  - `credential`: Per-credential RPM limit (contributor configured or platform baseline).
+  - `account`: Shared account RPM limit derived strictly from `account_scope_id` when present.
+  - `provider`: Upstream provider published RPM quota.
+  - `model`: Model-specific published RPM quota.
+  - `model_tpm`: Sliding-window token-volume quota (TPM) weighted by estimated tokens.
+- **Step B (Concurrency Reservation)**: Atomic distributed concurrency lease reservation via Redis Lua (`acquire_concurrency_lease`) bounded by a hard 300s maximum lifetime.
+- **Step C (Transactional Budget Locking)**: PostgreSQL `SELECT FOR UPDATE` on `llm_usage_budget_counters` to evaluate daily/monthly request caps and microcent spending limits, persisting durable `llm_usage_reservations` and immutable `llm_usage_events` records.
 - **Fail-Closed Compensation**: If Step B or C fails, previously acquired Redis rate slots or concurrency leases are immediately rolled back.
 
 #### Step 2: Dispatch Commitment
 ```python
 async def mark_dispatched(reservation_id: UUID) -> None: ...
 ```
-- Transitions reservation status from `reserved` to `dispatched` in PostgreSQL and emits a `dispatched` event immediately prior to opening upstream socket connections.
+- Transitions reservation status from `reserved` to `dispatched` in PostgreSQL and emits a `dispatch_committed` event immediately prior to opening upstream socket connections.
 
 #### Step 3: Concurrency Heartbeat Extension
 ```python
 async def renew_reservation_lease(user_id: UUID, credential_id: UUID, reservation_id: UUID, lease_token: str) -> LeaseRenewalResult: ...
 ```
-- Extends the TTL of active concurrency leases during long-running streaming generations (up to `LLM_MAX_RESERVATION_LIFETIME_SECONDS = 300s`).
+- Extends active concurrency lease TTL during long-running streaming generations, strictly bounded by `LLM_MAX_RESERVATION_LIFETIME_SECONDS = 300s`. Once 300s elapsed, renewals are rejected with `max_lifetime_exceeded`.
 
 #### Step 4: Final Settlement
 ```python
 async def settle_reservation(reservation_id: UUID, req: SettlementRequest, model_id: str | None = None) -> SettlementResult: ...
 ```
-- Calculates final cost based on actual tokens, updates transactional budget counters, transitions reservation to `settled`, releases the Redis concurrency lease, and emits an immutable `settled` audit event.
+- Calculates exact microcents cost based on actual tokens, updates transactional budget counters, transitions reservation to `settled`, releases the Redis concurrency lease, reconciles Redis TPM rate slots to actual token volume, and emits an immutable `usage_settled` audit event.
 
 #### Step 5: Cancellation / Pre-Dispatch Release
 ```python
-async def release_reservation(reservation_id: UUID, reason: str = "cancelled") -> None: ...
+async def release_reservation(reservation_id: UUID, reason: str = "cancelled") -> ReleaseResult: ...
 ```
-- Rolls back reserved budget from PostgreSQL counters, transitions reservation to `released`, releases the Redis concurrency lease, and emits an immutable `released` audit event.
+- Rolls back reserved budget from PostgreSQL counters, transitions reservation to `released`, releases the Redis concurrency lease, releases Redis rate slots, and emits an immutable `reservation_released` audit event.
 
-#### Step 6: Ambiguous Network Partition / Outcome Unknown
+#### Step 6: Expiration of Stale Reservations
 ```python
-async def mark_outcome_unknown(reservation_id: UUID, provider_status_code: int | None = None, error_message: str | None = None) -> None: ...
+async def expire_reservation(reservation_id: UUID, reason: str = "lease_expired") -> ReleaseResult: ...
+```
+- Expired uncommitted reservations transition from `reserved` to `expired`, decrement reserved counters in PostgreSQL, clean up Redis leases, and log an immutable `reservation_expired` event.
+
+#### Step 7: Ambiguous Network Partition / Outcome Unknown & Reconciliation
+```python
+async def mark_outcome_unknown(reservation_id: UUID, reason: str = "upstream_network_timeout") -> None: ...
+async def reconcile_reservation(reservation_id: UUID, actual_input_tokens: int, actual_output_tokens: int, actual_cost_microcents: int | None = None, reconciliation_notes: str | None = None) -> SettlementResult: ...
 ```
 - When upstream network drops after dispatch commitment, marks reservation as `outcome_unknown`, frees Redis concurrency to prevent deadlocks, but **conservatively retains** reserved spending budget until administrator or reconciliation intervention.
+- `reconcile_reservation` transitions `outcome_unknown` or `reconciliation_required` reservations to `settled`, replaces conservative reservations with confirmed actual microcent usage, and records an immutable `usage_reconciled` event.
 
 ### 7.3 Admission Error Responses
 

@@ -163,8 +163,8 @@ async def test_ambiguous_outcome_retains_spending_reservation():
         model_id="openai/gpt-oss-120b",
         idempotency_key="idemp_lifecycle_3",
         request_id="req_lifecycle_3",
-        estimated_input_tokens=200_000,
-        max_output_tokens=100_000,
+        estimated_input_tokens=2_000,
+        max_output_tokens=1_000,
     )
     res = await reserve_generation(req)
     await mark_dispatched(res.reservation_id)
@@ -199,8 +199,8 @@ async def test_ambiguous_outcome_retains_spending_reservation():
     settled = await settle_reservation(
         res.reservation_id,
         req=SettlementRequest(
-            actual_input_tokens=180_000,
-            actual_output_tokens=90_000,
+            actual_input_tokens=1_800,
+            actual_output_tokens=900,
             actual_cost_cents=res.estimated_cost_cents,
         ),
     )

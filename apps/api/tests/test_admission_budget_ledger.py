@@ -58,6 +58,7 @@ async def create_test_contributor_with_limits(
     monthly_req: int = 15000,
     daily_spend_cents: int | None = None,
     monthly_spend_cents: int | None = None,
+    provider_id: str = "groq",
 ) -> tuple[UUID, UUID]:
     """Helper to provision a user and an active credential with specific budgets."""
     pool = get_pool()
@@ -83,11 +84,11 @@ async def create_test_contributor_with_limits(
         )
     CREATED_TEST_USERS.append(user_id)
 
-    raw_key = f"gsk_budget_test_{uuid4().hex}"
+    raw_key = f"key_{provider_id}_{uuid4().hex}"
     stored = await store_credential(
         owner_id=user_id,
-        provider_id="groq",
-        nickname="Budget Key",
+        provider_id=provider_id,
+        nickname=f"{provider_id.capitalize()} Budget Key",
         raw_key=raw_key,
         status="active",
         daily_request_limit=daily_req,
@@ -143,42 +144,43 @@ async def test_daily_request_limit_exhaustion():
 @pytest.mark.anyio
 async def test_daily_spending_limit_exhaustion():
     """When daily spending cap is reached, new admissions are rejected."""
-    # 50 cents daily cap
+    # 10 cents daily cap
     user_id, cred_id = await create_test_contributor_with_limits(
         daily_req=100,
         monthly_req=1000,
-        daily_spend_cents=50,  # $0.50
+        daily_spend_cents=10,  # $0.10
+        provider_id="gemini",
     )
 
-    # gpt-oss-120b costs 15 cents in / 60 cents out per million
-    # 500k input + 500k output = (500k * 15 + 500k * 60) / 1M = 7.5 + 30 = 37.5 -> 38 cents
+    # gemini-3.8-flash has 1,000,000 TPM limit and costs 15 cents in / 60 cents out per million
+    # 100k input + 100k output = (100k * 15 + 100k * 60) / 1M = 1.5 + 6.0 = 7.5 -> 8 cents
     req_1 = AdmissionRequest(
         user_id=user_id,
         credential_id=cred_id,
-        provider_id="groq",
-        model_id="openai/gpt-oss-120b",
+        provider_id="gemini",
+        model_id="gemini-3.8-flash",
         idempotency_key="idemp_spend_1",
         request_id="req_spend_1",
-        estimated_input_tokens=500_000,
-        max_output_tokens=500_000,
+        estimated_input_tokens=100_000,
+        max_output_tokens=100_000,
     )
     res_1 = await reserve_generation(req_1)
-    assert res_1.estimated_cost_cents == 38
+    assert res_1.estimated_cost_cents == 8
 
     from app.modules.admission.concurrency import release_concurrency_lease
 
     await release_concurrency_lease(user_id, cred_id, res_1.lease_token)
 
-    # Second request requires 38 cents -> 38 + 38 = 76 cents > 50 cents cap!
+    # Second request requires 8 cents -> 8 + 8 = 16 cents > 10 cents cap!
     req_2 = AdmissionRequest(
         user_id=user_id,
         credential_id=cred_id,
-        provider_id="groq",
-        model_id="openai/gpt-oss-120b",
+        provider_id="gemini",
+        model_id="gemini-3.8-flash",
         idempotency_key="idemp_spend_2",
         request_id="req_spend_2",
-        estimated_input_tokens=500_000,
-        max_output_tokens=500_000,
+        estimated_input_tokens=100_000,
+        max_output_tokens=100_000,
     )
     with pytest.raises(BudgetExhaustedError) as exc_info:
         await reserve_generation(req_2)
@@ -239,14 +241,15 @@ async def test_settlement_reconciles_estimated_vs_actual_cost():
         daily_req=100,
         monthly_req=1000,
         daily_spend_cents=200,
+        provider_id="gemini",
     )
 
-    # Reserve 50 cents estimated
+    # Reserve 15 cents estimated on gemini-3.8-flash (100k in + 100k out = 200k tokens <= 1M TPM)
     req = AdmissionRequest(
         user_id=user_id,
         credential_id=cred_id,
-        provider_id="groq",
-        model_id="openai/gpt-oss-120b",
+        provider_id="gemini",
+        model_id="gemini-3.8-flash",
         idempotency_key="idemp_reconcile_1",
         request_id="req_reconcile_1",
         estimated_input_tokens=100_000,
