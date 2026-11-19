@@ -24,6 +24,12 @@ async def init_vault_pool(dsn: str | None = None) -> asyncpg.Pool:
     Restricted strictly to the credential vault service.
     """
     global _vault_pool
+    if _vault_pool is not None and (
+        _vault_pool._closed
+        or getattr(_vault_pool, "_loop", None) is None
+        or _vault_pool._loop.is_closed()
+    ):
+        _vault_pool = None
     if _vault_pool is not None:
         return _vault_pool
 
@@ -55,9 +61,16 @@ async def close_vault_pool() -> None:
     """Close the dedicated vault connection pool cleanly."""
     global _vault_pool
     if _vault_pool is not None:
-        await _vault_pool.close()
-        _vault_pool = None
-        logger.info("Dedicated vault connection pool closed")
+        logger.info("Closing dedicated vault connection pool...")
+        try:
+            await _vault_pool.close()
+        except Exception:
+            try:
+                _vault_pool.terminate()
+            except Exception:
+                pass
+        finally:
+            _vault_pool = None
 
 
 def get_vault_pool() -> asyncpg.Pool:

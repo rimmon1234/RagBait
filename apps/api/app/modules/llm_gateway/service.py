@@ -2,14 +2,33 @@
 
 import json
 import logging
+from collections.abc import AsyncIterator
+from datetime import UTC, datetime
 from typing import Any
-from uuid import UUID
+from uuid import UUID, uuid4
 
 import asyncpg
 
 from app.core.database import get_admin_db_session, get_pool
-from app.core.errors import ConflictError, NotFoundError
+from app.core.errors import AuthorizationError, ConflictError, NotFoundError
+from app.modules.admission.cooldown import set_cooldown
+from app.modules.admission.ledger import mark_outcome_unknown_transactional
+from app.modules.admission.schemas import AdmissionRequest, SettlementRequest
+from app.modules.admission.service import (
+    mark_dispatched,
+    release_reservation,
+    reserve_generation,
+    settle_reservation,
+)
+from app.modules.credentials.repository import retrieve_decrypted_credential
+from app.modules.llm_gateway.interfaces import NormalizedUsage
+from app.modules.llm_gateway.providers.cerebras import CerebrasAdapter
+from app.modules.llm_gateway.providers.gemini import GeminiAdapter
+from app.modules.llm_gateway.providers.groq import GroqAdapter
+from app.modules.llm_gateway.providers.openrouter import OpenRouterAdapter
 from app.modules.llm_gateway.schemas import (
+    ChatCompletionRequest,
+    ChatCompletionResponse,
     LLMModelCreate,
     LLMModelResponse,
     LLMModelUpdate,
@@ -21,6 +40,8 @@ from app.modules.llm_gateway.schemas import (
     ProviderSyncResult,
     ResolvedModelInfo,
 )
+from app.modules.llm_gateway.streaming import format_sse_event
+from app.modules.llm_gateway.token_estimation import estimate_generation_tokens
 
 logger = logging.getLogger("ragbait.llm_gateway")
 
@@ -756,3 +777,393 @@ async def sync_provider_models(
         unverified_discovered=newly_added,
         details=details,
     )
+
+
+# ------------------------------------------------------------------------------
+# Unified Inference Gateway Dispatch Lifecycle
+# ------------------------------------------------------------------------------
+def _get_provider_adapter(provider_id: str) -> Any:
+    """Instantiate the corresponding provider adapter."""
+    if provider_id == "gemini":
+        return GeminiAdapter()
+    if provider_id == "groq":
+        return GroqAdapter()
+    if provider_id == "openrouter":
+        return OpenRouterAdapter()
+    if provider_id == "cerebras":
+        return CerebrasAdapter()
+    raise ConflictError(f"Unsupported inference provider '{provider_id}'")
+
+
+async def dispatch_chat_completion(
+    user_id: UUID,
+    req: ChatCompletionRequest,
+    correlation_id: str | None = None,
+) -> tuple[AsyncIterator[str] | ChatCompletionResponse, bool]:
+    """Execute the full 10-step unified inference gateway lifecycle.
+
+    Returns:
+        tuple[stream_generator_or_response, is_streaming]
+    """
+    # 1. Provider & Model Registry Validation
+    provider = await get_provider(req.provider_id)
+    if not provider.is_enabled:
+        raise ConflictError(f"Provider '{req.provider_id}' is currently disabled")
+
+    model = await get_model(req.model_id)
+    if model.provider_id != req.provider_id:
+        raise ConflictError(
+            f"Model '{req.model_id}' belongs to provider '{model.provider_id}', not '{req.provider_id}'"
+        )
+    if model.availability_status != "active":
+        raise ConflictError(
+            f"Model '{req.model_id}' is not active (status: {model.availability_status})"
+        )
+    if model.shutdown_at and model.shutdown_at <= datetime.now(UTC):
+        raise ConflictError(f"Model '{req.model_id}' has been shut down and retired")
+
+    # 2. Credential Authorization & Discovery
+    pool = get_pool()
+    cred_id = req.credential_id
+    cred_row: dict[str, Any] | None = None
+
+    async with pool.acquire() as conn:
+        if cred_id is not None:
+            row = await conn.fetchrow(
+                """
+                SELECT id, owner_id, provider_id, status, validation_status,
+                       sharing_scope, shared_consent, account_scope_id, account_scope_verified
+                FROM public.api_key_metadata
+                WHERE id = $1
+                """,
+                cred_id,
+            )
+            if not row:
+                raise NotFoundError(f"Credential '{cred_id}' not found")
+            cred_row = dict(row)
+        else:
+            # Auto-discover user's own active, validated credential for this provider
+            row = await conn.fetchrow(
+                """
+                SELECT id, owner_id, provider_id, status, validation_status,
+                       sharing_scope, shared_consent, account_scope_id, account_scope_verified
+                FROM public.api_key_metadata
+                WHERE owner_id = $1 AND provider_id = $2
+                  AND status = 'active' AND validation_status = 'valid'
+                ORDER BY created_at DESC
+                LIMIT 1
+                """,
+                user_id,
+                req.provider_id,
+            )
+            if row:
+                cred_id = row["id"]
+                cred_row = dict(row)
+            elif provider.allows_community_sharing:
+                # Gated community credential pool
+                row_shared = await conn.fetchrow(
+                    """
+                    SELECT id, owner_id, provider_id, status, validation_status,
+                           sharing_scope, shared_consent, account_scope_id, account_scope_verified
+                    FROM public.api_key_metadata
+                    WHERE provider_id = $1 AND sharing_scope = 'community_shared'
+                      AND shared_consent = true AND status = 'active' AND validation_status = 'valid'
+                    ORDER BY created_at ASC
+                    LIMIT 1
+                    """,
+                    req.provider_id,
+                )
+                if row_shared:
+                    cred_id = row_shared["id"]
+                    cred_row = dict(row_shared)
+
+    if not cred_row or cred_id is None:
+        raise NotFoundError(
+            f"No eligible active API credential available for provider '{req.provider_id}'. "
+            "Please register an API key in Credential Management."
+        )
+
+    # Enforce credential state
+    if cred_row["status"] != "active":
+        raise ConflictError(f"Credential '{cred_id}' is not active (status: {cred_row['status']})")
+    if cred_row["validation_status"] != "valid":
+        raise ConflictError(
+            f"Credential '{cred_id}' has not passed validation (status: {cred_row['validation_status']})"
+        )
+
+    # Ownership & Community Sharing Verification
+    if cred_row["owner_id"] != user_id:
+        if cred_row["sharing_scope"] != "community_shared" or not cred_row["shared_consent"]:
+            raise AuthorizationError("Access denied: private owner-only credential")
+        if not provider.allows_community_sharing:
+            raise AuthorizationError(
+                f"Community credential dispatch is not permitted for provider '{req.provider_id}' by administrative policy"
+            )
+
+    # 3. Server-side Token Estimation
+    messages_payload = [{"role": m.role, "content": m.content} for m in req.messages]
+    token_estimate = estimate_generation_tokens(
+        messages=messages_payload,
+        model_context_window=model.context_window,
+        model_max_output_tokens=model.max_output_tokens,
+        requested_max_output=req.params.max_output_tokens,
+    )
+
+    # 4. Multi-Tier Admission Reservation (Rate Limiting, Concurrency, TPD, Budget)
+    request_id = correlation_id or f"req-{uuid4().hex[:12]}"
+    admission_request = AdmissionRequest(
+        user_id=user_id,
+        credential_id=cred_id,
+        provider_id=req.provider_id,
+        model_id=req.model_id,
+        estimated_input_tokens=token_estimate.estimated_input_tokens,
+        max_output_tokens=token_estimate.reserved_output_tokens,
+        idempotency_key=req.idempotency_key,
+        request_id=request_id,
+    )
+    reservation = await reserve_generation(admission_request)
+
+    # 5. Just-in-Time Vault Credential Decryption
+    try:
+        decrypted = await retrieve_decrypted_credential(
+            credential_id=cred_id,
+            caller_id=cred_row["owner_id"],
+            check_active=True,
+        )
+        raw_key = decrypted.raw_key
+    except Exception as exc:
+        # Decryption failed before dispatch: refund uncommitted reservation
+        await release_reservation(reservation.reservation_id, reason="vault_decryption_failed")
+        raise ConflictError(f"Failed to decrypt vault credential: {exc}") from exc
+
+    # 6. Durable Dispatch Commitment (Immediate mark_dispatched before network call)
+    await mark_dispatched(reservation.reservation_id)
+
+    # 7. Select Upstream Adapter
+    adapter = _get_provider_adapter(req.provider_id)
+
+    # 8. Dispatch Execution (Streaming vs Non-Streaming)
+    if req.stream:
+
+        async def stream_generator() -> AsyncIterator[str]:
+            yield format_sse_event(
+                "generation_started",
+                {
+                    "request_id": request_id,
+                    "reservation_id": str(reservation.reservation_id),
+                    "model_id": req.model_id,
+                    "created_at": datetime.now(UTC).isoformat(),
+                },
+            )
+
+            collected_text = ""
+            last_finish_reason = "stop"
+            usage_received: NormalizedUsage | None = None
+            resolved_model = req.model_id
+            upstream_gen_id: str | None = None
+
+            try:
+                async for chunk in adapter.stream(
+                    model_id=req.model_id,
+                    messages=messages_payload,
+                    raw_key=raw_key,
+                    temperature=req.params.temperature,
+                    max_output_tokens=token_estimate.reserved_output_tokens,
+                    top_p=req.params.top_p,
+                ):
+                    if chunk.resolved_model:
+                        resolved_model = chunk.resolved_model
+                    if chunk.upstream_generation_id:
+                        upstream_gen_id = chunk.upstream_generation_id
+
+                    if chunk.delta:
+                        collected_text += chunk.delta
+                        yield format_sse_event(
+                            "text_delta",
+                            {
+                                "request_id": request_id,
+                                "delta": chunk.delta,
+                                "index": 0,
+                            },
+                        )
+
+                    if chunk.finish_reason:
+                        last_finish_reason = chunk.finish_reason
+
+                    if chunk.usage:
+                        usage_received = chunk.usage
+
+                # If upstream provider omitted trailing usage frame, conservatively derive usage
+                if not usage_received:
+                    output_tokens = (
+                        max(1, int(len(collected_text) / 3.2) + 1) if collected_text else 0
+                    )
+                    usage_received = NormalizedUsage(
+                        input_tokens=token_estimate.estimated_input_tokens,
+                        output_tokens=output_tokens,
+                        total_tokens=token_estimate.estimated_input_tokens + output_tokens,
+                        cached_tokens=0,
+                        reasoning_tokens=0,
+                        usage_source="derived",
+                    )
+
+                # Settle usage accounting
+                settlement = await settle_reservation(
+                    reservation_id=reservation.reservation_id,
+                    req=SettlementRequest(
+                        actual_input_tokens=usage_received.input_tokens,
+                        actual_output_tokens=usage_received.output_tokens,
+                        actual_cost_microcents=None,  # Automatically computed from model pricing
+                        resolved_model_id=resolved_model,
+                        upstream_provider=req.provider_id,
+                        upstream_generation_id=upstream_gen_id,
+                        usage_source=usage_received.usage_source,
+                    ),
+                    model_id=resolved_model,
+                    resolved_model_id=resolved_model,
+                    upstream_provider=req.provider_id,
+                    upstream_generation_id=upstream_gen_id,
+                    usage_source=usage_received.usage_source,
+                )
+
+                # Emit usage frame
+                yield format_sse_event(
+                    "usage",
+                    {
+                        "request_id": request_id,
+                        "usage": usage_received.model_dump(),
+                        "cost_microcents": settlement.actual_cost_microcents,
+                        "cost_cents": settlement.actual_cost_cents,
+                        "resolved_model_id": resolved_model,
+                        "upstream_generation_id": upstream_gen_id,
+                    },
+                )
+
+                # Emit terminal completion frame
+                yield format_sse_event(
+                    "generation_completed",
+                    {
+                        "request_id": request_id,
+                        "finish_reason": last_finish_reason,
+                    },
+                )
+
+            except Exception as exc:
+                logger.warning(f"Mid-stream generation error during {request_id}: {exc}")
+                err_category = getattr(
+                    exc,
+                    "category",
+                    "upstream_timeout"
+                    if isinstance(exc, TimeoutError)
+                    else "unknown_provider_error",
+                )
+
+                # If provider returned 429 Retry-After, activate Redis cooldown
+                retry_after = getattr(exc, "retry_after", None)
+                if retry_after:
+                    try:
+                        await set_cooldown(
+                            scope_type="provider",
+                            scope_id=req.provider_id,
+                            retry_after_seconds=retry_after,
+                            reason=f"Provider {req.provider_id} returned HTTP 429",
+                        )
+                    except Exception:
+                        pass
+
+                # Preserve conservative reservation in outcome_unknown status
+                try:
+                    await mark_outcome_unknown_transactional(
+                        reservation.reservation_id,
+                        reason=err_category,
+                    )
+                except Exception:
+                    pass
+
+                # Emit normalized error frame to client
+                yield format_sse_event(
+                    "generation_error",
+                    {
+                        "request_id": request_id,
+                        "error_code": getattr(exc, "code", "GENERATION_FAILED"),
+                        "message": str(exc),
+                    },
+                )
+
+        return stream_generator(), True
+
+    # Non-streaming execution
+    try:
+        gen_result = await adapter.generate(
+            model_id=req.model_id,
+            messages=messages_payload,
+            raw_key=raw_key,
+            temperature=req.params.temperature,
+            max_output_tokens=token_estimate.reserved_output_tokens,
+            top_p=req.params.top_p,
+        )
+    except Exception as exc:
+        err_category = getattr(
+            exc,
+            "category",
+            "upstream_timeout" if isinstance(exc, TimeoutError) else "connection_failure",
+        )
+        retry_after = getattr(exc, "retry_after", None)
+        if retry_after:
+            try:
+                await set_cooldown(
+                    scope_type="provider",
+                    scope_id=req.provider_id,
+                    retry_after_seconds=retry_after,
+                    reason=f"Provider {req.provider_id} returned HTTP 429",
+                )
+            except Exception:
+                pass
+
+        try:
+            await mark_outcome_unknown_transactional(
+                reservation.reservation_id,
+                reason=err_category,
+            )
+        except Exception:
+            pass
+        raise
+
+    # Settle non-streaming generation
+    settlement = await settle_reservation(
+        reservation_id=reservation.reservation_id,
+        req=SettlementRequest(
+            actual_input_tokens=gen_result.usage.input_tokens,
+            actual_output_tokens=gen_result.usage.output_tokens,
+            actual_cost_microcents=None,
+            resolved_model_id=gen_result.resolved_model,
+            upstream_provider=req.provider_id,
+            upstream_generation_id=gen_result.upstream_generation_id,
+            usage_source=gen_result.usage.usage_source,
+        ),
+        model_id=gen_result.resolved_model,
+        resolved_model_id=gen_result.resolved_model,
+        upstream_provider=req.provider_id,
+        upstream_generation_id=gen_result.upstream_generation_id,
+        usage_source=gen_result.usage.usage_source,
+    )
+
+    response_payload = ChatCompletionResponse(
+        id=gen_result.upstream_generation_id or f"gen-{uuid4().hex[:12]}",
+        request_id=request_id,
+        reservation_id=reservation.reservation_id,
+        provider_id=req.provider_id,
+        model_id=req.model_id,
+        resolved_model_id=gen_result.resolved_model,
+        upstream_provider=req.provider_id,
+        upstream_generation_id=gen_result.upstream_generation_id,
+        content=gen_result.content,
+        finish_reason=gen_result.finish_reason,
+        usage=gen_result.usage.model_dump(),
+        cost_microcents=settlement.actual_cost_microcents,
+        cost_cents=settlement.actual_cost_cents,
+        currency="USD",
+        created_at=datetime.now(UTC),
+    )
+
+    return response_payload, False

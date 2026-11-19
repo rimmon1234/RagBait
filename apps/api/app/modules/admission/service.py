@@ -244,6 +244,9 @@ async def reserve_generation(
     model_tpm_quota: int | None = None
 
     provider_rpd_quota: int | None = None
+    provider_tpd_quota: int | None = None
+    account_tpd_quota: int | None = None
+    model_tpd_quota: int | None = None
 
     for q in applicable_quotas:
         l_type = q["limit_type"]
@@ -269,6 +272,19 @@ async def reserve_generation(
 
         elif l_type == "rpd":
             provider_rpd_quota = min(provider_rpd_quota or val, val)
+
+        elif l_type == "tpd":
+            if q_model_id == req.model_id:
+                model_tpd_quota = min(model_tpd_quota or val, val)
+            elif trusted_account_scope_id and q_scope_id == trusted_account_scope_id:
+                account_tpd_quota = min(account_tpd_quota or val, val)
+            else:
+                provider_tpd_quota = min(provider_tpd_quota or val, val)
+
+    tpd_candidates = [
+        q for q in [model_tpd_quota, account_tpd_quota, provider_tpd_quota] if q is not None
+    ]
+    effective_daily_token_limit = min(tpd_candidates) if tpd_candidates else None
 
     rate_scopes = [
         RateLimitScope(
@@ -401,6 +417,7 @@ async def reserve_generation(
             account_scope_id=trusted_account_scope_id,
             estimated_cost_microcents=estimated_cost_microcents,
             effective_daily_request_limit=provider_rpd_quota,
+            effective_daily_token_limit=effective_daily_token_limit,
         )
         return reservation
     except Exception:
@@ -435,6 +452,10 @@ async def settle_reservation(
     reservation_id: UUID,
     req: SettlementRequest,
     model_id: str | None = None,
+    resolved_model_id: str | None = None,
+    upstream_provider: str | None = None,
+    upstream_generation_id: str | None = None,
+    usage_source: str = "authoritative",
 ) -> SettlementResult:
     """Settle actual usage metrics, release concurrency lease, and finalize accounting."""
     pool = get_pool()
@@ -474,6 +495,10 @@ async def settle_reservation(
             actual_cost_cents=actual_cost_cents,
             error_category=req.error_category,
             actual_cost_microcents=actual_cost_microcents,
+            resolved_model_id=resolved_model_id,
+            upstream_provider=upstream_provider,
+            upstream_generation_id=upstream_generation_id,
+            usage_source=usage_source,
         )
 
         # Release concurrency lease

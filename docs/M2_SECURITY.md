@@ -288,3 +288,39 @@ Historical usage accounting is safeguarded against manipulation:
 ### 6.7 Hard Operation Lifetime Bound (300s Max)
 - **Zombie Process Elimination**: Concurrency lease renewals are constrained by a hard maximum lifetime (`LLM_MAX_RESERVATION_LIFETIME_SECONDS = 300s`). Even with valid lease tokens, renewals beyond 300 seconds are rejected with `max_lifetime_exceeded`, evicting the lease from Redis and preventing runaway workers from permanently exhausting concurrency pools.
 
+---
+
+## 7. LLM Gateway & Provider Dispatch Security (M2.5)
+
+### 7.1 Just-in-Time Decryption & In-Memory Key Hygiene
+- Decryption of contributor API credentials occurs strictly **just-in-time** immediately before upstream dispatch via the isolated vault connection pool.
+- Decrypted keys are held in volatile memory only for the duration of the HTTP connection and are never persisted, cached in Redis, written to disk, or passed into child threads or tasks.
+- The vault connection pool maintains minimal pool sizing (min 1, max 3) and strictly limits privileges to `private.api_key_secrets` and `public.api_key_metadata`.
+
+### 7.2 Zero Secret Leakage in Logs, Events, and Streaming Payloads
+- Raw API keys, authorization headers (`Authorization: Bearer ...`, `x-goog-api-key: ...`), decrypted tokens, and prompt contents are strictly scrubbed from application logs, error traces, and exception messages.
+- Server-Sent Events (SSE) stream payloads (`generation_started`, `text_delta`, `usage`, `generation_completed`, `generation_error`) contain only public metadata, UUIDs, model identifiers, token delta/aggregates, and sanitized error messages.
+- The unified completion JSON response never returns provider API keys or internal authorization headers.
+
+### 7.3 Upstream Network Security & SSRF Protection
+- Outbound gateway HTTP requests use a dedicated, hardened `httpx.AsyncClient` with a strict compile-time host allowlist (`ALLOWED_UPSTREAM_HOSTS`):
+  - `generativelanguage.googleapis.com`
+  - `api.groq.com`
+  - `openrouter.ai`
+  - `api.cerebras.ai`
+  - `api.openai.com`
+  - `api.x.ai`
+- HTTP redirects are disabled (`follow_redirects=False`) to prevent open redirect vulnerabilities or internal network scanning.
+- Strict connection and read timeouts (connect: 15s, read: 60s, stream timeout: 300s) prevent slowloris-style denial-of-service on worker threads.
+
+### 7.4 Multi-Tenant Authorization & Community Sharing Policy Gate
+- **Authentication & Approval Gate**: Requesters must be authenticated Supabase principals with `role = 'user'`, `account_status = 'active'`, and `approval_status = 'approved'`. Suspended or unapproved accounts are blocked at HTTP 403.
+- **Owner-Only Isolation**: Users cannot execute inference using credentials belonging to other users unless the credential was explicitly created with `sharing_scope = 'community_shared'` and `shared_consent = True`.
+- **Administrative Policy Gate**: Even when a contributor grants community consent, dispatch through community credentials is blocked if the administrator has disabled `allows_community_sharing` for that provider in `public.llm_providers`.
+- **Active & Validated Credential State**: Only credentials in `status = 'active'` and `validation_status = 'valid'` are admitted for inference dispatch.
+
+### 7.5 Pre-Dispatch Durable Commitment
+- To prevent free inference bypass or phantom generations, the gateway atomically commits dispatch state (`mark_dispatched`) in `public.llm_usage_reservations` before initiating upstream network requests.
+- If a client disconnects or an upstream network error occurs after dispatch commitment, the reservation record persists and can be settled or reconciled accurately by the sweeper, preserving accounting integrity.
+
+

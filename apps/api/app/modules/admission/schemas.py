@@ -57,6 +57,10 @@ class AdmissionReservation(BaseModel):
     estimated_cost_cents: int
     estimated_cost_microcents: int = 0
     currency: str = "USD"
+    resolved_model_id: str | None = None
+    upstream_provider: str | None = None
+    upstream_generation_id: str | None = None
+    usage_source: str = "authoritative"
     created_at: datetime
 
 
@@ -77,6 +81,10 @@ class SettlementRequest(BaseModel):
     actual_cost_cents: int | None = Field(default=None, ge=0)
     actual_cost_microcents: int | None = Field(default=None, ge=0)
     error_category: str | None = None
+    resolved_model_id: str | None = None
+    upstream_provider: str | None = None
+    upstream_generation_id: str | None = None
+    usage_source: str = "authoritative"
 
 
 class SettlementResult(BaseModel):
@@ -89,6 +97,10 @@ class SettlementResult(BaseModel):
     actual_cost_cents: int
     actual_cost_microcents: int = 0
     currency: str = "USD"
+    resolved_model_id: str | None = None
+    upstream_provider: str | None = None
+    upstream_generation_id: str | None = None
+    usage_source: str = "authoritative"
     settled_at: datetime
 
 

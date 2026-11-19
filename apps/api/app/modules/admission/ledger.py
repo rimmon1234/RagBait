@@ -70,7 +70,9 @@ async def _get_or_create_counter_row(
                reserved_requests, dispatched_requests,
                reserved_cost_cents, actual_cost_cents,
                COALESCE(reserved_cost_microcents, reserved_cost_cents * 1000000) as reserved_cost_microcents,
-               COALESCE(actual_cost_microcents, actual_cost_cents * 1000000) as actual_cost_microcents
+               COALESCE(actual_cost_microcents, actual_cost_cents * 1000000) as actual_cost_microcents,
+               COALESCE(reserved_tokens, 0) as reserved_tokens,
+               COALESCE(actual_tokens, 0) as actual_tokens
         FROM public.llm_usage_budget_counters
         WHERE credential_id = $1 AND period_type = $2 AND period_start = $3
         FOR UPDATE
@@ -89,9 +91,10 @@ async def _get_or_create_counter_row(
             credential_id, period_type, period_start,
             reserved_requests, dispatched_requests,
             reserved_cost_cents, actual_cost_cents,
-            reserved_cost_microcents, actual_cost_microcents
+            reserved_cost_microcents, actual_cost_microcents,
+            reserved_tokens, actual_tokens
         )
-        VALUES ($1, $2, $3, 0, 0, 0, 0, 0, 0)
+        VALUES ($1, $2, $3, 0, 0, 0, 0, 0, 0, 0, 0)
         ON CONFLICT (credential_id, period_type, period_start) DO NOTHING
         """,
         credential_id,
@@ -106,7 +109,9 @@ async def _get_or_create_counter_row(
                reserved_requests, dispatched_requests,
                reserved_cost_cents, actual_cost_cents,
                COALESCE(reserved_cost_microcents, reserved_cost_cents * 1000000) as reserved_cost_microcents,
-               COALESCE(actual_cost_microcents, actual_cost_cents * 1000000) as actual_cost_microcents
+               COALESCE(actual_cost_microcents, actual_cost_cents * 1000000) as actual_cost_microcents,
+               COALESCE(reserved_tokens, 0) as reserved_tokens,
+               COALESCE(actual_tokens, 0) as actual_tokens
         FROM public.llm_usage_budget_counters
         WHERE credential_id = $1 AND period_type = $2 AND period_start = $3
         FOR UPDATE
@@ -140,6 +145,11 @@ async def reserve_budget_transactional(
     account_scope_id: str | None = None,
     estimated_cost_microcents: int | None = None,
     effective_daily_request_limit: int | None = None,
+    effective_daily_token_limit: int | None = None,
+    resolved_model_id: str | None = None,
+    upstream_provider: str | None = None,
+    upstream_generation_id: str | None = None,
+    usage_source: str = "authoritative",
 ) -> AdmissionReservation:
     """Atomically verify and lock daily/monthly limits and persist a durable reservation."""
     pool = get_pool()
@@ -202,6 +212,19 @@ async def reserve_budget_transactional(
                     limit_val=daily_req_cap,
                 )
 
+            # Check TPD (Tokens Per Day) if limit configured
+            estimated_tokens = estimated_input_tokens + estimated_output_tokens
+            if effective_daily_token_limit is not None and effective_daily_token_limit > 0:
+                total_daily_tokens = day_counter["actual_tokens"] + day_counter["reserved_tokens"]
+                if total_daily_tokens + estimated_tokens > effective_daily_token_limit:
+                    raise BudgetExhaustedError(
+                        reason=f"Daily token limit exceeded ({total_daily_tokens + estimated_tokens}/{effective_daily_token_limit})",
+                        limit_type="tpd",
+                        period="daily",
+                        current_val=total_daily_tokens,
+                        limit_val=effective_daily_token_limit,
+                    )
+
             if daily_spending_limit_cents is not None:
                 spending_limit_microcents = daily_spending_limit_cents * 1_000_000
                 total_daily_cost_microcents = (
@@ -257,11 +280,13 @@ async def reserve_budget_transactional(
                 SET reserved_requests = reserved_requests + 1,
                     reserved_cost_cents = reserved_cost_cents + $1,
                     reserved_cost_microcents = reserved_cost_microcents + $2,
+                    reserved_tokens = reserved_tokens + $3,
                     updated_at = now()
-                WHERE credential_id = $3 AND period_type = 'daily' AND period_start = $4
+                WHERE credential_id = $4 AND period_type = 'daily' AND period_start = $5
                 """,
                 estimated_cost_cents,
                 cost_microcents,
+                estimated_tokens,
                 credential_id,
                 day_start,
             )
@@ -271,11 +296,13 @@ async def reserve_budget_transactional(
                 SET reserved_requests = reserved_requests + 1,
                     reserved_cost_cents = reserved_cost_cents + $1,
                     reserved_cost_microcents = reserved_cost_microcents + $2,
+                    reserved_tokens = reserved_tokens + $3,
                     updated_at = now()
-                WHERE credential_id = $3 AND period_type = 'monthly' AND period_start = $4
+                WHERE credential_id = $4 AND period_type = 'monthly' AND period_start = $5
                 """,
                 estimated_cost_cents,
                 cost_microcents,
+                estimated_tokens,
                 credential_id,
                 month_start,
             )
@@ -290,14 +317,18 @@ async def reserve_budget_transactional(
                     estimated_input_tokens, estimated_output_tokens,
                     estimated_cost_cents, estimated_cost_microcents,
                     currency, pricing_snapshot,
-                    lease_token, lease_expires_at, created_at, updated_at
+                    lease_token, lease_expires_at,
+                    resolved_model_id, upstream_provider, upstream_generation_id, usage_source,
+                    created_at, updated_at
                 )
                 VALUES (
                     $1, $2, $3, $4, $5,
                     $6, $7, $8, 'reserved',
                     $9, $10,
                     $11, $12, 'USD', $13,
-                    $14, $15, $16, $16
+                    $14, $15,
+                    $16, $17, $18, $19,
+                    $20, $20
                 )
                 """,
                 res_id,
@@ -315,6 +346,10 @@ async def reserve_budget_transactional(
                 json.dumps(pricing_snapshot),
                 lease_token,
                 lease_expires_at,
+                resolved_model_id,
+                upstream_provider,
+                upstream_generation_id,
+                usage_source,
                 now_utc,
             )
 
@@ -341,6 +376,8 @@ async def reserve_budget_transactional(
                         "request_id": request_id,
                         "provider_id": provider_id,
                         "model_id": model_id,
+                        "resolved_model_id": resolved_model_id,
+                        "upstream_provider": upstream_provider,
                     }
                 ),
             )
@@ -454,6 +491,10 @@ async def settle_usage_transactional(
     actual_cost_cents: int,
     error_category: str | None = None,
     actual_cost_microcents: int | None = None,
+    resolved_model_id: str | None = None,
+    upstream_provider: str | None = None,
+    upstream_generation_id: str | None = None,
+    usage_source: str = "authoritative",
 ) -> SettlementResult:
     """Settle actual usage metrics, update aggregates, and append immutable ledger event."""
     pool = get_pool()
@@ -475,6 +516,7 @@ async def settle_usage_transactional(
                 """
                 SELECT id, user_id, credential_id, status, estimated_cost_cents,
                        COALESCE(estimated_cost_microcents, estimated_cost_cents * 1000000) as estimated_cost_microcents,
+                       estimated_input_tokens, estimated_output_tokens,
                        actual_cost_cents, actual_cost_microcents, currency, created_at
                 FROM public.llm_usage_reservations
                 WHERE id = $1
@@ -510,21 +552,27 @@ async def settle_usage_transactional(
             user_id = res["user_id"]
             estimated_cost_cents = res["estimated_cost_cents"]
             estimated_cost_microcents = res["estimated_cost_microcents"]
+            estimated_tokens = res["estimated_input_tokens"] + res["estimated_output_tokens"]
+            actual_tokens = actual_input_tokens + actual_output_tokens
             day_start, month_start = get_period_boundaries(res["created_at"])
 
-            # Reconcile budget counters: subtract estimated cost reservation, add confirmed actual cost
+            # Reconcile budget counters: subtract estimated cost & tokens reservation, add confirmed actual cost & tokens
             await conn.execute(
                 """
                 UPDATE public.llm_usage_budget_counters
                 SET reserved_cost_cents = GREATEST(0, reserved_cost_cents - $1),
                     reserved_cost_microcents = GREATEST(0, reserved_cost_microcents - $2),
-                    actual_cost_microcents = actual_cost_microcents + $3,
-                    actual_cost_cents = CEIL((actual_cost_microcents + $3)::numeric / 1000000)::bigint,
+                    reserved_tokens = GREATEST(0, reserved_tokens - $3),
+                    actual_tokens = actual_tokens + $4,
+                    actual_cost_microcents = actual_cost_microcents + $5,
+                    actual_cost_cents = CEIL((actual_cost_microcents + $5)::numeric / 1000000)::bigint,
                     updated_at = now()
-                WHERE credential_id = $4 AND period_type = 'daily' AND period_start = $5
+                WHERE credential_id = $6 AND period_type = 'daily' AND period_start = $7
                 """,
                 estimated_cost_cents,
                 estimated_cost_microcents,
+                estimated_tokens,
+                actual_tokens,
                 cost_microcents,
                 credential_id,
                 day_start,
@@ -534,13 +582,17 @@ async def settle_usage_transactional(
                 UPDATE public.llm_usage_budget_counters
                 SET reserved_cost_cents = GREATEST(0, reserved_cost_cents - $1),
                     reserved_cost_microcents = GREATEST(0, reserved_cost_microcents - $2),
-                    actual_cost_microcents = actual_cost_microcents + $3,
-                    actual_cost_cents = CEIL((actual_cost_microcents + $3)::numeric / 1000000)::bigint,
+                    reserved_tokens = GREATEST(0, reserved_tokens - $3),
+                    actual_tokens = actual_tokens + $4,
+                    actual_cost_microcents = actual_cost_microcents + $5,
+                    actual_cost_cents = CEIL((actual_cost_microcents + $5)::numeric / 1000000)::bigint,
                     updated_at = now()
-                WHERE credential_id = $4 AND period_type = 'monthly' AND period_start = $5
+                WHERE credential_id = $6 AND period_type = 'monthly' AND period_start = $7
                 """,
                 estimated_cost_cents,
                 estimated_cost_microcents,
+                estimated_tokens,
+                actual_tokens,
                 cost_microcents,
                 credential_id,
                 month_start,
@@ -557,6 +609,10 @@ async def settle_usage_transactional(
                     actual_cost_microcents = $5,
                     error_category = $6,
                     settled_at = $7,
+                    resolved_model_id = COALESCE($8, resolved_model_id),
+                    upstream_provider = COALESCE($9, upstream_provider),
+                    upstream_generation_id = COALESCE($10, upstream_generation_id),
+                    usage_source = COALESCE($11, usage_source),
                     updated_at = now()
                 WHERE id = $1
                 """,
@@ -567,6 +623,10 @@ async def settle_usage_transactional(
                 cost_microcents,
                 error_category,
                 now_utc,
+                resolved_model_id,
+                upstream_provider,
+                upstream_generation_id,
+                usage_source,
             )
 
             # Append usage_settled event
@@ -594,6 +654,10 @@ async def settle_usage_transactional(
                         "actual_cost_cents": cost_cents,
                         "actual_cost_microcents": cost_microcents,
                         "error_category": error_category,
+                        "resolved_model_id": resolved_model_id,
+                        "upstream_provider": upstream_provider,
+                        "upstream_generation_id": upstream_generation_id,
+                        "usage_source": usage_source,
                     }
                 ),
             )
@@ -614,7 +678,7 @@ async def release_reservation_transactional(
     reservation_id: UUID,
     reason: str = "pre_dispatch_cancellation",
 ) -> ReleaseResult:
-    """Release uncommitted reservation, refunding reserved request & spending budget."""
+    """Release uncommitted reservation, refunding reserved request, token & spending budget."""
     pool = get_pool()
     now_utc = datetime.now(UTC)
 
@@ -624,6 +688,7 @@ async def release_reservation_transactional(
                 """
                 SELECT id, user_id, credential_id, status, estimated_cost_cents,
                        COALESCE(estimated_cost_microcents, estimated_cost_cents * 1000000) as estimated_cost_microcents,
+                       estimated_input_tokens, estimated_output_tokens,
                        created_at
                 FROM public.llm_usage_reservations
                 WHERE id = $1
@@ -650,6 +715,7 @@ async def release_reservation_transactional(
             user_id = res["user_id"]
             estimated_cost_cents = res["estimated_cost_cents"]
             estimated_cost_microcents = res["estimated_cost_microcents"]
+            estimated_tokens = res["estimated_input_tokens"] + res["estimated_output_tokens"]
             day_start, month_start = get_period_boundaries(res["created_at"])
 
             # Decrement reserved counters
@@ -659,11 +725,13 @@ async def release_reservation_transactional(
                 SET reserved_requests = GREATEST(0, reserved_requests - 1),
                     reserved_cost_cents = GREATEST(0, reserved_cost_cents - $1),
                     reserved_cost_microcents = GREATEST(0, reserved_cost_microcents - $2),
+                    reserved_tokens = GREATEST(0, reserved_tokens - $3),
                     updated_at = now()
-                WHERE credential_id = $3 AND period_type = 'daily' AND period_start = $4
+                WHERE credential_id = $4 AND period_type = 'daily' AND period_start = $5
                 """,
                 estimated_cost_cents,
                 estimated_cost_microcents,
+                estimated_tokens,
                 credential_id,
                 day_start,
             )
@@ -673,11 +741,13 @@ async def release_reservation_transactional(
                 SET reserved_requests = GREATEST(0, reserved_requests - 1),
                     reserved_cost_cents = GREATEST(0, reserved_cost_cents - $1),
                     reserved_cost_microcents = GREATEST(0, reserved_cost_microcents - $2),
+                    reserved_tokens = GREATEST(0, reserved_tokens - $3),
                     updated_at = now()
-                WHERE credential_id = $3 AND period_type = 'monthly' AND period_start = $4
+                WHERE credential_id = $4 AND period_type = 'monthly' AND period_start = $5
                 """,
                 estimated_cost_cents,
                 estimated_cost_microcents,
+                estimated_tokens,
                 credential_id,
                 month_start,
             )
@@ -732,6 +802,7 @@ async def expire_reservation_transactional(
                 """
                 SELECT id, user_id, credential_id, status, estimated_cost_cents,
                        COALESCE(estimated_cost_microcents, estimated_cost_cents * 1000000) as estimated_cost_microcents,
+                       estimated_input_tokens, estimated_output_tokens,
                        created_at
                 FROM public.llm_usage_reservations
                 WHERE id = $1
@@ -758,6 +829,7 @@ async def expire_reservation_transactional(
             user_id = res["user_id"]
             estimated_cost_cents = res["estimated_cost_cents"]
             estimated_cost_microcents = res["estimated_cost_microcents"]
+            estimated_tokens = res["estimated_input_tokens"] + res["estimated_output_tokens"]
             day_start, month_start = get_period_boundaries(res["created_at"])
 
             # Decrement reserved counters
@@ -767,11 +839,13 @@ async def expire_reservation_transactional(
                 SET reserved_requests = GREATEST(0, reserved_requests - 1),
                     reserved_cost_cents = GREATEST(0, reserved_cost_cents - $1),
                     reserved_cost_microcents = GREATEST(0, reserved_cost_microcents - $2),
+                    reserved_tokens = GREATEST(0, reserved_tokens - $3),
                     updated_at = now()
-                WHERE credential_id = $3 AND period_type = 'daily' AND period_start = $4
+                WHERE credential_id = $4 AND period_type = 'daily' AND period_start = $5
                 """,
                 estimated_cost_cents,
                 estimated_cost_microcents,
+                estimated_tokens,
                 credential_id,
                 day_start,
             )
@@ -781,11 +855,13 @@ async def expire_reservation_transactional(
                 SET reserved_requests = GREATEST(0, reserved_requests - 1),
                     reserved_cost_cents = GREATEST(0, reserved_cost_cents - $1),
                     reserved_cost_microcents = GREATEST(0, reserved_cost_microcents - $2),
+                    reserved_tokens = GREATEST(0, reserved_tokens - $3),
                     updated_at = now()
-                WHERE credential_id = $3 AND period_type = 'monthly' AND period_start = $4
+                WHERE credential_id = $4 AND period_type = 'monthly' AND period_start = $5
                 """,
                 estimated_cost_cents,
                 estimated_cost_microcents,
+                estimated_tokens,
                 credential_id,
                 month_start,
             )

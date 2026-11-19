@@ -700,3 +700,104 @@ async def reconcile_reservation(reservation_id: UUID, actual_input_tokens: int, 
 }
 ```
 
+---
+
+## 8. Unified AI Inference Gateway (`POST /api/v1/llm/chat/completions`)
+
+The Unified Inference Gateway exposes a production-grade, single endpoint for AI chat generation across all supported cloud providers (Google Gemini, Groq, OpenRouter, Cerebras).
+
+### 8.1 Endpoint Details
+- **Route**: `POST /api/v1/llm/chat/completions`
+- **Authentication**: `Authorization: Bearer <Supabase_JWT>`
+- **Authorization**: Active, approved user profile (`approval_status == 'approved'`, not suspended).
+- **Rate Limit**: Baseline abuse prevention + M2.4 admission rate slots (RPM, TPM, RPD, TPD, microcent budget).
+
+### 8.2 Request Schema
+```json
+{
+  "provider_id": "gemini",
+  "model_id": "gemini-1.5-flash",
+  "credential_id": null,
+  "messages": [
+    {"role": "system", "content": "You are a concise academic tutor."},
+    {"role": "user", "content": "Explain cellular respiration."}
+  ],
+  "params": {
+    "temperature": 0.7,
+    "max_output_tokens": 2048,
+    "top_p": 0.95
+  },
+  "stream": true,
+  "idempotency_key": "user-req-unique-idempotency-key-12345"
+}
+```
+
+### 8.3 Streaming Response Protocol (`stream: true`)
+Returns HTTP `200 OK` with `Content-Type: text/event-stream; charset=utf-8`.
+
+The stream strictly emits normalized Server-Sent Events (SSE):
+1. `event: generation_started`:
+   ```json
+   {"request_id": "req-123", "reservation_id": "uuid", "model_id": "gemini-1.5-flash", "created_at": "2026-02-07T12:00:00Z"}
+   ```
+2. `event: text_delta` (repeated for incremental tokens):
+   ```json
+   {"request_id": "req-123", "delta": "Cellular respiration is ", "index": 0}
+   ```
+3. `event: usage` (emitted upon generation completion, settling usage ledger):
+   ```json
+   {
+     "request_id": "req-123",
+     "usage": {
+       "input_tokens": 28,
+       "output_tokens": 140,
+       "total_tokens": 168,
+       "cached_tokens": 0,
+       "reasoning_tokens": 0,
+       "usage_source": "authoritative"
+     },
+     "cost_microcents": 0,
+     "cost_cents": 0,
+     "resolved_model_id": "gemini-1.5-flash",
+     "upstream_generation_id": null
+   }
+   ```
+4. `event: generation_completed`:
+   ```json
+   {"request_id": "req-123", "finish_reason": "stop"}
+   ```
+5. `event: generation_error` (emitted only on mid-stream failure after HTTP 200 commitment):
+   ```json
+   {"request_id": "req-123", "error_code": "PROVIDER_UPSTREAM_TIMEOUT", "message": "The upstream inference provider timed out during generation"}
+   ```
+
+### 8.4 Non-Streaming Response (`stream: false`)
+Returns HTTP `200 OK` with `Content-Type: application/json`:
+```json
+{
+  "id": "gen-upstream-id",
+  "request_id": "req-123",
+  "reservation_id": "uuid",
+  "provider_id": "openrouter",
+  "model_id": "openrouter/free",
+  "resolved_model_id": "meta-llama/llama-3.2-3b-instruct:free",
+  "upstream_provider": "openrouter",
+  "upstream_generation_id": "gen-12345678",
+  "content": "Cellular respiration converts glucose into ATP.",
+  "finish_reason": "stop",
+  "usage": {
+    "input_tokens": 20,
+    "output_tokens": 12,
+    "total_tokens": 32,
+    "cached_tokens": 0,
+    "reasoning_tokens": 0,
+    "usage_source": "authoritative"
+  },
+  "cost_microcents": 0,
+  "cost_cents": 0,
+  "currency": "USD",
+  "created_at": "2026-02-07T12:00:00Z"
+}
+```
+
+

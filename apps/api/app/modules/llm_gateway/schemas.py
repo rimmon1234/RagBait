@@ -168,3 +168,56 @@ class ResolvedModelInfo(BaseModel):
     is_routing_alias: bool
     resolved_model_id: str
     upstream_provider: str
+
+
+# ==============================================================================
+# Inference Gateway Schemas
+# ==============================================================================
+class ChatMessage(BaseModel):
+    """Plain-text chat message."""
+
+    role: Literal["system", "user", "assistant"]
+    content: str = Field(..., min_length=1, max_length=128000)
+
+
+class GenerationParams(BaseModel):
+    """Inference generation hyperparameters."""
+
+    temperature: float = Field(default=0.7, ge=0.0, le=2.0)
+    max_output_tokens: int | None = Field(default=None, gt=0)
+    top_p: float | None = Field(default=None, ge=0.0, le=1.0)
+
+
+class ChatCompletionRequest(BaseModel):
+    """Unified request to dispatch text inference through the LLM gateway."""
+
+    provider_id: str = Field(..., min_length=2, max_length=64)
+    model_id: str = Field(..., min_length=2, max_length=128)
+    credential_id: UUID | None = Field(
+        default=None,
+        description="Optional explicit credential ID. If omitted, user's active credential for this provider is used.",
+    )
+    messages: list[ChatMessage] = Field(..., min_length=1, max_length=100)
+    params: GenerationParams = Field(default_factory=GenerationParams)
+    stream: bool = Field(default=True, description="Whether to stream response via SSE")
+    idempotency_key: str = Field(..., min_length=4, max_length=128)
+
+
+class ChatCompletionResponse(BaseModel):
+    """Unified non-streaming generation response."""
+
+    id: str
+    request_id: str
+    reservation_id: UUID
+    provider_id: str
+    model_id: str
+    resolved_model_id: str
+    upstream_provider: str
+    upstream_generation_id: str | None = None
+    content: str
+    finish_reason: str = "stop"
+    usage: dict[str, Any]
+    cost_microcents: int = 0
+    cost_cents: int = 0
+    currency: str = "USD"
+    created_at: datetime

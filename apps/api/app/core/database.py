@@ -19,6 +19,10 @@ _pool: asyncpg.Pool | None = None
 async def init_db_pool() -> asyncpg.Pool:
     """Initialize the global asyncpg connection pool."""
     global _pool
+    if _pool is not None and (
+        _pool._closed or getattr(_pool, "_loop", None) is None or _pool._loop.is_closed()
+    ):
+        _pool = None
     if _pool is None:
         logger.info("Initializing asyncpg connection pool...")
         _pool = await asyncpg.create_pool(
@@ -35,8 +39,15 @@ async def close_db_pool() -> None:
     global _pool
     if _pool is not None:
         logger.info("Closing asyncpg connection pool...")
-        await _pool.close()
-        _pool = None
+        try:
+            await _pool.close()
+        except Exception:
+            try:
+                _pool.terminate()
+            except Exception:
+                pass
+        finally:
+            _pool = None
 
 
 def get_pool() -> asyncpg.Pool:

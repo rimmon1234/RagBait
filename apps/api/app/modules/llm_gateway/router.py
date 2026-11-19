@@ -1,19 +1,24 @@
 """FastAPI endpoints for LLM Providers, Model Registry, and Dynamic Quotas."""
 
+from collections.abc import AsyncIterator
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Query, status
+from fastapi import APIRouter, Depends, Query, Response, status
+from fastapi.responses import StreamingResponse
 
 from app.core.dependencies import (
     rate_limit_admin_mutate,
     rate_limit_admin_read,
     rate_limit_general,
     require_admin,
+    require_approved_user,
     require_not_suspended,
 )
 from app.modules.llm_gateway import service
 from app.modules.llm_gateway.schemas import (
+    ChatCompletionRequest,
+    ChatCompletionResponse,
     LLMModelCreate,
     LLMModelListResponse,
     LLMModelResponse,
@@ -86,6 +91,41 @@ async def list_active_quotas(
     """List active provider rate limit and quota envelopes."""
     items = await service.list_quotas(provider_id=provider_id, scope_id=scope_id, active_only=True)
     return ProviderQuotaListResponse(items=items, total=len(items))
+
+
+@llm_router.post(
+    "/chat/completions",
+    response_model=ChatCompletionResponse,
+    dependencies=[Depends(rate_limit_general)],
+)
+async def chat_completions(
+    req: ChatCompletionRequest,
+    current_user: Annotated[UserProfile, Depends(require_approved_user)],
+) -> Response:
+    """Execute unified AI chat completion through provider adapters with streaming or non-streaming."""
+    result, is_streaming = await service.dispatch_chat_completion(
+        user_id=current_user.id,
+        req=req,
+    )
+
+    if is_streaming:
+        assert isinstance(result, AsyncIterator)
+        return StreamingResponse(
+            content=result,
+            media_type="text/event-stream",
+            headers={
+                "Cache-Control": "no-cache",
+                "Connection": "keep-alive",
+                "X-Accel-Buffering": "no",
+            },
+        )
+
+    assert isinstance(result, ChatCompletionResponse)
+    return Response(
+        content=result.model_dump_json(),
+        media_type="application/json",
+        status_code=status.HTTP_200_OK,
+    )
 
 
 # ==============================================================================

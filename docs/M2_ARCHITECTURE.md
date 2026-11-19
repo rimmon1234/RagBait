@@ -288,8 +288,15 @@ flowchart TD
    - Fail-closed error handling and automatic rollback compensation across Redis and PostgreSQL.
    - Provider cooldown tracking with `Retry-After` delta-seconds and HTTP-date parsing.
    - Read-only contributor usage summary endpoint `GET /api/v1/me/usage` and Next.js dashboard at `/credentials/usage`.
-5. **M2.5 — Core Free/Low-Cost Cloud Adapters**:
-   - Normalized streaming and non-streaming adapters for Google Gemini, GroqCloud, OpenRouter, and Cerebras.
+5. **M2.5 — Core Free/Low-Cost Cloud Adapters & Unified Inference Gateway**:
+   - Normalized streaming (SSE) and non-streaming adapters for Google Gemini, GroqCloud, OpenRouter, and Cerebras implementing `BaseProviderAdapter`.
+   - Unified Gateway API: `POST /api/v1/llm/chat/completions` supporting both SSE streaming and single JSON completions.
+   - 10-step request dispatch lifecycle: auth verification -> registry validation -> credential eligibility -> conservative token estimation -> TPD & admission control reservation -> just-in-time vault decryption -> durable dispatch commitment (`mark_dispatched`) -> provider invocation -> SSE streaming with UTF-8 boundary handling -> authoritative usage extraction and exact microcent settlement.
+   - Daily Token Limit (TPD) tracking in `public.llm_usage_budget_counters` (`reserved_tokens`, `actual_tokens`) with check constraints and quota enforcement.
+   - Provenance tracking in `public.llm_usage_reservations`: `resolved_model_id`, `upstream_provider`, `upstream_generation_id`, and `usage_source`.
+   - Strict credential security: credentials decrypted only in memory immediately before upstream dispatch, zero raw key logging, zero raw key streaming in events.
+   - Dynamic routing alias resolution for `openrouter/free` recording the true resolved upstream model.
+   - Cerebras and Groq usage details: reasoning tokens, cached tokens, and prompt/completion breakdowns.
 6. **M2.6 — Optional Paid Provider Adapters**:
    - Metered adapters for xAI / Grok and administrator-managed OpenAI project-scoped service accounts (`sk-proj-...`).
 7. **M2.7 — Private Local Inference (Mode A)**:

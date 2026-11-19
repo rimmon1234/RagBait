@@ -54,6 +54,13 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     except Exception:
         pass
 
+    try:
+        from app.modules.llm_gateway.http_client import init_http_client
+
+        await init_http_client()
+    except Exception:
+        pass
+
     # Startup recovery sweep for any reservations abandoned by crashed previous workers
     try:
         from app.modules.admission.service import recover_expired_reservations
@@ -82,6 +89,12 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 
     await close_db_pool()
     await close_redis()
+    try:
+        from app.modules.llm_gateway.http_client import close_http_client
+
+        await close_http_client()
+    except Exception:
+        pass
 
 
 def create_app() -> FastAPI:
