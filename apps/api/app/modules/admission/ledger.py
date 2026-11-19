@@ -204,8 +204,8 @@ async def reserve_budget_transactional(
 
             if daily_spending_limit_cents is not None:
                 spending_limit_microcents = daily_spending_limit_cents * 1_000_000
-                total_daily_cost_microcents = day_counter["actual_cost_microcents"] + (
-                    day_counter["reserved_cost_cents"] * 1_000_000
+                total_daily_cost_microcents = (
+                    day_counter["actual_cost_microcents"] + day_counter["reserved_cost_microcents"]
                 )
                 if total_daily_cost_microcents + cost_microcents > spending_limit_microcents:
                     raise BudgetExhaustedError(
@@ -234,8 +234,9 @@ async def reserve_budget_transactional(
 
             if monthly_spending_limit_cents is not None:
                 monthly_spending_limit_microcents = monthly_spending_limit_cents * 1_000_000
-                total_monthly_cost_microcents = month_counter["actual_cost_microcents"] + (
-                    month_counter["reserved_cost_cents"] * 1_000_000
+                total_monthly_cost_microcents = (
+                    month_counter["actual_cost_microcents"]
+                    + month_counter["reserved_cost_microcents"]
                 )
                 if (
                     total_monthly_cost_microcents + cost_microcents
@@ -823,6 +824,115 @@ async def expire_reservation_transactional(
                 released_at=now_utc,
                 reason=reason,
             )
+
+
+async def sweep_expired_reservations_batch(
+    batch_size: int = 50,
+    reason: str = "lease_expired_sweeper",
+) -> list[dict[str, Any]]:
+    """Atomically find and expire reservations whose lease has passed in PostgreSQL.
+
+    Uses SELECT ... FOR UPDATE SKIP LOCKED to guarantee that multiple concurrent
+    sweepers will never lock or process the same reservation.
+    Only expires reservations with status = 'reserved' (never touches dispatched,
+    settled, outcome_unknown, or released).
+    Returns metadata list of swept reservations for best-effort Redis cleanup.
+    """
+    pool = get_pool()
+    now_utc = datetime.now(UTC)
+    swept_items: list[dict[str, Any]] = []
+
+    async with pool.acquire() as conn:
+        async with conn.transaction():
+            rows = await conn.fetch(
+                """
+                SELECT id, user_id, credential_id, provider_id, model_id, request_id, lease_token,
+                       estimated_cost_cents,
+                       COALESCE(estimated_cost_microcents, estimated_cost_cents * 1000000) as estimated_cost_microcents,
+                       created_at
+                FROM public.llm_usage_reservations
+                WHERE status = 'reserved'
+                  AND lease_expires_at < $1
+                ORDER BY lease_expires_at ASC
+                LIMIT $2
+                FOR UPDATE SKIP LOCKED
+                """,
+                now_utc,
+                batch_size,
+            )
+
+            if not rows:
+                return []
+
+            for row in rows:
+                res_id = row["id"]
+                user_id = row["user_id"]
+                credential_id = row["credential_id"]
+                estimated_cost_cents = row["estimated_cost_cents"]
+                estimated_cost_microcents = row["estimated_cost_microcents"]
+                day_start, month_start = get_period_boundaries(row["created_at"])
+
+                # Decrement reserved counters
+                await conn.execute(
+                    """
+                    UPDATE public.llm_usage_budget_counters
+                    SET reserved_requests = GREATEST(0, reserved_requests - 1),
+                        reserved_cost_cents = GREATEST(0, reserved_cost_cents - $1),
+                        reserved_cost_microcents = GREATEST(0, reserved_cost_microcents - $2),
+                        updated_at = now()
+                    WHERE credential_id = $3 AND period_type = 'daily' AND period_start = $4
+                    """,
+                    estimated_cost_cents,
+                    estimated_cost_microcents,
+                    credential_id,
+                    day_start,
+                )
+                await conn.execute(
+                    """
+                    UPDATE public.llm_usage_budget_counters
+                    SET reserved_requests = GREATEST(0, reserved_requests - 1),
+                        reserved_cost_cents = GREATEST(0, reserved_cost_cents - $1),
+                        reserved_cost_microcents = GREATEST(0, reserved_cost_microcents - $2),
+                        updated_at = now()
+                    WHERE credential_id = $3 AND period_type = 'monthly' AND period_start = $4
+                    """,
+                    estimated_cost_cents,
+                    estimated_cost_microcents,
+                    credential_id,
+                    month_start,
+                )
+
+                # Update reservation status to expired
+                await conn.execute(
+                    """
+                    UPDATE public.llm_usage_reservations
+                    SET status = 'expired',
+                        updated_at = now()
+                    WHERE id = $1
+                    """,
+                    res_id,
+                )
+
+                # Append immutable reservation_expired event
+                await conn.execute(
+                    """
+                    INSERT INTO public.llm_usage_events (
+                        reservation_id, event_type, user_id, credential_id,
+                        tokens_delta, cost_cents_delta, cost_microcents_delta, currency, details
+                    )
+                    VALUES ($1, 'reservation_expired', $2, $3, 0, $4, $5, 'USD', $6)
+                    """,
+                    res_id,
+                    user_id,
+                    credential_id,
+                    -estimated_cost_cents,
+                    -estimated_cost_microcents,
+                    json.dumps({"reason": reason, "swept_at": now_utc.isoformat()}),
+                )
+
+                swept_items.append(dict(row))
+
+    return swept_items
 
 
 async def reconcile_usage_transactional(

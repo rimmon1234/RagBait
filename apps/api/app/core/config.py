@@ -71,6 +71,8 @@ class Settings(BaseSettings):
     LLM_RESERVATION_LEASE_SECONDS: int = 120
     LLM_RESERVATION_HEARTBEAT_SECONDS: int = 30
     LLM_MAX_RESERVATION_LIFETIME_SECONDS: int = 1800
+    LLM_SWEEPER_INTERVAL_SECONDS: int = 15
+    LLM_SWEEPER_BATCH_SIZE: int = 50
 
     # Credential Vault & Encryption (M2.2)
     VAULT_DATABASE_URL: str = Field(

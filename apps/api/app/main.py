@@ -1,5 +1,7 @@
 """RagBait FastAPI Application Entrypoint."""
 
+import asyncio
+import logging
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 
@@ -13,6 +15,26 @@ from app.core.database import close_db_pool, init_db_pool
 from app.core.errors import register_error_handlers
 from app.core.logging import RequestLoggingMiddleware, setup_logging
 from app.core.redis import close_redis, init_redis
+
+logger = logging.getLogger("ragbait.api")
+
+
+async def _run_reservation_sweeper_task() -> None:
+    """Background periodic loop to sweep and recover expired reservations."""
+    from app.modules.admission.service import recover_expired_reservations
+
+    while True:
+        try:
+            await asyncio.sleep(settings.LLM_SWEEPER_INTERVAL_SECONDS)
+            swept = await recover_expired_reservations(batch_size=settings.LLM_SWEEPER_BATCH_SIZE)
+            if swept > 0:
+                logger.info(
+                    f"Background reservation sweeper recovered {swept} expired reservations"
+                )
+        except asyncio.CancelledError:
+            break
+        except Exception as exc:
+            logger.warning(f"Background reservation sweeper encountered error: {exc}")
 
 
 @asynccontextmanager
@@ -32,9 +54,32 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     except Exception:
         pass
 
+    # Startup recovery sweep for any reservations abandoned by crashed previous workers
+    try:
+        from app.modules.admission.service import recover_expired_reservations
+
+        startup_swept = await recover_expired_reservations(
+            batch_size=settings.LLM_SWEEPER_BATCH_SIZE * 2
+        )
+        if startup_swept > 0:
+            logger.info(f"Startup recovery swept {startup_swept} expired dangling reservations")
+    except Exception as exc:
+        logger.warning(f"Startup reservation recovery failed: {exc}")
+
+    # Launch background periodic sweeper task
+    sweeper_task = asyncio.create_task(_run_reservation_sweeper_task())
+
     yield
 
     # Clean shutdown
+    sweeper_task.cancel()
+    try:
+        await sweeper_task
+    except asyncio.CancelledError:
+        pass
+    except Exception:
+        pass
+
     await close_db_pool()
     await close_redis()
 

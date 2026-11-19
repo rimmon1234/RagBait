@@ -1,5 +1,6 @@
 """Admission control orchestrator for rate limits, concurrency leases, and usage ledger."""
 
+import logging
 from datetime import UTC, datetime
 from typing import Any
 from uuid import UUID
@@ -28,6 +29,7 @@ from app.modules.admission.ledger import (
     release_reservation_transactional,
     reserve_budget_transactional,
     settle_usage_transactional,
+    sweep_expired_reservations_batch,
 )
 from app.modules.admission.rate_limiter import (
     RateLimitScope,
@@ -44,6 +46,8 @@ from app.modules.admission.schemas import (
     SettlementResult,
     UsageSummaryResponse,
 )
+
+logger = logging.getLogger("ragbait.admission.service")
 
 
 def _compute_ceiling_cost(
@@ -129,6 +133,12 @@ async def reserve_generation(
 
     This method is strictly internal and must never receive raw credentials or prompts.
     """
+    # 0. Opportunistic bounded sweeper pass: recover any expired reservations (e.g. from crashed workers)
+    try:
+        await recover_expired_reservations(batch_size=10)
+    except Exception as exc:
+        logger.warning(f"Opportunistic admission recovery encountered non-fatal error: {exc}")
+
     # 1. Fetch & verify credential
     cred = await _get_credential_details(req.credential_id)
     if cred["status"] != "active":
@@ -571,6 +581,55 @@ async def expire_reservation(
         ]
         await release_rate_slots(rate_scopes, member_id=res["request_id"])
         return expired
+
+
+async def recover_expired_reservations(batch_size: int = 50) -> int:
+    """Execute bounded sweeper pass: recover PostgreSQL state, then perform best-effort Redis cleanup.
+
+    Concurrency-safe: uses FOR UPDATE SKIP LOCKED.
+    Idempotent: safe to invoke concurrently from multiple workers.
+    Returns count of expired reservations successfully recovered.
+    """
+    swept_items = await sweep_expired_reservations_batch(batch_size=batch_size)
+    if not swept_items:
+        return 0
+
+    for item in swept_items:
+        # Best-effort Redis concurrency lease release
+        if item.get("lease_token"):
+            try:
+                await release_concurrency_lease(
+                    item["user_id"], item["credential_id"], item["lease_token"]
+                )
+            except Exception as exc:
+                logger.warning(
+                    f"Best-effort Redis lease release failed for swept reservation {item['id']}: {exc}"
+                )
+
+        # Best-effort Redis rate slots release
+        try:
+            rate_scopes = [
+                RateLimitScope("user", f"ragbait:rate:user:{item['user_id']}", 10, 1),
+                RateLimitScope(
+                    "credential", f"ragbait:rate:credential:{item['credential_id']}", 5, 1
+                ),
+                RateLimitScope("provider", f"ragbait:rate:provider:{item['provider_id']}", 100, 1),
+                RateLimitScope("model", f"ragbait:rate:model:{item['model_id']}", 100, 1),
+                RateLimitScope(
+                    "model_tpm",
+                    f"ragbait:rate:tpm:model:{item['model_id']}",
+                    1000000,
+                    0,
+                    unit="tokens",
+                ),
+            ]
+            await release_rate_slots(rate_scopes, member_id=item["request_id"])
+        except Exception as exc:
+            logger.warning(
+                f"Best-effort Redis rate slots release failed for swept reservation {item['id']}: {exc}"
+            )
+
+    return len(swept_items)
 
 
 async def reconcile_reservation(
