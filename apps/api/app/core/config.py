@@ -94,6 +94,24 @@ class Settings(BaseSettings):
     VAULT_KEK_VERSION: int = 1
     VAULT_WRAPPING_CONTEXT_VERSION: int = 1
 
+    # Community Local Inference (M2.8)
+    COMMUNITY_SERVER_SIGNING_KEY_HEX: str = Field(
+        default="726167626169742d636f6d6d756e6974792d6465762d7369676e696e672d3332",
+        description="Server Ed25519 32-byte private key in hex for signing job authorizations",
+    )
+    COMMUNITY_SERVER_VERIFYING_KEY_HEX: str = Field(
+        default="8967fa465ee22988e81808173fbb2366072669837ac40055beb7483e5f7ad4c8",
+        description="Server Ed25519 32-byte public key in hex",
+    )
+    COMMUNITY_KEY_ID: str = "k1"
+    COMMUNITY_PAIRING_CODE_TTL_SECONDS: int = 300
+    COMMUNITY_HEARTBEAT_INTERVAL_SECONDS: int = 15
+    COMMUNITY_NODE_OFFLINE_THRESHOLD_SECONDS: int = 45
+    COMMUNITY_JOB_LEASE_SECONDS: int = 30
+    COMMUNITY_JOB_HARD_DEADLINE_SECONDS: int = 300
+    COMMUNITY_SWEEPER_INTERVAL_SECONDS: int = 15
+    COMMUNITY_CONSENT_POLICY_VERSION: str = "2026-02-community-v1"
+
     @model_validator(mode="after")
     def validate_security_configuration(self) -> "Settings":
         """Validate critical cryptographic keys and environmental separation rules."""
@@ -166,6 +184,18 @@ class Settings(BaseSettings):
                 raise ValueError("Mock SUPABASE_SERVICE_ROLE_KEY is not permitted in production")
             if self.SUPABASE_JWT_SECRET.startswith("mock-"):
                 raise ValueError("Mock SUPABASE_JWT_SECRET is not permitted in production")
+            if (
+                self.COMMUNITY_SERVER_SIGNING_KEY_HEX
+                == "726167626169742d636f6d6d756e6974792d6465762d7369676e696e672d3332"
+            ):
+                raise ValueError(
+                    "Default development COMMUNITY_SERVER_SIGNING_KEY_HEX is not permitted in production"
+                )
+
+        if len(self.COMMUNITY_SERVER_SIGNING_KEY_HEX) != 64:
+            raise ValueError(
+                "COMMUNITY_SERVER_SIGNING_KEY_HEX must be a 64-character hex string (32 bytes)"
+            )
 
         return self
 

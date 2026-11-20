@@ -37,6 +37,22 @@ async def _run_reservation_sweeper_task() -> None:
             logger.warning(f"Background reservation sweeper encountered error: {exc}")
 
 
+async def _run_community_sweeper_task() -> None:
+    """Background periodic loop to sweep and recover expired community inference jobs."""
+    from app.modules.community.service import recover_expired_community_jobs
+
+    while True:
+        try:
+            await asyncio.sleep(settings.COMMUNITY_SWEEPER_INTERVAL_SECONDS)
+            swept = await recover_expired_community_jobs()
+            if swept > 0:
+                logger.info(f"Background community sweeper recovered {swept} expired jobs")
+        except asyncio.CancelledError:
+            break
+        except Exception as exc:
+            logger.warning(f"Background community sweeper encountered error: {exc}")
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     """Manage application lifespan: database and redis connection lifecycles."""
@@ -73,18 +89,22 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     except Exception as exc:
         logger.warning(f"Startup reservation recovery failed: {exc}")
 
-    # Launch background periodic sweeper task
+    # Launch background periodic sweeper tasks
     sweeper_task = asyncio.create_task(_run_reservation_sweeper_task())
+    community_sweeper_task = asyncio.create_task(_run_community_sweeper_task())
 
     yield
 
     # Clean shutdown
     sweeper_task.cancel()
+    community_sweeper_task.cancel()
     try:
         await sweeper_task
-    except asyncio.CancelledError:
+    except (asyncio.CancelledError, Exception):
         pass
-    except Exception:
+    try:
+        await community_sweeper_task
+    except (asyncio.CancelledError, Exception):
         pass
 
     await close_db_pool()

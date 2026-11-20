@@ -63,6 +63,18 @@ class ConflictError(AppError):
         super().__init__(code=code, message=message, status_code=status.HTTP_409_CONFLICT)
 
 
+class BadRequestError(AppError):
+    def __init__(
+        self, message: str = "Bad request", code: str = "BAD_REQUEST", details: Any = None
+    ):
+        super().__init__(
+            code=code,
+            message=message,
+            status_code=status.HTTP_400_BAD_REQUEST,
+            details=details,
+        )
+
+
 class ValidationError(AppError):
     def __init__(self, message: str = "Validation failed", code: str = "VALIDATION_ERROR"):
         super().__init__(code=code, message=message, status_code=422)
