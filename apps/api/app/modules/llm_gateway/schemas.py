@@ -196,6 +196,10 @@ class ChatCompletionRequest(BaseModel):
         default="provider_specific",
         description="Routing policy mode: 'auto', 'cloud_only', 'community_only', or 'provider_specific'",
     )
+    credential_scope: Literal["eligible_pool", "owner_only"] = Field(
+        default="eligible_pool",
+        description="Credential pool scope: 'eligible_pool' (recommended) or 'owner_only' (requester's keys only)",
+    )
     provider_id: str | None = Field(
         default=None,
         min_length=2,

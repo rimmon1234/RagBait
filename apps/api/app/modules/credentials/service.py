@@ -382,3 +382,107 @@ async def delete_user_credential(
     )
 
     return {"deleted": True, "id": str(credential_id)}
+
+
+async def check_chat_contribution_entitlement(
+    user_id: UUID,
+) -> tuple[bool, str, int]:
+    """Authoritatively evaluate whether a user has satisfied the mandatory AI Chat contribution requirement.
+
+    A user is entitled to use AI Chat if and only if they personally own at least one
+    credential that satisfies all of the following:
+      1. owner_id == user_id
+      2. status IN ('active', 'rate_limited', 'quota_exhausted') (temporary exhaustion does not revoke contributor entitlement)
+      3. validation_status == 'valid'
+      4. sharing_scope == 'community_shared'
+      5. shared_consent == true
+      6. provider allows community sharing (p.allows_community_sharing == true)
+      7. provider is enabled and is cloud_api (p.is_enabled == true, p.runtime_type == 'cloud_api')
+      8. provider has at least one active free-tier eligible model and is not paid-only
+
+    Returns:
+      (eligible: bool, reason_code: str, eligible_credential_count: int)
+    """
+    try:
+        pool = get_pool()
+    except Exception:
+        return False, "DATABASE_UNAVAILABLE", 0
+
+    async with pool.acquire() as conn:
+        rows = await conn.fetch(
+            """
+            SELECT
+                c.id,
+                c.provider_id,
+                c.status,
+                c.validation_status,
+                c.sharing_scope,
+                c.shared_consent,
+                p.allows_community_sharing,
+                p.is_enabled AS provider_enabled,
+                p.runtime_type,
+                p.account_tier,
+                EXISTS (
+                    SELECT 1 FROM public.llm_models m
+                    WHERE m.provider_id = p.id
+                      AND m.free_tier_eligible = true
+                      AND m.availability_status = 'active'
+                ) AS has_free_tier_models
+            FROM public.api_key_metadata c
+            JOIN public.llm_providers p ON c.provider_id = p.id
+            WHERE c.owner_id = $1
+            ORDER BY c.created_at DESC
+            """,
+            user_id,
+        )
+
+    if not rows:
+        return False, "NO_CREDENTIAL_CONTRIBUTED", 0
+
+    qualifying_count = 0
+    for r in rows:
+        is_qualifying = (
+            r["status"] in ("active", "rate_limited", "quota_exhausted")
+            and r["validation_status"] == "valid"
+            and r["sharing_scope"] == "community_shared"
+            and r["shared_consent"] is True
+            and r["allows_community_sharing"] is True
+            and r["provider_enabled"] is True
+            and r["runtime_type"] == "cloud_api"
+            and r["has_free_tier_models"] is True
+        )
+        if is_qualifying:
+            qualifying_count += 1
+
+    if qualifying_count > 0:
+        return True, "QUALIFYING_CONTRIBUTION_ACTIVE", qualifying_count
+
+    # Determine most specific actionable remediation reason code
+    # 1. Check if user attempted community sharing but didn't pass validation
+    for r in rows:
+        if r["sharing_scope"] == "community_shared" and r["validation_status"] != "valid":
+            return False, "VALIDATION_REQUIRED", 0
+
+    # 2. Check if user shared and validated but credential is disabled
+    for r in rows:
+        if (
+            r["sharing_scope"] == "community_shared"
+            and r["validation_status"] == "valid"
+            and r["status"] == "disabled"
+        ):
+            return False, "CREDENTIAL_INACTIVE", 0
+
+    # 3. Check if user has a valid key but hasn't consented or enabled community sharing
+    for r in rows:
+        if r["validation_status"] == "valid" and (
+            r["sharing_scope"] != "community_shared" or not r["shared_consent"]
+        ):
+            return False, "SHARING_CONSENT_REQUIRED", 0
+
+    # 4. Check if user has a key for a provider not approved for community sharing
+    for r in rows:
+        if not r["allows_community_sharing"]:
+            return False, "PROVIDER_NOT_ELIGIBLE_FOR_SHARING", 0
+
+    return False, "NO_QUALIFYING_CONTRIBUTION", 0
+

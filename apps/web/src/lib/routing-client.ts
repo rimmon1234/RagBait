@@ -1,12 +1,15 @@
 import { createClient } from "@/lib/supabase/client";
 import { fetchWithAuth } from "@/lib/api";
-import type { RoutePreviewResponse, RoutingMode } from "@/types";
+import type { ChatEntitlementResponse, RoutePreviewResponse, RoutingMode } from "@/types";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000";
+
+export type CredentialScope = "eligible_pool" | "owner_only";
 
 export interface RoutePreviewParams {
   messages: { role: string; content: string }[];
   routing_mode?: RoutingMode;
+  credential_scope?: CredentialScope;
   model?: string;
   provider_id?: string;
 }
@@ -14,6 +17,7 @@ export interface RoutePreviewParams {
 export interface StreamChatCompletionParams {
   messages: { role: string; content: string }[];
   routing_mode?: RoutingMode;
+  credential_scope?: CredentialScope;
   model?: string;
   temperature?: number;
 }
@@ -23,6 +27,10 @@ export interface RouteHeaders {
   selectedSource?: string;
   selectedModel?: string;
   decisionReason?: string;
+}
+
+export async function getChatEntitlement(): Promise<ChatEntitlementResponse> {
+  return fetchWithAuth<ChatEntitlementResponse>("/api/v1/me/chat-entitlement");
 }
 
 export async function previewRoute(params: RoutePreviewParams): Promise<RoutePreviewResponse> {
@@ -64,6 +72,7 @@ export async function streamChatCompletion(
       method: "POST",
       headers,
       body: JSON.stringify({
+        credential_scope: "eligible_pool",
         ...params,
         stream: true,
       }),

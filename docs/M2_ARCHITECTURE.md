@@ -11,8 +11,25 @@ Rather than relying primarily on expensive proprietary APIs, RagBait democratize
 4. **Shared Cloud API Credential Pool**: Contributed institutional and student free-tier API keys pooled with strict quota enforcement and admission control.
 
 > **Privacy Invariant & Authoritative Policy:**
-> *RagBait allows students to use their own locally installed Ollama models privately. These models and their computing resources are never shared with other students. Shared inference pooling is restricted to explicitly consented, provider-eligible cloud API credentials.*
+> - *Every approved user must contribute at least one validated, provider-approved, free-tier cloud API credential to the RagBait shared pool before accessing AI Chat. This requirement applies even when using private local Ollama. Local models and paid API credentials do not count.*
+> - *RagBait allows students to use their own locally installed Ollama models privately. These models and their computing resources are never shared with other students. Shared inference pooling is restricted to explicitly consented, provider-eligible cloud API credentials.*
 > Peer local compute pooling (Mode B) has been permanently discontinued and disabled. All community node endpoints return HTTP 410 Gone.
+
+### 1.1 Unified AI Inference Workspace & Execution Preferences
+
+The workspace provides three distinct execution modes in a single unified conversation playground:
+
+1. **Automatic (Recommended)** (`credential_scope: "eligible_pool"`): Cloud inference routed via user credentials and the approved shared free-tier pool.
+2. **My API Keys Only** (`credential_scope: "owner_only"`): Cloud inference restricted strictly to the student's personal API keys.
+3. **Private Local (This Computer)**: Direct browser-to-loopback Ollama inference (`http://127.0.0.1:11434`), 100% private and on-device.
+
+### 1.2 Mandatory AI Chat Contribution Gate
+
+To eliminate free-riding and ensure sustainable shared infrastructure:
+- Every user (including administrators) must contribute $\ge 1$ active, validated, provider-approved, free-tier cloud credential (e.g. Gemini, Groq, OpenRouter).
+- Enforced at server level via `require_chat_entitled_user` dependency across `POST /api/v1/llm/chat/completions` and `POST /api/v1/routing/preview`.
+- Verified at client level before initiating direct private local loopback inference.
+- Status checked via `GET /api/v1/me/chat-entitlement`. Temporary quota exhaustion (`status = 'quota_exhausted'`) does NOT revoke contributor entitlement while the key remains valid and shared.
 
 ```
 ┌────────────────────────────────────────────────────────────────────────────────────────┐

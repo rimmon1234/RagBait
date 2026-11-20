@@ -1,7 +1,7 @@
 """Candidate discovery for cloud providers and community local inference nodes."""
 
 import logging
-from typing import Any
+from typing import Any, Literal
 from uuid import UUID
 
 from app.core.database import get_pool
@@ -17,6 +17,7 @@ async def discover_cloud_candidates(
     requested_provider_id: str | None = None,
     requested_model_id: str | None = None,
     explicit_credential_id: UUID | None = None,
+    credential_scope: Literal["eligible_pool", "owner_only"] = "eligible_pool",
 ) -> list[RoutingCandidate]:
     """Discover candidate cloud models and resolve authorized credentials for the user."""
     pool = get_pool()
@@ -67,23 +68,24 @@ async def discover_cloud_candidates(
             if p_id not in user_cred_by_provider:
                 user_cred_by_provider[p_id] = dict(c)
 
-        shared_creds = await conn.fetch(
-            """
-            SELECT id, owner_id, provider_id, status, validation_status,
-                   sharing_scope, shared_consent, account_scope_id, account_scope_verified
-            FROM public.api_key_metadata
-            WHERE sharing_scope = 'community_shared'
-              AND shared_consent = true
-              AND status = 'active'
-              AND validation_status = 'valid'
-            ORDER BY created_at ASC
-            """
-        )
         shared_cred_by_provider: dict[str, dict[str, Any]] = {}
-        for sc in shared_creds:
-            p_id = sc["provider_id"]
-            if p_id not in shared_cred_by_provider:
-                shared_cred_by_provider[p_id] = dict(sc)
+        if credential_scope != "owner_only":
+            shared_creds = await conn.fetch(
+                """
+                SELECT id, owner_id, provider_id, status, validation_status,
+                       sharing_scope, shared_consent, account_scope_id, account_scope_verified
+                FROM public.api_key_metadata
+                WHERE sharing_scope = 'community_shared'
+                  AND shared_consent = true
+                  AND status = 'active'
+                  AND validation_status = 'valid'
+                ORDER BY created_at ASC
+                """
+            )
+            for sc in shared_creds:
+                p_id = sc["provider_id"]
+                if p_id not in shared_cred_by_provider:
+                    shared_cred_by_provider[p_id] = dict(sc)
 
         # Explicit credential check if specified
         explicit_cred: dict[str, Any] | None = None
@@ -122,6 +124,11 @@ async def discover_cloud_candidates(
                         f"Credential '{explicit_credential_id}' belongs to provider '{row_explicit['provider_id']}', not '{model_check['provider_id']}'"
                     )
 
+            if credential_scope == "owner_only" and row_explicit["owner_id"] != user_id:
+                raise AuthorizationError(
+                    "Access denied: credential_scope is owner_only but explicit credential belongs to another user"
+                )
+
             if row_explicit["owner_id"] != user_id:
                 if (
                     row_explicit["sharing_scope"] != "community_shared"
@@ -151,7 +158,8 @@ async def discover_cloud_candidates(
                     if explicit_cred["owner_id"] == user_id:
                         selected_cred = explicit_cred
                     elif (
-                        explicit_cred["sharing_scope"] == "community_shared"
+                        credential_scope != "owner_only"
+                        and explicit_cred["sharing_scope"] == "community_shared"
                         and explicit_cred["shared_consent"]
                         and m["allows_community_sharing"]
                     ):
@@ -162,7 +170,11 @@ async def discover_cloud_candidates(
             elif provider_id in user_cred_by_provider:
                 selected_cred = user_cred_by_provider[provider_id]
                 is_shared = False
-            elif m["allows_community_sharing"] and provider_id in shared_cred_by_provider:
+            elif (
+                credential_scope != "owner_only"
+                and m["allows_community_sharing"]
+                and provider_id in shared_cred_by_provider
+            ):
                 selected_cred = shared_cred_by_provider[provider_id]
                 is_shared = True
 
@@ -241,6 +253,7 @@ async def discover_community_candidates(
 async def discover_all_candidates(
     user_id: UUID,
     routing_mode: RoutingMode,
+    credential_scope: Literal["eligible_pool", "owner_only"] = "eligible_pool",
     community_opt_in: bool = False,
     requested_provider_id: str | None = None,
     requested_model_id: str | None = None,
@@ -261,6 +274,7 @@ async def discover_all_candidates(
             requested_provider_id=requested_provider_id,
             requested_model_id=requested_model_id,
             explicit_credential_id=explicit_credential_id,
+            credential_scope=credential_scope,
         )
         candidates.extend(cloud_candidates)
 

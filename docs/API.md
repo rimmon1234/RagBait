@@ -80,6 +80,26 @@ Lightweight presence pulse.
 }
 ```
 
+### 1.5 `GET /api/v1/me/chat-entitlement`
+Returns the user's authoritative AI Chat contribution entitlement status.
+- **Authorization**: Valid authenticated session.
+- **Mandatory Policy Rule**: Every approved user must contribute at least one validated, provider-approved, free-tier cloud API credential to the RagBait shared pool before accessing AI Chat. This requirement applies even when using private local Ollama. Local models and paid API credentials do not count.
+- **Response `200 OK`**:
+```json
+{
+  "eligible": true,
+  "reason_code": "QUALIFYING_CONTRIBUTION_ACTIVE",
+  "eligible_credential_count": 1
+}
+```
+*Possible `reason_code` values*:
+- `QUALIFYING_CONTRIBUTION_ACTIVE`: Entitlement active ($\ge 1$ qualifying shared free-tier credential; temporary quota exhaustion does not revoke entitlement).
+- `NO_CREDENTIAL_CONTRIBUTED`: No qualifying free-tier API key contributed.
+- `VALIDATION_REQUIRED`: Contributed key requires validation probe.
+- `SHARING_CONSENT_REQUIRED`: Community sharing consent required.
+- `CREDENTIAL_INACTIVE`: Key is disabled in Key Management.
+- `PROVIDER_NOT_ELIGIBLE_FOR_SHARING`: Provider not approved for free-tier community sharing.
+
 ---
 
 ## 2. Administration Endpoints
@@ -199,4 +219,50 @@ All community node mutation, pairing, job submission, status, and streaming endp
 - `WS /api/v1/community/ws` $\to$ Disconnects with code `1008 Policy Violation` (`COMMUNITY_LOCAL_INFERENCE_DISCONTINUED`)
 - `GET /api/v1/community/nodes` $\to$ `200 OK` (returns `[]`)
 - `GET /api/v1/community/models` $\to$ `200 OK` (returns `[]`)
+
+---
+
+## 5. LLM Gateway & Intelligent Routing Endpoints
+
+### 5.1 `POST /api/v1/llm/chat/completions`
+Unified OpenAI-compatible chat completion endpoint with deterministic intelligent routing, fair-use admission control, and quota tracking.
+- **Authorization**: `require_chat_entitled_user` dependency (User must be `approved` AND have active chat contribution entitlement). Returns `403 Forbidden` (`CONTRIBUTION_REQUIRED`) if not entitled.
+- **Request Body**:
+```json
+{
+  "messages": [
+    { "role": "system", "content": "You are a helpful study assistant." },
+    { "role": "user", "content": "Explain binary search." }
+  ],
+  "model": "gemini-3.8-flash",
+  "routing_mode": "auto",
+  "credential_scope": "eligible_pool",
+  "temperature": 0.7,
+  "stream": true
+}
+```
+- **Execution Scopes (`credential_scope`)**:
+  - `eligible_pool` (default): Candidate discovery evaluates the user's personal keys and all provider-eligible shared free-tier credentials from the community pool. Shared credentials are strictly constrained to free-tier eligible models with zero cost (`SHARED_POOL_FREE_TIER_ONLY`).
+  - `owner_only`: Candidate discovery strictly excludes any credentials contributed by other users. Requests will fail if no valid personal credential is configured.
+- **Response Headers**:
+  - `x-ragbait-routing-mode`: `auto`
+  - `x-ragbait-selected-source`: Source identifier
+  - `x-ragbait-selected-model`: Model identifier
+  - `x-ragbait-decision-reason`: Routing decision explanation
+
+### 5.2 `POST /api/v1/routing/preview`
+Simulates candidate evaluation and returns the deterministic routing decision without executing inference.
+- **Authorization**: `require_chat_entitled_user` dependency.
+- **Request Body**: Accepts `messages`, `routing_mode`, `credential_scope`, `model`, `provider_id`.
+- **Response `200 OK`**:
+```json
+{
+  "selected_source": "cloud:gemini",
+  "selected_model": "gemini-3.8-flash",
+  "routing_mode": "auto",
+  "reason_code": "MATCH_FOUND",
+  "decision_reason": "Selected Gemini via eligible community pool",
+  "fallback_chain": ["cloud:groq"]
+}
+```
 

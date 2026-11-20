@@ -150,6 +150,31 @@ def filter_candidates(
                 )
                 continue
 
+            # Shared pool free-tier and cost invariants (RagBait mandatory policy)
+            if c.is_shared_credential:
+                if not c.free_tier_eligible:
+                    results.append(
+                        CandidateFilterResult(
+                            candidate=c,
+                            eligible=False,
+                            rejection_code="SHARED_POOL_FREE_TIER_ONLY",
+                            rejection_reason="Shared pool credentials can only be used for free-tier eligible models; paid shared usage is prohibited",
+                        )
+                    )
+                    continue
+                if (c.pricing_input_cents_per_million or 0) > 0 or (
+                    c.pricing_output_cents_per_million or 0
+                ) > 0:
+                    results.append(
+                        CandidateFilterResult(
+                            candidate=c,
+                            eligible=False,
+                            rejection_code="SHARED_POOL_ZERO_COST_ONLY",
+                            rejection_reason="Shared pool credentials cannot incur metered cloud charges",
+                        )
+                    )
+                    continue
+
         elif c.source_type == "community":
             if c.active_concurrency >= c.max_concurrent_jobs:
                 results.append(

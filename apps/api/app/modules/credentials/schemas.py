@@ -236,3 +236,12 @@ class ValidationResultResponse(BaseModel):
     safe_code: str
     message: str
     validated_at: datetime
+
+
+class ChatEntitlementResponse(BaseModel):
+    """Result of user AI chat contribution entitlement verification."""
+
+    eligible: bool
+    reason_code: str
+    eligible_credential_count: int
+

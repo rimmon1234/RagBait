@@ -41,8 +41,10 @@ The architectural foundation for unified, affordable AI inference combining publ
 - **M2.9 — Unified Intelligent Routing**: Unified deterministic routing layer selecting between user private keys and institutional/community-pooled cloud API credentials with quota enforcement, budget limits, and admission control. Local Ollama models remain strictly private to the student's browser.
 - **M2.10 — Verification & Security Hardening**: Comprehensive test suite covering credential isolation, envelope encryption, admission control, quota verification, fallback behavior, streaming, and privacy boundaries.
 
-> **Official Policy Statement:**
-> *RagBait allows students to use their own locally installed Ollama models privately. These models and their computing resources are never shared with other students. Shared inference pooling is restricted to explicitly consented, provider-eligible cloud API credentials.*
+> **Official Policy & Contribution Gate Statement:**
+> - *Every approved user must contribute at least one validated, provider-approved, free-tier cloud API credential to the RagBait shared pool before accessing AI Chat. This requirement applies even when using private local Ollama. Local models and paid API credentials do not count.*
+> - *RagBait allows students to use their own locally installed Ollama models privately. These models and their computing resources are never shared with other students. Shared inference pooling is restricted to explicitly consented, provider-eligible cloud API credentials.*
+> - *Unified workspace provides 3 execution modes: Automatic (Recommended), My API Keys Only, and Private Local (This Computer).*
 
 #### M3 — Collaborative Subject-Wise Knowledge Base & Document Ingestion
 - Subject folder hierarchy and collaborative access permissions.

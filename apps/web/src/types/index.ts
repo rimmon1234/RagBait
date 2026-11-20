@@ -7,7 +7,8 @@ export type EffectiveState =
   | "rejected"
   | "suspended"
   | "contribution_required"
-  | "admin";
+  | "admin"
+  | "active";
 
 export interface UserProfile {
   id: string;
@@ -25,6 +26,13 @@ export interface AccessStateResponse {
   role: UserRole;
   approval_status: ApprovalStatus;
   has_pending_request: boolean;
+  chat_entitled?: boolean;
+}
+
+export interface ChatEntitlementResponse {
+  eligible: boolean;
+  reason_code: string;
+  eligible_credential_count: number;
 }
 
 export interface OverviewResponse {

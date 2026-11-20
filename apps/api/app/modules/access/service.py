@@ -73,13 +73,20 @@ async def resolve_effective_access_state(
 
     # Compute effective state
     effective_state: EffectiveState
+    chat_entitled = False
     if profile.approval_status == "suspended":
         effective_state = "suspended"
     elif profile.approval_status == "rejected":
         effective_state = "rejected"
     elif profile.approval_status == "approved":
+        from app.modules.credentials.service import check_chat_contribution_entitlement
+
+        is_entitled, _, _ = await check_chat_contribution_entitlement(user_id)
+        chat_entitled = is_entitled
         if profile.role in ("admin", "super_admin"):
             effective_state = "admin"
+        elif is_entitled:
+            effective_state = "active"
         else:
             effective_state = "contribution_required"
     else:
@@ -91,4 +98,5 @@ async def resolve_effective_access_state(
         role=profile.role,
         approval_status=profile.approval_status,
         has_pending_request=has_pending,
+        chat_entitled=chat_entitled,
     )

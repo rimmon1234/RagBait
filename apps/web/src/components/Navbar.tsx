@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
-import { Cpu, Key, LogOut, Shield, User } from "lucide-react";
+import { Cpu, Key, LogOut, Shield, Sparkles, User } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 import type { UserProfile } from "@/types";
 
@@ -84,8 +84,8 @@ export function Navbar() {
                 href="/local-inference"
                 className="flex items-center gap-1.5 text-sm font-medium text-gray-700 hover:text-blue-600"
               >
-                <Cpu className="h-4 w-4" />
-                Local Inference
+                <Sparkles className="h-4 w-4" />
+                AI Inference
               </Link>
             </>
           )}

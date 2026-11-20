@@ -13,6 +13,8 @@ from app.core.dependencies import (
 from app.core.security import AuthenticatedUser
 from app.modules.access.schemas import AccessStateResponse
 from app.modules.access.service import resolve_effective_access_state
+from app.modules.credentials.schemas import ChatEntitlementResponse
+from app.modules.credentials.service import check_chat_contribution_entitlement
 from app.modules.presence.schemas import HeartbeatRequest, HeartbeatResponse
 from app.modules.presence.service import record_presence_heartbeat
 from app.modules.users.schemas import ProfileUpdateRequest, UserProfile
@@ -43,6 +45,26 @@ async def get_my_access_state(
         user_id=current_user.user_id,
         claims=current_user.claims,
         profile=profile,
+    )
+
+
+@router.get(
+    "/chat-entitlement",
+    response_model=ChatEntitlementResponse,
+    dependencies=[Depends(rate_limit_general)],
+)
+async def get_my_chat_entitlement(
+    current_user: AuthenticatedUser = Depends(get_current_user),
+    _: UserProfile = Depends(require_not_suspended),
+) -> ChatEntitlementResponse:
+    """Return the user's AI Chat contribution eligibility and status."""
+    is_entitled, reason_code, count = await check_chat_contribution_entitlement(
+        current_user.user_id
+    )
+    return ChatEntitlementResponse(
+        eligible=is_entitled,
+        reason_code=reason_code,
+        eligible_credential_count=count,
     )
 
 

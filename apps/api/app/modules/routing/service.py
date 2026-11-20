@@ -9,7 +9,7 @@ from typing import Any
 from uuid import UUID, uuid4
 
 from app.core.database import get_pool
-from app.core.errors import BadRequestError, ConflictError, NotFoundError
+from app.core.errors import AuthorizationError, BadRequestError, ConflictError, NotFoundError
 from app.modules.llm_gateway.schemas import ChatCompletionRequest, ChatCompletionResponse
 from app.modules.llm_gateway.token_estimation import estimate_generation_tokens
 from app.modules.routing.discovery import discover_all_candidates
@@ -34,6 +34,7 @@ def compute_request_payload_hash(req: ChatCompletionRequest) -> str:
     """Compute deterministic SHA-256 hash of the inference request payload for idempotency verification."""
     data = {
         "routing_mode": req.routing_mode,
+        "credential_scope": req.credential_scope,
         "provider_id": req.provider_id,
         "model_id": req.model_id,
         "community_opt_in": req.community_opt_in,
@@ -98,6 +99,16 @@ async def route_and_dispatch(
     request_id = correlation_id or f"req-{uuid4().hex[:12]}"
     payload_hash = compute_request_payload_hash(req)
 
+    # 0. Mandatory Chat Contribution Gate (Authoritative Product Requirement)
+    from app.modules.credentials.service import check_chat_contribution_entitlement
+
+    is_entitled, reason_code, _ = await check_chat_contribution_entitlement(user_id)
+    if not is_entitled:
+        raise AuthorizationError(
+            "A valid, approved free-tier cloud API credential must be contributed before accessing AI Chat.",
+            code="CONTRIBUTION_REQUIRED",
+        )
+
     # 1. User-scoped Idempotency Verification
     await check_user_idempotency(user_id, req.idempotency_key, payload_hash)
 
@@ -123,6 +134,7 @@ async def route_and_dispatch(
     candidates = await discover_all_candidates(
         user_id=user_id,
         routing_mode=routing_mode,
+        credential_scope=req.credential_scope,
         community_opt_in=False,
         requested_provider_id=req.provider_id,
         requested_model_id=target_model_id,
@@ -274,9 +286,20 @@ async def preview_route(
             "Provider 'ollama' is not supported as a server-side cloud provider. Local Ollama models run privately in the user's browser."
         )
 
+    # 0. Mandatory Chat Contribution Gate
+    from app.modules.credentials.service import check_chat_contribution_entitlement
+
+    is_entitled, reason_code, _ = await check_chat_contribution_entitlement(user_id)
+    if not is_entitled:
+        raise AuthorizationError(
+            "A valid, approved free-tier cloud API credential must be contributed before accessing AI Chat.",
+            code="CONTRIBUTION_REQUIRED",
+        )
+
     candidates = await discover_all_candidates(
         user_id=user_id,
         routing_mode=routing_mode,
+        credential_scope=req.credential_scope,
         community_opt_in=False,
         requested_provider_id=req.provider_id,
         requested_model_id=target_model_id,
