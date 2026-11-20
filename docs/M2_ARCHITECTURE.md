@@ -299,8 +299,14 @@ flowchart TD
    - Cerebras and Groq usage details: reasoning tokens, cached tokens, and prompt/completion breakdowns.
 6. **M2.6 — Optional Paid Provider Adapters**:
    - Metered adapters for xAI / Grok and administrator-managed OpenAI project-scoped service accounts (`sk-proj-...`).
-7. **M2.7 — Private Local Inference (Mode A)**:
-   - Local Ollama/vLLM node registration for private contributor use.
+7. **M2.7 — Private Local Inference with Ollama (Mode A)**:
+   - Direct Browser-to-Local Loopback Architecture: Client browser connects directly to `http://127.0.0.1:11434` via native fetch API.
+   - Zero Cloud Backend Relay: Completely bypasses the cloud FastAPI backend, Supabase database, Redis queue, and public network. Prompts and completions never leave the user's machine.
+   - Fixed Loopback Isolation: Hardcoded to `http://127.0.0.1:11434` with `credentials: "omit"` and `redirect: "error"`. No cookies or JWTs sent to Ollama daemon.
+   - Native Ollama REST & NDJSON Streaming: Robust client-side parser handling split chunks, multibyte UTF-8 codepoints across boundaries, and `AbortController` cancellation. Supports reasoning/thinking deltas (Qwen 3, DeepSeek R1).
+   - Zero Persistence & Non-Billable: Ephemeral in-memory React state only; no database tables, no cloud ledger deductions, and no contributor credit attribution.
+   - Protected Next.js Route (`/local-inference`): Full-featured playground with live connection state, local model discovery, parameter drawer (system prompt, temperature), prompt streaming, and on-device token throughput telemetry (tokens/sec, prompt/eval counts).
+   - Multi-Platform Setup Documentation: Comprehensive guide (`docs/M2_7_OLLAMA_SETUP.md`) for Windows, macOS, and Linux `OLLAMA_ORIGINS` CORS configuration.
 8. **M2.8 — Community-Shared Local Nodes (Mode B)**:
    - Ed25519 asymmetric handshake (`CHALLENGE`, `RESPONSE`, `AUTH_OK`) with Redis single-use nonce.
    - Server-signed job authorization tokens (`job_token`).

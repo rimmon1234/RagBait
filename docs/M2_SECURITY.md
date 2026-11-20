@@ -323,4 +323,30 @@ Historical usage accounting is safeguarded against manipulation:
 - To prevent free inference bypass or phantom generations, the gateway atomically commits dispatch state (`mark_dispatched`) in `public.llm_usage_reservations` before initiating upstream network requests.
 - If a client disconnects or an upstream network error occurs after dispatch commitment, the reservation record persists and can be settled or reconciled accurately by the sweeper, preserving accounting integrity.
 
+---
+
+## 8. Private Local Inference & Loopback Security (M2.7)
+
+### 8.1 Zero Exfiltration & Data Privacy Boundary
+- **Direct Loopback Execution**: In M2.7, private local inference requests originate in the user's browser runtime and terminate strictly at `http://127.0.0.1:11434`.
+- **Zero Cloud Intermediary**: Prompts, system instructions, and completion tokens never traverse the public internet, never hit the cloud FastAPI backend, and are never written to server logs, PostgreSQL tables, or Redis instances.
+- **Ephemeral In-Memory State**: Prompts and assistant outputs reside exclusively in the volatile React component memory during the active session. They are not saved to `localStorage`, `sessionStorage`, or `IndexedDB`.
+
+### 8.2 Fixed Loopback Endpoint & SSRF Elimination
+- **Strictly Hardcoded URL**: The target address is compile-time fixed to `http://127.0.0.1:11434` (`OLLAMA_BASE_URL`).
+- **No User Override**: No UI setting, configuration file, URL search parameter, or API payload can alter the host, port, or protocol. This eliminates SSRF, DNS rebinding risks, and unauthorized scanning of local or intranet IP ranges.
+
+### 8.3 Credential and Cookie Isolation
+- **`credentials: "omit"`**: Every loopback fetch explicitly omits credentials. Browsers will not attach Supabase authentication cookies, session cookies, or cached basic auth credentials to requests sent to `127.0.0.1:11434`.
+- **`redirect: "error"`**: Disallows HTTP redirects, ensuring an attacker-controlled service or malicious script cannot redirect a loopback request to an external origin or internal resource.
+- **No Token Transmission**: The `OllamaClient` does not attach `Authorization: Bearer <JWT>` or any user identity headers to local requests.
+
+### 8.4 Cross-Origin Resource Sharing (`OLLAMA_ORIGINS`) Boundaries
+- **CORS Protection**: Modern web browsers prevent cross-origin fetches from web origins (`http://localhost:3000` or production domain) to `127.0.0.1` unless the local Ollama daemon explicitly allows the origin via `OLLAMA_ORIGINS`.
+- **Strict Origin Whitelisting**: RagBait documentation expressly instructs users to configure exact domain origins and forbids wildcard (`*`) configurations in production or multi-user environments.
+
+### 8.5 Client-Side Abort & Resource Management
+- **Immediate Cancellation**: Every generation request is tied to a standard DOM `AbortController`. When the user clicks "Stop" or navigates away, the underlying HTTP stream and reader are immediately closed, freeing GPU and CPU compute on the student's hardware.
+
+
 

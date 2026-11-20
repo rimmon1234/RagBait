@@ -800,4 +800,96 @@ Returns HTTP `200 OK` with `Content-Type: application/json`:
 }
 ```
 
+---
+
+## 9. Private Local Inference Client API (M2.7)
+
+Unlike cloud inference endpoints that terminate at the FastAPI gateway, M2.7 operates via **direct browser-to-loopback invocation** to `http://127.0.0.1:11434`. The cloud backend is never contacted for private local inference.
+
+### 9.1 Network Security Constraints
+- **Target Endpoint**: Hardcoded to `http://127.0.0.1:11434`. No user-configurable hosts, ports, LAN IPs, or tunnels are permitted.
+- **Fetch Parameters**:
+  - `mode: "cors"`
+  - `credentials: "omit"`
+  - `redirect: "error"`
+  - `cache: "no-store"`
+- **Header Hygiene**: Never transmits Supabase JWTs, cookies, or custom authentication headers to Ollama.
+
+### 9.2 Ollama REST & NDJSON Contracts
+
+#### `GET /api/version`
+Used for health and reachability checks.
+- Response (`200 OK`):
+  ```json
+  {"version": "0.40.16"}
+  ```
+
+#### `GET /api/tags`
+Discovers locally installed models on the student's hardware.
+- Response (`200 OK`):
+  ```json
+  {
+    "models": [
+      {
+        "name": "llama3.2:3b",
+        "model": "llama3.2:3b",
+        "modified_at": "2026-10-24T19:15:43.4909512+05:30",
+        "size": 2019393189,
+        "digest": "a80c4f17acd5...",
+        "details": {
+          "parent_model": "",
+          "format": "gguf",
+          "family": "llama",
+          "families": ["llama"],
+          "parameter_size": "3.2B",
+          "quantization_level": "Q4_K_M"
+        }
+      }
+    ]
+  }
+  ```
+
+#### `POST /api/show`
+Retrieves model parameters, modelfile, and template details.
+- Request Body: `{"name": "llama3.2:3b"}`
+- Response: Model metadata, parameters (`temperature`, `stop`), and capabilities.
+
+#### `POST /api/chat` (NDJSON Stream)
+Initiates streaming conversational generation.
+- Request Body:
+  ```json
+  {
+    "model": "llama3.2:3b",
+    "messages": [
+      {"role": "system", "content": "You are a helpful academic tutor."},
+      {"role": "user", "content": "Explain mitosis."}
+    ],
+    "stream": true,
+    "options": {
+      "temperature": 0.7
+    }
+  }
+  ```
+- Stream Response: Newline-delimited JSON (`application/x-ndjson`).
+  - Incremental Chunk:
+    ```json
+    {"model":"llama3.2:3b","created_at":"...","message":{"role":"assistant","content":"Mitosis"},"done":false}
+    ```
+  - Final Chunk (`done: true`):
+    ```json
+    {
+      "model": "llama3.2:3b",
+      "done": true,
+      "done_reason": "stop",
+      "total_duration": 1823904000,
+      "load_duration": 4820100,
+      "prompt_eval_count": 24,
+      "prompt_eval_duration": 341029000,
+      "eval_count": 142,
+      "eval_duration": 1478054900
+    }
+    ```
+- Client-Side Stream Parser: Consumes chunks through `ReadableStream<Uint8Array>`, reassembles multi-byte UTF-8 boundaries, and cancels cleanly via `AbortController`.
+```
+
 

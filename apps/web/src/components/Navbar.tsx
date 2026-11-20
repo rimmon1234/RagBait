@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
-import { Key, LogOut, Shield, User } from "lucide-react";
+import { Cpu, Key, LogOut, Shield, User } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 import type { UserProfile } from "@/types";
 
@@ -71,13 +71,22 @@ export function Navbar() {
             <span>RagBait</span>
           </Link>
           {profile && (profile.approval_status === "approved" || profile.role === "admin" || profile.role === "super_admin") && (
-            <Link
-              href="/credentials"
-              className="flex items-center gap-1.5 text-sm font-medium text-gray-700 hover:text-blue-600"
-            >
-              <Key className="h-4 w-4" />
-              API Credentials
-            </Link>
+            <>
+              <Link
+                href="/credentials"
+                className="flex items-center gap-1.5 text-sm font-medium text-gray-700 hover:text-blue-600"
+              >
+                <Key className="h-4 w-4" />
+                API Credentials
+              </Link>
+              <Link
+                href="/local-inference"
+                className="flex items-center gap-1.5 text-sm font-medium text-gray-700 hover:text-blue-600"
+              >
+                <Cpu className="h-4 w-4" />
+                Local Inference
+              </Link>
+            </>
           )}
           {profile && (profile.role === "admin" || profile.role === "super_admin") && (
             <Link
