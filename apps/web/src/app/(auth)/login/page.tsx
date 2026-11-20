@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { AlertCircle, ArrowRight, Loader2 } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 
@@ -12,6 +12,35 @@ export default function LoginPage() {
   const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  // Auto-redirect if already authenticated
+  useEffect(() => {
+    const supabase = createClient();
+    supabase.auth.getSession().then(async ({ data: { session } }) => {
+      if (session) {
+        try {
+          const apiBase = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000";
+          const res = await fetch(`${apiBase.replace(/\/$/, "")}/api/v1/me/access`, {
+            headers: {
+              Authorization: `Bearer ${session.access_token}`,
+            },
+          });
+          if (res.ok) {
+            const stateData = await res.json();
+            if (stateData.effective_state === "admin") {
+              router.push("/admin");
+            } else if (stateData.effective_state === "contribution_required") {
+              router.push("/access/contribution-required");
+            } else if (stateData.effective_state === "pending") {
+              router.push("/access/pending");
+            }
+          }
+        } catch {
+          // ignore
+        }
+      }
+    });
+  }, [router]);
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -33,7 +62,8 @@ export default function LoginPage() {
     if (data.session) {
       // Check user effective access state
       try {
-        const res = await fetch("/api/v1/me/access", {
+        const apiBase = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000";
+        const res = await fetch(`${apiBase.replace(/\/$/, "")}/api/v1/me/access`, {
           headers: {
             Authorization: `Bearer ${data.session.access_token}`,
           },

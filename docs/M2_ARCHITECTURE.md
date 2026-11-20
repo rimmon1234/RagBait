@@ -4,11 +4,15 @@
 
 RagBait M2 creates a **unified, multi-resource LLM Gateway** that decouples application features (such as future RAG retrieval and conversational study assistants) from physical inference providers. 
 
-Rather than relying primarily on expensive proprietary APIs, RagBait democratizes access by orchestrating four distinct tiers of compute:
+Rather than relying primarily on expensive proprietary APIs, RagBait democratizes access by orchestrating distinct tiers of compute:
 1. **Free-Tier Public AI APIs**: (Google Gemini, GroqCloud, OpenRouter `:free`, Cerebras).
 2. **Paid Public AI APIs**: (xAI / Grok, Administrator-Managed OpenAI Project Service Accounts).
-3. **Private Local Nodes (Mode A)**: Individual student computers hosting Ollama/vLLM for their own exclusive use.
-4. **Shared Community Nodes (Mode B)**: Contributed student compute voluntarily shared with the community under dual-consent privacy controls.
+3. **Private Local Nodes**: Individual student computers hosting Ollama for their own exclusive, private loopback use.
+4. **Shared Cloud API Credential Pool**: Contributed institutional and student free-tier API keys pooled with strict quota enforcement and admission control.
+
+> **Privacy Invariant & Authoritative Policy:**
+> *RagBait allows students to use their own locally installed Ollama models privately. These models and their computing resources are never shared with other students. Shared inference pooling is restricted to explicitly consented, provider-eligible cloud API credentials.*
+> Peer local compute pooling (Mode B) has been permanently discontinued and disabled. All community node endpoints return HTTP 410 Gone.
 
 ```
 ┌────────────────────────────────────────────────────────────────────────────────────────┐

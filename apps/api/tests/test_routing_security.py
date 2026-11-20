@@ -126,7 +126,6 @@ async def test_cloud_only_never_selects_community_node():
     req = ChatCompletionRequest(
         messages=[ChatMessage(role="user", content="Classified academic query")],
         routing_mode="cloud_only",
-        community_opt_in=True,  # Even if opt-in is true, cloud_only strictly enforces boundary
         stream=True,
         idempotency_key=f"idem-sec-{uuid4().hex[:8]}",
     )
@@ -142,7 +141,7 @@ async def test_cloud_only_never_selects_community_node():
     candidates = await discover_all_candidates(
         user_id=user_id,
         routing_mode="cloud_only",
-        community_opt_in=True,
+        community_opt_in=False,
     )
     for c in candidates:
         assert c.source_type == "cloud"
@@ -151,13 +150,12 @@ async def test_cloud_only_never_selects_community_node():
 
 @pytest.mark.asyncio
 async def test_auto_without_community_opt_in_never_selects_community():
-    """In auto mode, community nodes must NEVER be evaluated or selected without explicit opt-in."""
+    """In auto mode, community nodes must NEVER be evaluated or selected."""
     user_id = await create_db_user(email="sec_auto_no_optin@studyhub.edu")
 
     req = ChatCompletionRequest(
         messages=[ChatMessage(role="user", content="Standard query")],
         routing_mode="auto",
-        community_opt_in=False,  # Explicitly NOT opted in
         stream=True,
         idempotency_key=f"idem-sec2-{uuid4().hex[:8]}",
     )
@@ -169,14 +167,13 @@ async def test_auto_without_community_opt_in_never_selects_community():
 
 
 @pytest.mark.asyncio
-async def test_community_only_requires_explicit_requester_consent():
-    """Routing mode community_only without community_opt_in=True must raise BadRequestError immediately."""
-    user_id = await create_db_user(email="sec_comm_consent@studyhub.edu")
+async def test_community_only_mode_discontinued():
+    """Routing mode community_only must raise BadRequestError immediately with discontinued notice."""
+    user_id = await create_db_user(email="sec_comm_discontinued@studyhub.edu")
 
     req = ChatCompletionRequest(
         messages=[ChatMessage(role="user", content="Peer query")],
         routing_mode="community_only",
-        community_opt_in=False,
         stream=True,
         idempotency_key=f"idem-sec3-{uuid4().hex[:8]}",
     )
@@ -184,47 +181,47 @@ async def test_community_only_requires_explicit_requester_consent():
     with pytest.raises(BadRequestError) as exc_info:
         await route_and_dispatch(user_id=user_id, req=req)
 
-    assert "Explicit requester consent" in str(exc_info.value)
+    assert "Community local inference has been discontinued" in str(exc_info.value)
+    assert "strictly private and never shared" in str(exc_info.value)
 
 
 @pytest.mark.asyncio
-async def test_community_only_never_falls_back_to_cloud():
-    """In community_only mode, missing community nodes must raise ConflictError and NEVER fall back to cloud."""
-    user_id = await create_db_user(email="sec_comm_only_noback@studyhub.edu")
-
-    # Even if user owns an active valid cloud key
-    stored_cred = await store_credential(
-        owner_id=user_id,
-        provider_id="gemini",
-        raw_key=f"gemini-key-{uuid4().hex}",
-        nickname="Gemini Active",
-        sharing_scope="owner_only",
-        shared_consent=False,
-        status="active",
-    )
-    CREATED_TEST_CREDS.append(stored_cred.id)
-
-    pool = get_pool()
-    async with pool.acquire() as conn:
-        await conn.execute(
-            "UPDATE public.api_key_metadata SET validation_status = 'valid' WHERE id = $1",
-            stored_cred.id,
-        )
+async def test_community_opt_in_strictly_rejected():
+    """Requests with community_opt_in=True must raise BadRequestError immediately."""
+    user_id = await create_db_user(email="sec_comm_optin_rej@studyhub.edu")
 
     req = ChatCompletionRequest(
-        messages=[ChatMessage(role="user", content="Peer only query")],
-        routing_mode="community_only",
+        messages=[ChatMessage(role="user", content="Peer query")],
+        routing_mode="auto",
         community_opt_in=True,
-        community_consent_version="2026-02-community-v1",
         stream=True,
         idempotency_key=f"idem-sec4-{uuid4().hex[:8]}",
     )
 
-    # With no online community nodes, it must fail with ConflictError, NOT silently fall back to Gemini cloud key
-    with pytest.raises(ConflictError) as exc_info:
+    with pytest.raises(BadRequestError) as exc_info:
         await route_and_dispatch(user_id=user_id, req=req)
 
-    assert "community node" in str(exc_info.value).lower()
+    assert "Local model sharing is disabled" in str(exc_info.value)
+
+
+@pytest.mark.asyncio
+async def test_provider_ollama_rejected_as_server_cloud_provider():
+    """Requesting provider_id='ollama' must raise BadRequestError explaining it runs in browser."""
+    user_id = await create_db_user(email="sec_ollama_rej@studyhub.edu")
+
+    req = ChatCompletionRequest(
+        messages=[ChatMessage(role="user", content="Local query")],
+        routing_mode="cloud_only",
+        provider_id="ollama",
+        stream=True,
+        idempotency_key=f"idem-sec5-{uuid4().hex[:8]}",
+    )
+
+    with pytest.raises(BadRequestError) as exc_info:
+        await route_and_dispatch(user_id=user_id, req=req)
+
+    assert "Provider 'ollama' is not supported as a server-side cloud provider" in str(exc_info.value)
+    assert "browser" in str(exc_info.value).lower()
 
 
 @pytest.mark.asyncio

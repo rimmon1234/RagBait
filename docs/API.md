@@ -176,3 +176,27 @@ Paginated audit log records.
 
 - `GET /health/live`: Returns `200 OK` if the process is running.
 - `GET /health/ready`: Verifies database connection pool and Redis connection. Returns `503 Service Unavailable` if critical dependencies fail.
+
+---
+
+## 4. Community Local Inference Endpoints (Discontinued)
+
+> **Privacy Policy on Local Inference:**
+> *RagBait allows students to use their own locally installed Ollama models privately. These models and their computing resources are never shared with other students. Shared inference pooling is restricted to explicitly consented, provider-eligible cloud API credentials.*
+
+All community node mutation, pairing, job submission, status, and streaming endpoints return **HTTP 410 Gone**:
+- `POST /api/v1/community/nodes/pair-code` $\to$ `410 Gone`
+- `POST /api/v1/community/nodes/pair` $\to$ `410 Gone`
+- `PATCH /api/v1/community/nodes/{node_id}` $\to$ `410 Gone`
+- `POST /api/v1/community/nodes/{node_id}/pause` $\to$ `410 Gone`
+- `POST /api/v1/community/nodes/{node_id}/resume` $\to$ `410 Gone`
+- `DELETE /api/v1/community/nodes/{node_id}` $\to$ `410 Gone`
+- `PUT /api/v1/community/nodes/{node_id}/models` $\to$ `410 Gone`
+- `POST /api/v1/community/jobs/submit` $\to$ `410 Gone`
+- `GET /api/v1/community/jobs/{job_id}` $\to$ `410 Gone`
+- `POST /api/v1/community/jobs/{job_id}/cancel` $\to$ `410 Gone`
+- `GET /api/v1/community/jobs/{job_id}/stream` $\to$ `410 Gone`
+- `WS /api/v1/community/ws` $\to$ Disconnects with code `1008 Policy Violation` (`COMMUNITY_LOCAL_INFERENCE_DISCONTINUED`)
+- `GET /api/v1/community/nodes` $\to$ `200 OK` (returns `[]`)
+- `GET /api/v1/community/models` $\to$ `200 OK` (returns `[]`)
+

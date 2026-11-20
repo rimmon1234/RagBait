@@ -9,7 +9,6 @@ export interface RoutePreviewParams {
   routing_mode?: RoutingMode;
   model?: string;
   provider_id?: string;
-  community_opt_in?: boolean;
 }
 
 export interface StreamChatCompletionParams {
@@ -17,7 +16,6 @@ export interface StreamChatCompletionParams {
   routing_mode?: RoutingMode;
   model?: string;
   temperature?: number;
-  community_opt_in?: boolean;
 }
 
 export interface RouteHeaders {

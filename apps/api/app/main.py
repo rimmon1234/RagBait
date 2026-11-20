@@ -15,9 +15,7 @@ from app.core.database import close_db_pool, init_db_pool
 from app.core.errors import register_error_handlers
 from app.core.logging import RequestLoggingMiddleware, setup_logging
 from app.core.redis import (
-    close_community_redis,
     close_redis,
-    init_community_redis,
     init_redis,
 )
 
@@ -42,22 +40,6 @@ async def _run_reservation_sweeper_task() -> None:
             logger.warning(f"Background reservation sweeper encountered error: {exc}")
 
 
-async def _run_community_sweeper_task() -> None:
-    """Background periodic loop to sweep and recover expired community inference jobs."""
-    from app.modules.community.service import recover_expired_community_jobs
-
-    while True:
-        try:
-            await asyncio.sleep(settings.COMMUNITY_SWEEPER_INTERVAL_SECONDS)
-            swept = await recover_expired_community_jobs()
-            if swept > 0:
-                logger.info(f"Background community sweeper recovered {swept} expired jobs")
-        except asyncio.CancelledError:
-            break
-        except Exception as exc:
-            logger.warning(f"Background community sweeper encountered error: {exc}")
-
-
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     """Manage application lifespan: database and redis connection lifecycles."""
@@ -72,11 +54,6 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 
     try:
         await init_redis()
-    except Exception:
-        pass
-
-    try:
-        await init_community_redis()
     except Exception:
         pass
 
@@ -99,27 +76,20 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     except Exception as exc:
         logger.warning(f"Startup reservation recovery failed: {exc}")
 
-    # Launch background periodic sweeper tasks
+    # Launch background periodic sweeper task for reservations
     sweeper_task = asyncio.create_task(_run_reservation_sweeper_task())
-    community_sweeper_task = asyncio.create_task(_run_community_sweeper_task())
 
     yield
 
     # Clean shutdown
     sweeper_task.cancel()
-    community_sweeper_task.cancel()
     try:
         await sweeper_task
-    except (asyncio.CancelledError, Exception):
-        pass
-    try:
-        await community_sweeper_task
     except (asyncio.CancelledError, Exception):
         pass
 
     await close_db_pool()
     await close_redis()
-    await close_community_redis()
     try:
         from app.modules.llm_gateway.http_client import close_http_client
 

@@ -8,7 +8,7 @@ import pytest
 
 from app.core.database import close_db_pool, get_pool, init_db_pool
 from app.core.dependencies import get_current_profile, get_current_user
-from app.core.errors import ConflictError
+from app.core.errors import BadRequestError, ConflictError
 from app.core.redis import (
     close_community_redis,
     close_redis,
@@ -509,119 +509,68 @@ async def test_pre_dispatch_fallback_on_candidate_specific_error():
 
 @pytest.mark.asyncio
 async def test_route_and_dispatch_community_candidate():
-    """Verify end-to-end community candidate execution through unified router."""
-    import json
-
-    from cryptography.hazmat.primitives.asymmetric import ed25519
-    from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
-
-    from app.core.config import settings
-    from app.modules.community import crypto as comm_crypto
-    from app.modules.community import repository as comm_repo
+    """Verify that community candidate execution is strictly rejected as discontinued."""
+    from app.modules.llm_gateway.token_estimation import TokenEstimate
+    from app.modules.routing.executor import PreDispatchCandidateError, execute_community_candidate
+    from app.modules.routing.schemas import RoutingCandidate
 
     requester_id = await create_db_user(email="comm_requester@studyhub.edu")
-    contributor_id = await create_db_user(email="comm_contributor@studyhub.edu")
 
-    node_priv = ed25519.Ed25519PrivateKey.generate()
-    node_pub_hex = node_priv.public_key().public_bytes(Encoding.Raw, PublicFormat.Raw).hex()
-    session_id = str(uuid4())
-
-    pool = get_pool()
-    async with pool.acquire() as conn:
-        row = await conn.fetchrow(
-            """
-            INSERT INTO public.community_nodes (
-                owner_id, public_key, display_name, status, sharing_enabled,
-                max_concurrent_jobs, max_execution_duration, last_seen_at
-            )
-            VALUES ($1, $2, 'Station 1', 'active', true, 2, 120, now())
-            RETURNING id
-            """,
-            contributor_id,
-            node_pub_hex,
-        )
-        assert row is not None
-        node_id = row["id"]
-        CREATED_TEST_NODES.append(node_id)
-
-    # Register active session and sync llama3.2:3b enabled
-    await comm_repo.register_node_session(node_id, session_id)
-    await comm_repo.sync_node_models(node_id, [{"model_name": "llama3.2:3b"}])
-    async with pool.acquire() as conn:
-        await conn.execute(
-            "UPDATE public.community_node_models SET enabled = true WHERE node_id = $1 AND model_name = $2",
-            node_id,
-            "llama3.2:3b",
-        )
-
-    # Build completion request
-    prompt_text = "What is active learning?"
-    req = ChatCompletionRequest(
-        messages=[ChatMessage(role="user", content=prompt_text)],
+    # 1. Routing with community_only mode raises BadRequestError
+    req_community = ChatCompletionRequest(
+        messages=[ChatMessage(role="user", content="What is active learning?")],
         routing_mode="community_only",
         model="llama3.2:3b",
-        community_opt_in=True,
-        community_consent_version=settings.COMMUNITY_CONSENT_POLICY_VERSION,
         stream=True,
         idempotency_key=f"idem-comm-{uuid4().hex[:8]}",
     )
 
-    # Execute through unified routing
-    result, is_streaming, decision = await route_and_dispatch(user_id=requester_id, req=req)
+    with pytest.raises(BadRequestError) as exc_info:
+        await route_and_dispatch(user_id=requester_id, req=req_community)
 
-    assert is_streaming is True
-    assert decision.selected_source == "community"
-    assert decision.provider_id == "ollama"
-    assert decision.model_id == "llama3.2:3b"
-    assert decision.node_id == node_id
+    assert "Community local inference has been discontinued" in str(exc_info.value)
+    assert "strictly private and never shared" in str(exc_info.value)
 
-    # 1. Verify PostgreSQL job state
-    async with pool.acquire() as conn:
-        job_row = await conn.fetchrow(
-            "SELECT * FROM public.community_inference_jobs WHERE requester_id = $1 AND node_id = $2",
-            requester_id,
-            node_id,
-        )
-        assert job_row is not None
-        assert job_row["status"] == "QUEUED"
-        assert job_row["model_name"] == "llama3.2:3b"
-        job_id = job_row["id"]
-
-    # 2. Verify Redis Stream dispatch message
-    cr = get_community_redis()
-    assert cr is not None
-    stream_key = f"stream:node:{node_id}:jobs"
-    messages = await cr.xrange(stream_key)
-    assert len(messages) >= 1
-    msg_id, msg_data = messages[-1]
-    assert msg_data["job_id"] == str(job_id)
-
-    # 3. Verify signed authorization payload & signature validity
-    auth_data = json.loads(msg_data["authorization"])
-    assert auth_data["job_id"] == str(job_id)
-    assert auth_data["node_id"] == str(node_id)
-    assert auth_data["model_name"] == "llama3.2:3b"
-    assert len(auth_data["auth_nonce"]) == 32  # 16 bytes = 32 hex chars (128-bit)
-    assert len(auth_data["signature"]) == 128  # Ed25519 signature in hex
-
-    is_sig_valid = comm_crypto.verify_job_authorization(
-        signature_hex=auth_data["signature"],
-        job_id=job_id,
-        node_id=node_id,
-        model_name="llama3.2:3b",
-        payload_digest=auth_data["payload_digest"],
-        max_output_tokens=auth_data["max_output_tokens"],
-        hard_deadline_ts=auth_data["hard_deadline_ts"],
-        auth_nonce=auth_data["auth_nonce"],
+    # 2. Routing with community_opt_in=True raises BadRequestError
+    req_opt_in = ChatCompletionRequest(
+        messages=[ChatMessage(role="user", content="What is active learning?")],
+        routing_mode="auto",
+        community_opt_in=True,
+        stream=True,
+        idempotency_key=f"idem-optin-{uuid4().hex[:8]}",
     )
-    assert is_sig_valid is True
 
-    # 4. Verify ZSET concurrency reservation acquired
-    zset_key = f"ragbait:comm:node:{node_id}:reservations"
-    score = await cr.zscore(zset_key, str(job_id))
-    assert score is not None
+    with pytest.raises(BadRequestError) as exc_info_optin:
+        await route_and_dispatch(user_id=requester_id, req=req_opt_in)
 
-    # 5. Verify generation_started event can be yielded without error
-    first_chunk = await anext(result)
-    assert "generation_started" in first_chunk
-    assert str(job_id) in first_chunk
+    assert "Local model sharing is disabled" in str(exc_info_optin.value)
+
+    # 3. Direct executor invocation on a community candidate raises PreDispatchCandidateError
+    candidate = RoutingCandidate(
+        source_type="community",
+        provider_id="ollama",
+        model_id="llama3.2:3b",
+        display_name="Community Node Llama",
+        family="llama",
+        context_window=8192,
+        max_output_tokens=2048,
+        estimated_input_cost_microcents=0,
+        estimated_output_cost_microcents=0,
+        node_id=uuid4(),
+    )
+    tokens = TokenEstimate(
+        estimated_input_tokens=10,
+        reserved_output_tokens=20,
+        total_estimated_tokens=30,
+    )
+
+    with pytest.raises(PreDispatchCandidateError) as exc_info_exec:
+        await execute_community_candidate(
+            user_id=requester_id,
+            candidate=candidate,
+            req=req_community,
+            token_estimate=tokens,
+            request_id="req-test-comm",
+        )
+
+    assert "discontinued" in str(exc_info_exec.value).lower()

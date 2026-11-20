@@ -100,7 +100,6 @@ describe("M2.9 Routing Client", () => {
       {
         messages: [{ role: "user", content: "Hello world" }],
         routing_mode: "auto",
-        community_opt_in: false,
       },
       {
         onDelta: (d) => deltas.push(d),
@@ -116,7 +115,6 @@ describe("M2.9 Routing Client", () => {
     expect(capturedUrl).toContain("/api/v1/llm/chat/completions");
     expect(JSON.parse(capturedBody || "{}")).toMatchObject({
       routing_mode: "auto",
-      community_opt_in: false,
       stream: true,
     });
     expect(deltas.join("")).toBe("Hello from router!");
