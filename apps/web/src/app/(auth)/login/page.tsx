@@ -29,6 +29,8 @@ export default function LoginPage() {
             const stateData = await res.json();
             if (stateData.effective_state === "admin") {
               router.push("/admin");
+            } else if (stateData.effective_state === "active") {
+              router.push("/local-inference");
             } else if (stateData.effective_state === "contribution_required") {
               router.push("/access/contribution-required");
             } else if (stateData.effective_state === "pending") {
@@ -72,6 +74,8 @@ export default function LoginPage() {
           const stateData = await res.json();
           if (stateData.effective_state === "admin") {
             router.push("/admin");
+          } else if (stateData.effective_state === "active") {
+            router.push("/local-inference");
           } else if (stateData.effective_state === "pending") {
             router.push("/access/pending");
           } else if (stateData.effective_state === "rejected") {

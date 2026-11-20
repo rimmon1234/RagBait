@@ -51,6 +51,12 @@ export default function ContributionRequiredPage() {
         return "Sharing consent required. Please enable community sharing on your key.";
       case "CREDENTIAL_INACTIVE":
         return "Credential inactive. Please enable your key in Key Management.";
+      case "BILLING_VERIFICATION_REQUIRED":
+        return "Free-tier verification required. Your key must be verified as free-tier only with no attached billing.";
+      case "PAID_CREDENTIAL_INELIGIBLE":
+        return "Paid API keys cannot be shared. Only verified free-tier credentials may be contributed.";
+      case "BILLING_VERIFICATION_STALE":
+        return "Billing verification has expired. Please re-validate your key in Key Management.";
       case "PROVIDER_NOT_ELIGIBLE_FOR_SHARING":
         return "The selected provider is not approved for free-tier community sharing.";
       default:

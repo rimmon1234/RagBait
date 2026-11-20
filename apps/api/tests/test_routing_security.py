@@ -118,7 +118,7 @@ async def create_db_user(
         CREATED_TEST_CREDS.append(cred.id)
         async with pool.acquire() as conn:
             await conn.execute(
-                "UPDATE public.api_key_metadata SET validation_status = 'valid' WHERE id = $1",
+                "UPDATE public.api_key_metadata SET validation_status = 'valid', billing_tier = 'verified_free_only', billing_verified_at = now() WHERE id = $1",
                 cred.id,
             )
 

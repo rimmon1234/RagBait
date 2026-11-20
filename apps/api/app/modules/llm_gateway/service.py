@@ -10,7 +10,7 @@ from uuid import UUID, uuid4
 import asyncpg
 
 from app.core.database import get_admin_db_session, get_pool
-from app.core.errors import AuthorizationError, ConflictError, NotFoundError
+from app.core.errors import AuthorizationError, ConflictError, NotFoundError, ValidationError
 from app.modules.admission.cooldown import set_cooldown
 from app.modules.admission.ledger import mark_outcome_unknown_transactional
 from app.modules.admission.schemas import AdmissionRequest, SettlementRequest
@@ -809,21 +809,29 @@ async def dispatch_chat_completion(
         tuple[stream_generator_or_response, is_streaming]
     """
     # 1. Provider & Model Registry Validation
-    provider = await get_provider(req.provider_id)
-    if not provider.is_enabled:
-        raise ConflictError(f"Provider '{req.provider_id}' is currently disabled")
+    if not req.provider_id:
+        raise ValidationError("provider_id is required for direct gateway lifecycle")
+    if not req.model_id:
+        raise ValidationError("model_id is required for direct gateway lifecycle")
 
-    model = await get_model(req.model_id)
-    if model.provider_id != req.provider_id:
+    provider_id = req.provider_id
+    model_id = req.model_id
+
+    provider = await get_provider(provider_id)
+    if not provider.is_enabled:
+        raise ConflictError(f"Provider '{provider_id}' is currently disabled")
+
+    model = await get_model(model_id)
+    if model.provider_id != provider_id:
         raise ConflictError(
-            f"Model '{req.model_id}' belongs to provider '{model.provider_id}', not '{req.provider_id}'"
+            f"Model '{model_id}' belongs to provider '{model.provider_id}', not '{provider_id}'"
         )
     if model.availability_status != "active":
         raise ConflictError(
-            f"Model '{req.model_id}' is not active (status: {model.availability_status})"
+            f"Model '{model_id}' is not active (status: {model.availability_status})"
         )
     if model.shutdown_at and model.shutdown_at <= datetime.now(UTC):
-        raise ConflictError(f"Model '{req.model_id}' has been shut down and retired")
+        raise ConflictError(f"Model '{model_id}' has been shut down and retired")
 
     # 2. Credential Authorization & Discovery
     pool = get_pool()
@@ -921,8 +929,8 @@ async def dispatch_chat_completion(
     admission_request = AdmissionRequest(
         user_id=user_id,
         credential_id=cred_id,
-        provider_id=req.provider_id,
-        model_id=req.model_id,
+        provider_id=provider_id,
+        model_id=model_id,
         estimated_input_tokens=token_estimate.estimated_input_tokens,
         max_output_tokens=token_estimate.reserved_output_tokens,
         idempotency_key=req.idempotency_key,
@@ -1070,9 +1078,9 @@ async def dispatch_chat_completion(
                     try:
                         await set_cooldown(
                             scope_type="provider",
-                            scope_id=req.provider_id,
+                            scope_id=provider_id,
                             retry_after_seconds=retry_after,
-                            reason=f"Provider {req.provider_id} returned HTTP 429",
+                            reason=f"Provider {provider_id} returned HTTP 429",
                         )
                     except Exception:
                         pass
@@ -1119,9 +1127,9 @@ async def dispatch_chat_completion(
             try:
                 await set_cooldown(
                     scope_type="provider",
-                    scope_id=req.provider_id,
+                    scope_id=provider_id,
                     retry_after_seconds=retry_after,
-                    reason=f"Provider {req.provider_id} returned HTTP 429",
+                    reason=f"Provider {provider_id} returned HTTP 429",
                 )
             except Exception:
                 pass
@@ -1171,10 +1179,10 @@ async def dispatch_chat_completion(
         id=gen_result.upstream_generation_id or f"gen-{uuid4().hex[:12]}",
         request_id=request_id,
         reservation_id=reservation.reservation_id,
-        provider_id=req.provider_id,
-        model_id=req.model_id,
+        provider_id=provider_id,
+        model_id=model_id,
         resolved_model_id=gen_result.resolved_model,
-        upstream_provider=req.provider_id,
+        upstream_provider=provider_id,
         upstream_generation_id=gen_result.upstream_generation_id,
         content=gen_result.content,
         finish_reason=gen_result.finish_reason,

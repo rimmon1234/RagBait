@@ -1,6 +1,7 @@
 """Candidate discovery for cloud providers and community local inference nodes."""
 
 import logging
+from datetime import UTC, datetime
 from typing import Any, Literal
 from uuid import UUID
 
@@ -55,7 +56,8 @@ async def discover_cloud_candidates(
         user_creds = await conn.fetch(
             """
             SELECT id, owner_id, provider_id, status, validation_status,
-                   sharing_scope, shared_consent, account_scope_id, account_scope_verified
+                   sharing_scope, shared_consent, account_scope_id, account_scope_verified,
+                   billing_tier, billing_verified_at
             FROM public.api_key_metadata
             WHERE owner_id = $1 AND status = 'active' AND validation_status = 'valid'
             ORDER BY created_at DESC
@@ -73,12 +75,16 @@ async def discover_cloud_candidates(
             shared_creds = await conn.fetch(
                 """
                 SELECT id, owner_id, provider_id, status, validation_status,
-                       sharing_scope, shared_consent, account_scope_id, account_scope_verified
+                       sharing_scope, shared_consent, account_scope_id, account_scope_verified,
+                       billing_tier, billing_verified_at
                 FROM public.api_key_metadata
                 WHERE sharing_scope = 'community_shared'
                   AND shared_consent = true
                   AND status = 'active'
                   AND validation_status = 'valid'
+                  AND billing_tier = 'verified_free_only'
+                  AND billing_verified_at IS NOT NULL
+                  AND billing_verified_at > now() - interval '30 days'
                 ORDER BY created_at ASC
                 """
             )
@@ -93,7 +99,8 @@ async def discover_cloud_candidates(
             row_explicit = await conn.fetchrow(
                 """
                 SELECT id, owner_id, provider_id, status, validation_status,
-                       sharing_scope, shared_consent, account_scope_id, account_scope_verified
+                       sharing_scope, shared_consent, account_scope_id, account_scope_verified,
+                       billing_tier, billing_verified_at
                 FROM public.api_key_metadata
                 WHERE id = $1
                 """,
@@ -135,6 +142,26 @@ async def discover_cloud_candidates(
                     or not row_explicit["shared_consent"]
                 ):
                     raise AuthorizationError("Access denied: private owner-only credential")
+                if row_explicit.get("billing_tier") != "verified_free_only":
+                    raise AuthorizationError(
+                        "Access denied: credential billing tier is not verified for free-tier community sharing"
+                    )
+                verified_at = row_explicit.get("billing_verified_at")
+                if (
+                    not verified_at
+                    or (
+                        datetime.now(UTC)
+                        - (
+                            verified_at.replace(tzinfo=UTC)
+                            if verified_at.tzinfo is None
+                            else verified_at
+                        )
+                    ).days
+                    > 30
+                ):
+                    raise AuthorizationError(
+                        "Access denied: credential billing verification is stale or missing"
+                    )
                 prov_row = await conn.fetchrow(
                     "SELECT allows_community_sharing FROM public.llm_providers WHERE id = $1",
                     row_explicit["provider_id"],
@@ -222,6 +249,7 @@ async def discover_cloud_candidates(
                     alias_target=m["alias_target"],
                     credential_id=selected_cred["id"] if selected_cred else None,
                     credential_owner_id=selected_cred["owner_id"] if selected_cred else None,
+                    credential_billing_tier=selected_cred.get("billing_tier") if selected_cred else None,
                     is_shared_credential=is_shared,
                     pricing_input_cents_per_million=in_cost,
                     pricing_output_cents_per_million=out_cost,

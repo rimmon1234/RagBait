@@ -1,5 +1,6 @@
 """Execution engine for committed routing candidates (Cloud)."""
 
+import json
 import logging
 from collections.abc import AsyncIterator
 from datetime import UTC, datetime
@@ -34,6 +35,74 @@ class PreDispatchCandidateError(Exception):
         self.is_candidate_specific = is_candidate_specific
 
 
+async def _verify_shared_execution_free(
+    candidate: RoutingCandidate,
+    resolved_model: str,
+    actual_cost_microcents: int | None,
+    user_id: UUID,
+) -> None:
+    """Ensure that shared pool executions resolve strictly to approved free models without billing."""
+    if not candidate.is_shared_credential:
+        return
+
+    is_free = False
+    if resolved_model.endswith(":free"):
+        is_free = True
+    else:
+        pool = get_pool()
+        async with pool.acquire() as conn:
+            row = await conn.fetchrow(
+                """
+                SELECT free_tier_eligible, input_cost_per_million_cents, output_cost_per_million_cents
+                FROM public.llm_models
+                WHERE id = $1
+                """,
+                resolved_model,
+            )
+            if (
+                row
+                and row["free_tier_eligible"]
+                and (row["input_cost_per_million_cents"] or 0) == 0
+                and (row["output_cost_per_million_cents"] or 0) == 0
+            ):
+                is_free = True
+
+    if not is_free or (actual_cost_microcents or 0) > 0:
+        logger.critical(
+            f"SECURITY INCIDENT: Shared credential {candidate.credential_id} resolved to non-free model '{resolved_model}' or incurred unexpected cost ({actual_cost_microcents} microcents)"
+        )
+        pool = get_pool()
+        async with pool.acquire() as conn:
+            # Immediately disable the shared credential to stop further shared use
+            await conn.execute(
+                """
+                UPDATE public.api_key_metadata
+                SET status = 'disabled', updated_at = now()
+                WHERE id = $1
+                """,
+                candidate.credential_id,
+            )
+            # Log security incident in audit log
+            await conn.execute(
+                """
+                INSERT INTO public.audit_logs (actor_id, action, target_type, target_id, payload)
+                VALUES ($1, 'shared_pool.unexpected_billable_usage', 'api_key_metadata', $2, $3::jsonb)
+                """,
+                user_id,
+                candidate.credential_id,
+                json.dumps(
+                    {
+                        "resolved_model": resolved_model,
+                        "cost_microcents": actual_cost_microcents,
+                        "provider_id": candidate.provider_id,
+                    }
+                ),
+            )
+        raise RuntimeError(
+            f"Shared inference execution violation: resolved model '{resolved_model}' is not an approved free-tier model or incurred cost"
+        )
+
+
 async def execute_cloud_candidate(
     user_id: UUID,
     candidate: RoutingCandidate,
@@ -44,6 +113,21 @@ async def execute_cloud_candidate(
 ) -> tuple[AsyncIterator[str] | ChatCompletionResponse, bool]:
     """Execute inference on an approved cloud candidate."""
     assert candidate.credential_id is not None, "Cloud candidate must have credential_id"
+
+    # Pre-dispatch invariant: shared credentials must only target verified free-tier models with zero cost
+    if candidate.is_shared_credential:
+        if not candidate.free_tier_eligible:
+            raise PreDispatchCandidateError(
+                f"Candidate model '{candidate.model_id}' is not free-tier eligible for shared pool execution",
+                is_candidate_specific=True,
+            )
+        if (candidate.pricing_input_cents_per_million or 0) > 0 or (
+            candidate.pricing_output_cents_per_million or 0
+        ) > 0:
+            raise PreDispatchCandidateError(
+                f"Candidate model '{candidate.model_id}' has non-zero metered pricing for shared pool execution",
+                is_candidate_specific=True,
+            )
 
     # 1. Attempt M2.4 Admission Reservation
     admission_request = AdmissionRequest(
@@ -171,6 +255,15 @@ async def execute_cloud_candidate(
                         usage_source=source,
                     )
 
+                # Post-response pre-settlement check: shared execution must strictly resolve to approved free-tier model
+                if candidate.is_shared_credential:
+                    await _verify_shared_execution_free(
+                        candidate=candidate,
+                        resolved_model=resolved_model,
+                        actual_cost_microcents=None,
+                        user_id=user_id,
+                    )
+
                 settlement = await settle_reservation(
                     reservation_id=reservation.reservation_id,
                     req=SettlementRequest(
@@ -199,6 +292,14 @@ async def execute_cloud_candidate(
                         "resolved_model_id": resolved_model,
                         "upstream_generation_id": upstream_gen_id,
                     },
+                )
+
+                # Post-response invariant: shared execution must strictly resolve to approved free-tier model
+                await _verify_shared_execution_free(
+                    candidate=candidate,
+                    resolved_model=resolved_model,
+                    actual_cost_microcents=settlement.actual_cost_microcents,
+                    user_id=user_id,
                 )
 
                 yield format_sse_event(
@@ -254,6 +355,15 @@ async def execute_cloud_candidate(
         + estimate_text_tokens(gen_result.content),
     )
 
+    # Post-response pre-settlement check: shared execution must strictly resolve to approved free-tier model
+    if candidate.is_shared_credential:
+        await _verify_shared_execution_free(
+            candidate=candidate,
+            resolved_model=gen_result.resolved_model,
+            actual_cost_microcents=None,
+            user_id=user_id,
+        )
+
     settlement = await settle_reservation(
         reservation_id=reservation.reservation_id,
         req=SettlementRequest(
@@ -270,6 +380,14 @@ async def execute_cloud_candidate(
         upstream_provider=candidate.provider_id,
         upstream_generation_id=gen_result.upstream_generation_id,
         usage_source=usage.usage_source,
+    )
+
+    # Post-response invariant: shared execution must strictly resolve to approved free-tier model
+    await _verify_shared_execution_free(
+        candidate=candidate,
+        resolved_model=gen_result.resolved_model,
+        actual_cost_microcents=settlement.actual_cost_microcents,
+        user_id=user_id,
     )
 
     resp = ChatCompletionResponse(

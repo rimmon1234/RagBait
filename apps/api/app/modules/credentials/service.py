@@ -75,6 +75,10 @@ def _to_credential_response(
         account_scope_verified=res.account_scope_verified,
         account_scope_source=res.account_scope_source,
         account_scope_verified_at=res.account_scope_verified_at,
+        billing_tier=res.billing_tier,
+        billing_verified_at=res.billing_verified_at,
+        billing_verification_error=res.billing_verification_error,
+        billing_verification_source=res.billing_verification_source,
         daily_request_limit=res.daily_request_limit,
         monthly_request_limit=res.monthly_request_limit,
         daily_spending_limit_cents=res.daily_spending_limit_cents,
@@ -284,6 +288,9 @@ async def validate_user_credential(
         owner_id=owner_id,
         validation_status=outcome_val,
         validation_error_code=probe_result.safe_code,
+        billing_tier=probe_result.billing_tier,
+        billing_verification_error=probe_result.billing_error,
+        billing_verification_source=f"{existing.provider_id}_auth_probe",
     )
 
     await log_credential_audit(
@@ -292,7 +299,10 @@ async def validate_user_credential(
         credential_id=credential_id,
         provider_id=existing.provider_id,
         outcome=outcome_val,
-        details={"safe_code": probe_result.safe_code},
+        details={
+            "safe_code": probe_result.safe_code,
+            "billing_tier": probe_result.billing_tier,
+        },
     )
 
     return ValidationResultResponse(
@@ -301,6 +311,8 @@ async def validate_user_credential(
         outcome=outcome_val,  # type: ignore[arg-type]
         safe_code=probe_result.safe_code,
         message=probe_result.message,
+        billing_tier=probe_result.billing_tier,  # type: ignore[arg-type]
+        billing_verification_error=probe_result.billing_error,
         validated_at=datetime.now(UTC),
     )
 
@@ -418,6 +430,8 @@ async def check_chat_contribution_entitlement(
                 c.validation_status,
                 c.sharing_scope,
                 c.shared_consent,
+                c.billing_tier,
+                c.billing_verified_at,
                 p.allows_community_sharing,
                 p.is_enabled AS provider_enabled,
                 p.runtime_type,
@@ -440,7 +454,17 @@ async def check_chat_contribution_entitlement(
         return False, "NO_CREDENTIAL_CONTRIBUTED", 0
 
     qualifying_count = 0
+    now = datetime.now(UTC)
     for r in rows:
+        is_stale = False
+        if r["billing_verified_at"]:
+            verified_at = r["billing_verified_at"]
+            if verified_at.tzinfo is None:
+                verified_at = verified_at.replace(tzinfo=UTC)
+            is_stale = (now - verified_at).days > 30
+        else:
+            is_stale = True
+
         is_qualifying = (
             r["status"] in ("active", "rate_limited", "quota_exhausted")
             and r["validation_status"] == "valid"
@@ -450,6 +474,8 @@ async def check_chat_contribution_entitlement(
             and r["provider_enabled"] is True
             and r["runtime_type"] == "cloud_api"
             and r["has_free_tier_models"] is True
+            and r["billing_tier"] == "verified_free_only"
+            and not is_stale
         )
         if is_qualifying:
             qualifying_count += 1
@@ -468,18 +494,46 @@ async def check_chat_contribution_entitlement(
         if (
             r["sharing_scope"] == "community_shared"
             and r["validation_status"] == "valid"
-            and r["status"] == "disabled"
+            and r["status"] in ("disabled", "revoked")
         ):
             return False, "CREDENTIAL_INACTIVE", 0
 
-    # 3. Check if user has a valid key but hasn't consented or enabled community sharing
+    # 3. Check if user contributed a paid credential
+    for r in rows:
+        if r["sharing_scope"] == "community_shared" and r["billing_tier"] == "paid":
+            return False, "PAID_CREDENTIAL_INELIGIBLE", 0
+
+    # 4. Check if user contributed a credential with unverified billing
+    for r in rows:
+        if (
+            r["sharing_scope"] == "community_shared"
+            and r["validation_status"] == "valid"
+            and r["billing_tier"] == "unknown"
+        ):
+            return False, "BILLING_VERIFICATION_REQUIRED", 0
+
+    # 5. Check if user contributed a credential whose billing verification is stale
+    for r in rows:
+        if (
+            r["sharing_scope"] == "community_shared"
+            and r["validation_status"] == "valid"
+            and r["billing_tier"] == "verified_free_only"
+        ):
+            verified_at = r["billing_verified_at"]
+            if verified_at:
+                if verified_at.tzinfo is None:
+                    verified_at = verified_at.replace(tzinfo=UTC)
+                if (now - verified_at).days > 30:
+                    return False, "BILLING_VERIFICATION_STALE", 0
+
+    # 6. Check if user has a valid key but hasn't consented or enabled community sharing
     for r in rows:
         if r["validation_status"] == "valid" and (
             r["sharing_scope"] != "community_shared" or not r["shared_consent"]
         ):
             return False, "SHARING_CONSENT_REQUIRED", 0
 
-    # 4. Check if user has a key for a provider not approved for community sharing
+    # 7. Check if user has a key for a provider not approved for community sharing
     for r in rows:
         if not r["allows_community_sharing"]:
             return False, "PROVIDER_NOT_ELIGIBLE_FOR_SHARING", 0

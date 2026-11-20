@@ -136,6 +136,7 @@ export type ValidationStatus =
   | "rate_limited"
   | "error";
 export type CredentialSharingScope = "owner_only" | "community_shared";
+export type BillingTier = "verified_free_only" | "paid" | "unknown";
 
 export interface ApiKeyCredential {
   id: string;
@@ -154,6 +155,9 @@ export interface ApiKeyCredential {
   account_scope_verified?: boolean;
   account_scope_source?: string | null;
   account_scope_verified_at?: string | null;
+  billing_tier?: BillingTier;
+  billing_verified_at?: string | null;
+  billing_verification_error?: string | null;
   daily_request_limit: number;
   monthly_request_limit: number;
   daily_spending_limit_cents?: number | null;

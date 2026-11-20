@@ -152,6 +152,16 @@ def filter_candidates(
 
             # Shared pool free-tier and cost invariants (RagBait mandatory policy)
             if c.is_shared_credential:
+                if c.credential_billing_tier and c.credential_billing_tier != "verified_free_only":
+                    results.append(
+                        CandidateFilterResult(
+                            candidate=c,
+                            eligible=False,
+                            rejection_code="SHARED_POOL_UNVERIFIED_BILLING",
+                            rejection_reason="Shared pool credential billing tier is not verified as free-only",
+                        )
+                    )
+                    continue
                 if not c.free_tier_eligible:
                     results.append(
                         CandidateFilterResult(

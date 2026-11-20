@@ -10,10 +10,23 @@ Rather than relying primarily on expensive proprietary APIs, RagBait democratize
 3. **Private Local Nodes**: Individual student computers hosting Ollama for their own exclusive, private loopback use.
 4. **Shared Cloud API Credential Pool**: Contributed institutional and student free-tier API keys pooled with strict quota enforcement and admission control.
 
-> **Privacy Invariant & Authoritative Policy:**
-> - *Every approved user must contribute at least one validated, provider-approved, free-tier cloud API credential to the RagBait shared pool before accessing AI Chat. This requirement applies even when using private local Ollama. Local models and paid API credentials do not count.*
+> **Privacy Invariant & Authoritative Free-Tier Policy:**
+> - *RagBait shares only explicitly contributed cloud credentials that are verified to operate within approved free-tier usage limits without paid fallback. Local Ollama models and all paid API resources remain private.*
+> - *Every approved user must contribute at least one validated, provider-approved, verified free-tier cloud API credential (`billing_tier: "verified_free_only"`) to the RagBait shared pool before accessing AI Chat. This requirement applies even when using private local Ollama. Local models, unverified credentials, and paid API credentials do not count.*
 > - *RagBait allows students to use their own locally installed Ollama models privately. These models and their computing resources are never shared with other students. Shared inference pooling is restricted to explicitly consented, provider-eligible cloud API credentials.*
 > Peer local compute pooling (Mode B) has been permanently discontinued and disabled. All community node endpoints return HTTP 410 Gone.
+
+### 1.1 Provider Shared Pooling Eligibility Matrix
+
+| Provider | Runtime Type | Verified Account Billing API | `allows_community_sharing` | Shared Pool Eligibility | Reason / Status |
+| :--- | :--- | :--- | :--- | :--- | :--- |
+| **OpenRouter** | `cloud_api` | Yes (`/api/v1/auth/key` -> `is_free_tier`) | **true** | **Permitted** | Reliable non-generative inspection guarantees `is_free_tier: true` with zero-charge enforcement. |
+| **Google Gemini** | `cloud_api` | No | false | Excluded | AI Studio API cannot establish absence of linked GCP billing account without full GCP Billing APIs. |
+| **GroqCloud** | `cloud_api` | No | false (default) | Excluded | Groq lacks public non-generative account billing verification endpoint to prevent paid fallback. |
+| **Cerebras** | `cloud_api` | No | false (default) | Excluded | Lacks account billing verification endpoint to verify zero-charge guarantee. |
+| **OpenAI** | `cloud_api` | No | false | Excluded | Proprietary commercial service; paid billing risk. |
+| **xAI / Grok** | `cloud_api` | No | false | Excluded | Paid commercial API. |
+| **Ollama** | `local_runtime` | N/A (Local loopback) | false | Excluded (Strictly Private) | Never shared. Runs 100% locally on student hardware. |
 
 ### 1.1 Unified AI Inference Workspace & Execution Preferences
 

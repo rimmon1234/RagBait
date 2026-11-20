@@ -185,7 +185,7 @@ async def test_user_with_owner_only_credential_blocked(client: httpx.AsyncClient
     pool = get_pool()
     async with pool.acquire() as conn:
         await conn.execute(
-            "UPDATE public.api_key_metadata SET validation_status = 'valid' WHERE id = $1",
+            "UPDATE public.api_key_metadata SET validation_status = 'valid', billing_tier = 'verified_free_only', billing_verified_at = now() WHERE id = $1",
             stored.id,
         )
 
@@ -253,7 +253,7 @@ async def test_disabled_credential_blocked(client: httpx.AsyncClient):
     pool = get_pool()
     async with pool.acquire() as conn:
         await conn.execute(
-            "UPDATE public.api_key_metadata SET validation_status = 'valid' WHERE id = $1",
+            "UPDATE public.api_key_metadata SET validation_status = 'valid', billing_tier = 'verified_free_only', billing_verified_at = now() WHERE id = $1",
             stored.id,
         )
 
@@ -283,7 +283,7 @@ async def test_valid_shared_free_tier_credential_entitled(client: httpx.AsyncCli
     pool = get_pool()
     async with pool.acquire() as conn:
         await conn.execute(
-            "UPDATE public.api_key_metadata SET validation_status = 'valid' WHERE id = $1",
+            "UPDATE public.api_key_metadata SET validation_status = 'valid', billing_tier = 'verified_free_only', billing_verified_at = now() WHERE id = $1",
             stored.id,
         )
 
@@ -363,7 +363,7 @@ async def test_revocation_immediately_blocks_chat(client: httpx.AsyncClient):
     pool = get_pool()
     async with pool.acquire() as conn:
         await conn.execute(
-            "UPDATE public.api_key_metadata SET validation_status = 'valid' WHERE id = $1",
+            "UPDATE public.api_key_metadata SET validation_status = 'valid', billing_tier = 'verified_free_only', billing_verified_at = now() WHERE id = $1",
             stored.id,
         )
 
@@ -414,7 +414,7 @@ async def test_temporary_quota_exhaustion_preserves_chat_entitlement():
     pool = get_pool()
     async with pool.acquire() as conn:
         await conn.execute(
-            "UPDATE public.api_key_metadata SET validation_status = 'valid' WHERE id = $1",
+            "UPDATE public.api_key_metadata SET validation_status = 'valid', billing_tier = 'verified_free_only', billing_verified_at = now() WHERE id = $1",
             stored.id,
         )
 
@@ -446,7 +446,7 @@ async def test_credential_scope_owner_only_excludes_shared_keys():
     pool = get_pool()
     async with pool.acquire() as conn:
         await conn.execute(
-            "UPDATE public.api_key_metadata SET validation_status = 'valid' WHERE id = $1",
+            "UPDATE public.api_key_metadata SET validation_status = 'valid', billing_tier = 'verified_free_only', billing_verified_at = now() WHERE id = $1",
             foreign_key.id,
         )
 

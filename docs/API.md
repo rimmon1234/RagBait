@@ -99,6 +99,9 @@ Returns the user's authoritative AI Chat contribution entitlement status.
 - `SHARING_CONSENT_REQUIRED`: Community sharing consent required.
 - `CREDENTIAL_INACTIVE`: Key is disabled in Key Management.
 - `PROVIDER_NOT_ELIGIBLE_FOR_SHARING`: Provider not approved for free-tier community sharing.
+- `PAID_CREDENTIAL_INELIGIBLE`: Contributed key is classified as paid or billable and cannot enter the shared pool.
+- `BILLING_VERIFICATION_REQUIRED`: Contributed key cannot be authoritatively verified as free-tier only.
+- `BILLING_VERIFICATION_STALE`: Contributed key billing verification is older than 30 days and requires re-validation.
 
 ---
 
