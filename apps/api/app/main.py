@@ -14,7 +14,12 @@ from app.core.config import settings
 from app.core.database import close_db_pool, init_db_pool
 from app.core.errors import register_error_handlers
 from app.core.logging import RequestLoggingMiddleware, setup_logging
-from app.core.redis import close_redis, init_redis
+from app.core.redis import (
+    close_community_redis,
+    close_redis,
+    init_community_redis,
+    init_redis,
+)
 
 logger = logging.getLogger("ragbait.api")
 
@@ -71,6 +76,11 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         pass
 
     try:
+        await init_community_redis()
+    except Exception:
+        pass
+
+    try:
         from app.modules.llm_gateway.http_client import init_http_client
 
         await init_http_client()
@@ -109,6 +119,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 
     await close_db_pool()
     await close_redis()
+    await close_community_redis()
     try:
         from app.modules.llm_gateway.http_client import close_http_client
 

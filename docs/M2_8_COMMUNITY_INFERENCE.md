@@ -158,22 +158,38 @@ uv run ragbait-node unpair
 
 ---
 
-## 5. Redis Deployment & Prompt Privacy Policies
+## 5. Dedicated Volatile Redis & Prompt Privacy Isolation
 
-RagBait community streaming operates with explicit prompt privacy policies:
+To satisfy strict student privacy requirements and prevent prompt data leakage into persistent system caches, RagBait isolates community inference through a **dedicated volatile Redis instance**:
 
-### Option A: Volatile In-Memory Queues (Recommended for Strict Student Privacy)
-- **Configuration:** Dedicated Redis instance configured with `appendonly no` and `save ""` (pure in-memory).
-- **Privacy Property:** Prompts and completed tokens **never** touch persistent disk storage. Memory is wiped on container termination.
-- **Reliability:** If Redis restarts, all active in-flight stream queues are lost. PostgreSQL reconciles lost jobs as `OUTCOME_UNKNOWN` or `EXPIRED`, and the requester must resubmit.
+### A. Dedicated Instance Architecture
+- **Service Name:** `community-redis` (container `ragbait-community-redis`).
+- **Port:** `127.0.0.1:6380` (separate from M2.4 persistent Redis on port `6379`).
+- **Command:** `redis-server --save "" --appendonly no --maxmemory-policy noeviction`.
+- **Zero Disk Persistence:** AOF is disabled (`appendonly no`), RDB snapshots are disabled (`save ""`), and the container has no mounted persistent storage volume.
+- **Fail-Closed Isolation:** `COMMUNITY_REDIS_URL` connects strictly to this volatile instance. In production, configuration validation asserts `COMMUNITY_REDIS_URL != REDIS_URL`. All community job payloads, token streams, nonces, and concurrency reservations use this client exclusively.
 
-### Option B: Persistent Queues (Durability over Strict Ephemerality)
-- **Configuration:** Redis runs with AOF enabled (`appendonly yes`) on persistent storage volumes.
-- **Privacy Property:** Prompts and completions are written to disk. Mitigations require:
-  1. Full disk volume encryption (LUKS / encrypted EBS) at rest.
-  2. Strict OS file permissions (`0600`) on `/data`.
-  3. Aggressive AOF rewrite schedules (`auto-aof-rewrite-percentage 50`).
-  4. Explicit exclusion of Redis data volumes from unencrypted backups.
-- **Reliability:** In-flight queues survive Redis restarts, but prompt bytes exist on physical storage until compacted.
+### B. Redis Restart & Queue Generation Reconciliation
+- Every job records `redis_run_id` (the active Redis engine instance run ID) in PostgreSQL upon submission.
+- When the sweeper runs (`recover_expired_community_jobs`), it checks the current Redis `run_id`:
+  - If Redis restarts, the run ID changes, indicating in-memory queues were lost.
+  - Non-terminal jobs whose recorded `redis_run_id` differs from the current engine run ID are safely transitioned:
+    - `QUEUED` / `SENT` jobs transition to `EXPIRED` (`failure_code: REDIS_RESTART_PAYLOAD_LOST`).
+    - `AGENT_ACCEPTED` / `RUNNING` jobs transition to `OUTCOME_UNKNOWN` (`failure_code: REDIS_RESTART_STREAM_LOST`).
+  - Dangling concurrency reservations in Redis Sorted Sets are cleanly deallocated.
 
-> Default production recommendation is **Option A** for ephemeral prompt transmission.
+---
+
+## 6. Distributed Session Fencing & Concurrency Protection
+
+In a multi-worker API deployment, node reconnects or network partitions must never lead to split-brain updates from stale worker processes:
+
+### A. PostgreSQL-Authoritative Session Fencing
+- The database table `community_nodes` maintains authoritative columns `active_session_id` (UUID/text) and `session_epoch` (BIGINT monotonic counter).
+- When a node connects via WebSocket, the worker invokes `register_node_session(node_id, session_id)`, which locks the node row (`FOR UPDATE`), increments `session_epoch`, and writes `active_session_id`.
+- The connection lease is projected to Redis (`ragbait:comm:node:{node_id}:session`) for fast lookups.
+
+### B. Fenced Job Mutations & Lease Renewals
+- All state transitions (`update_job_status_fenced`) and lease heartbeats (`renew_job_lease_fenced`) assert both `active_session_id == session_id` and `session_epoch == expected_epoch` under a `FOR SHARE` row lock.
+- If a node reconnects to another API worker instance, the epoch advances and `active_session_id` changes. Any late frame from the previous connection is atomically rejected (returns `None`, zero database rows updated).
+- Upon detecting a superseded session, the API worker immediately closes the WebSocket connection with close code `4001 ("Session superseded")` and halts dispatch loops.

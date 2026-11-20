@@ -21,7 +21,14 @@ from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
 
 from app.core.database import close_db_pool, get_pool, init_db_pool
 from app.core.dependencies import get_current_profile, get_current_user
-from app.core.redis import close_redis, get_redis, init_redis
+from app.core.redis import (
+    close_community_redis,
+    close_redis,
+    get_community_redis,
+    get_redis,
+    init_community_redis,
+    init_redis,
+)
 from app.core.security import AuthenticatedUser
 from app.main import app
 from app.modules.community import crypto, repository, streams
@@ -36,11 +43,19 @@ async def setup_test_environment():
     """Ensure database connection pools and Redis are initialized and cleaned up."""
     await init_db_pool()
     r = await init_redis()
+    cr = await init_community_redis()
     if r:
         try:
             keys = await r.keys("ragbait:ratelimit:*")
             if keys:
                 await r.delete(*keys)
+        except Exception:
+            pass
+    if cr:
+        try:
+            keys = await cr.keys("ragbait:comm:*") + await cr.keys("stream:node:*")
+            if keys:
+                await cr.delete(*keys)
         except Exception:
             pass
     yield
@@ -60,8 +75,16 @@ async def setup_test_environment():
                 await r.delete(*keys)
         except Exception:
             pass
+    if cr:
+        try:
+            keys = await cr.keys("ragbait:comm:*") + await cr.keys("stream:node:*")
+            if keys:
+                await cr.delete(*keys)
+        except Exception:
+            pass
     await close_db_pool()
     await close_redis()
+    await close_community_redis()
 
 
 async def create_db_user(
@@ -714,8 +737,8 @@ async def test_terminal_job_status_guard_cas():
 @pytest.mark.asyncio
 async def test_sweeper_recovers_queued_sent_jobs_and_releases_zset_concurrency():
     """Verify REL-02: sweeper recovers expired QUEUED/SENT jobs and deallocates ZSET reservation."""
+    from app.core.redis import get_community_redis
     from app.modules.community import service
-    from app.core.redis import get_redis
 
     user_id = await create_db_user()
     node = await repository.create_node(
@@ -757,7 +780,7 @@ async def test_sweeper_recovers_queued_sent_jobs_and_releases_zset_concurrency()
     assert db_job["failure_code"] == "HARD_DEADLINE_EXPIRED"
 
     # Verify ZSET reservation is deleted
-    r = get_redis()
+    r = get_community_redis()
     if r:
         zscore = await r.zscore(f"ragbait:comm:node:{node_id}:reservations", str(job_id))
         assert zscore is None
@@ -766,14 +789,14 @@ async def test_sweeper_recovers_queued_sent_jobs_and_releases_zset_concurrency()
 @pytest.mark.asyncio
 async def test_job_dispatch_stream_ack_and_delete():
     """Verify REL-01: stream entries are acknowledged and pruned via ack_and_delete_job_dispatch."""
-    from app.core.redis import get_redis
+    from app.core.redis import get_community_redis
     from app.modules.community.schemas import SignedJobAuthorization
 
     node_id = uuid4()
     job_id = uuid4()
-    r = get_redis()
+    r = get_community_redis()
     if not r:
-        pytest.skip("Redis not configured")
+        pytest.skip("Community Redis not configured")
 
     auth = SignedJobAuthorization(
         job_id=job_id,
@@ -810,3 +833,248 @@ async def test_job_dispatch_stream_ack_and_delete():
     # Check stream entry was deleted
     stream_entries = await r.xrange(f"stream:node:{node_id}:jobs", min=entry_id, max=entry_id)
     assert len(stream_entries) == 0
+
+
+@pytest.mark.asyncio
+async def test_distributed_session_fencing_cross_instance():
+    """Verify Blocker C: PostgreSQL-authoritative distributed session fencing prevents stale-worker split-brain."""
+    user_id = await create_db_user()
+    node = await repository.create_node(
+        owner_id=user_id,
+        display_name="Fenced Node",
+        public_key=ed25519.Ed25519PrivateKey.generate().public_key().public_bytes(Encoding.Raw, PublicFormat.Raw).hex(),
+    )
+    node_id = node["id"]
+
+    # 1. Instance 1 connects and registers Session 1
+    session_1 = f"session-instance-1-{uuid4()}"
+    epoch_1, auth_session_1 = await repository.register_node_session(node_id, session_1)
+    assert epoch_1 >= 1
+    assert auth_session_1 == session_1
+    assert await repository.verify_node_session(node_id, session_1, epoch_1) is True
+
+    # 2. Instance 2 connects and registers Session 2 for the same node (reconnection/failover)
+    session_2 = f"session-instance-2-{uuid4()}"
+    epoch_2, auth_session_2 = await repository.register_node_session(node_id, session_2)
+    assert epoch_2 > epoch_1
+    assert auth_session_2 == session_2
+    assert await repository.verify_node_session(node_id, session_2, epoch_2) is True
+
+    # Session 1 is now superseded and must fail verification
+    assert await repository.verify_node_session(node_id, session_1, epoch_1) is False
+    assert await repository.verify_node_session(node_id, session_1, None) is False
+
+    # 3. Create a job for testing fenced state transitions
+    job = await repository.create_job(
+        requester_id=user_id,
+        node_id=node_id,
+        model_name="llama3.2:1b",
+        payload_digest="c" * 64,
+        auth_key_id="k1",
+        consent_policy_version="2026-02-09",
+        hard_deadline_at=datetime.now(UTC) + timedelta(minutes=5),
+    )
+    job_id = job["id"]
+
+    # 4. Stale Instance 1 attempts update_job_status_fenced -> REJECTED (returns None, DB untouched)
+    stale_update = await repository.update_job_status_fenced(
+        node_id=node_id,
+        session_id=session_1,
+        job_id=job_id,
+        status="RUNNING",
+        started_at=datetime.now(UTC),
+        expected_epoch=epoch_1,
+    )
+    assert stale_update is None
+    db_job = await repository.get_job_by_id(job_id)
+    assert db_job["status"] == "QUEUED"
+
+    # 5. Stale Instance 1 attempts renew_job_lease_fenced -> REJECTED (returns None)
+    lease_ts = datetime.now(UTC) + timedelta(seconds=60)
+    stale_renew = await repository.renew_job_lease_fenced(
+        node_id=node_id,
+        session_id=session_1,
+        job_id=job_id,
+        expected_epoch=epoch_1,
+        lease_expires_at=lease_ts,
+    )
+    assert stale_renew is None
+
+    # 6. Authoritative Instance 2 attempts update_job_status_fenced -> ACCEPTED
+    active_update = await repository.update_job_status_fenced(
+        node_id=node_id,
+        session_id=session_2,
+        job_id=job_id,
+        status="RUNNING",
+        started_at=datetime.now(UTC),
+        expected_epoch=epoch_2,
+    )
+    assert active_update is not None
+    assert active_update["status"] == "RUNNING"
+
+    # 7. Authoritative Instance 2 attempts renew_job_lease_fenced -> ACCEPTED
+    active_renew = await repository.renew_job_lease_fenced(
+        node_id=node_id,
+        session_id=session_2,
+        job_id=job_id,
+        expected_epoch=epoch_2,
+        lease_expires_at=lease_ts,
+    )
+    assert active_renew is not None
+
+
+@pytest.mark.asyncio
+async def test_volatile_redis_restart_recovery():
+    """Verify Blocker B: Redis restart reconciliation detects lost volatile queues via run_id."""
+    from app.modules.community import service
+
+    user_id = await create_db_user()
+    node = await repository.create_node(
+        owner_id=user_id,
+        display_name="Restart Test Node",
+        public_key=ed25519.Ed25519PrivateKey.generate().public_key().public_bytes(Encoding.Raw, PublicFormat.Raw).hex(),
+    )
+    node_id = node["id"]
+
+    old_generation_run_id = "old-redis-run-id-12345"
+    future_deadline = datetime.now(UTC) + timedelta(minutes=5)
+
+    # Job 1: QUEUED with old run_id
+    job1 = await repository.create_job(
+        requester_id=user_id,
+        node_id=node_id,
+        model_name="llama3.2:1b",
+        payload_digest="d" * 64,
+        auth_key_id="k1",
+        consent_policy_version="2026-02-09",
+        hard_deadline_at=future_deadline,
+        redis_run_id=old_generation_run_id,
+    )
+    job1_id = job1["id"]
+
+    # Job 2: RUNNING with old run_id
+    job2 = await repository.create_job(
+        requester_id=user_id,
+        node_id=node_id,
+        model_name="llama3.2:1b",
+        payload_digest="e" * 64,
+        auth_key_id="k1",
+        consent_policy_version="2026-02-09",
+        hard_deadline_at=future_deadline,
+        redis_run_id=old_generation_run_id,
+    )
+    job2_id = job2["id"]
+    await repository.update_job_status(job2_id, "RUNNING", started_at=datetime.now(UTC))
+
+    # Job 3: Same generation run_id (should NOT be swept)
+    new_generation_run_id = "new-redis-run-id-67890"
+    job3 = await repository.create_job(
+        requester_id=user_id,
+        node_id=node_id,
+        model_name="llama3.2:1b",
+        payload_digest="f" * 64,
+        auth_key_id="k1",
+        consent_policy_version="2026-02-09",
+        hard_deadline_at=future_deadline,
+        redis_run_id=new_generation_run_id,
+    )
+    job3_id = job3["id"]
+
+    # Acquire ZSET concurrency reservations in Community Redis
+    await streams.acquire_node_concurrency(
+        node_id=node_id,
+        job_id=job1_id,
+        max_concurrent=5,
+        lease_expires_at=future_deadline.timestamp(),
+    )
+    await streams.acquire_node_concurrency(
+        node_id=node_id,
+        job_id=job2_id,
+        max_concurrent=5,
+        lease_expires_at=future_deadline.timestamp(),
+    )
+
+    # Trigger recovery with current run_id = new_generation_run_id
+    reconciled_count = await service.recover_expired_community_jobs(current_run_id=new_generation_run_id)
+    assert reconciled_count >= 2
+
+    # Verify Job 1 (QUEUED) transitioned to EXPIRED with failure code REDIS_RESTART_PAYLOAD_LOST
+    db_job1 = await repository.get_job_by_id(job1_id)
+    assert db_job1["status"] == "EXPIRED"
+    assert db_job1["failure_code"] == "REDIS_RESTART_PAYLOAD_LOST"
+
+    # Verify Job 2 (RUNNING) transitioned to OUTCOME_UNKNOWN with failure code REDIS_RESTART_STREAM_LOST
+    db_job2 = await repository.get_job_by_id(job2_id)
+    assert db_job2["status"] == "OUTCOME_UNKNOWN"
+    assert db_job2["failure_code"] == "REDIS_RESTART_STREAM_LOST"
+
+    # Verify Job 3 (current generation) remains untouched in QUEUED state
+    db_job3 = await repository.get_job_by_id(job3_id)
+    assert db_job3["status"] == "QUEUED"
+
+    # Verify ZSET reservations for lost jobs were released in Community Redis
+    cr = get_community_redis()
+    if cr:
+        zscore1 = await cr.zscore(f"ragbait:comm:node:{node_id}:reservations", str(job1_id))
+        assert zscore1 is None
+        zscore2 = await cr.zscore(f"ragbait:comm:node:{node_id}:reservations", str(job2_id))
+        assert zscore2 is None
+
+
+@pytest.mark.asyncio
+async def test_dedicated_community_redis_isolation():
+    """Verify Blocker B: Dedicated volatile Redis is strictly isolated from shared persistent Redis."""
+    from app.core.config import settings
+    from app.core.redis import get_community_redis, get_redis
+    from app.modules.community.schemas import SignedJobAuthorization
+
+    # 1. Verify configuration separates the two endpoints
+    assert settings.COMMUNITY_REDIS_URL != settings.REDIS_URL
+    assert ":6380" in settings.COMMUNITY_REDIS_URL
+    assert ":6379" in settings.REDIS_URL
+
+    shared_r = get_redis()
+    comm_r = get_community_redis()
+    if not shared_r or not comm_r:
+        pytest.skip("Redis instances not available")
+
+    # 2. Write community job stream entry and chunk into community redis
+    test_node_id = uuid4()
+    test_job_id = uuid4()
+    auth = SignedJobAuthorization(
+        job_id=test_job_id,
+        node_id=test_node_id,
+        model_name="llama3.2:1b",
+        payload_digest="digest-isolation",
+        max_output_tokens=50,
+        hard_deadline_ts=int(time.time()) + 120,
+        auth_nonce="iso-nonce",
+        signature="0" * 128,
+        key_id="k1",
+    )
+
+    await streams.enqueue_job_dispatch(
+        node_id=test_node_id,
+        job_id=test_job_id,
+        authorization=auth,
+        payload={"model": "llama3.2:1b", "prompt": "confidential student material"},
+    )
+    await streams.append_job_chunk(test_job_id, seq_id=1, delta="chunk-1", done=False)
+
+    # 3. Assert community keys exist in Community Redis
+    stream_key = f"stream:node:{test_node_id}:jobs"
+    chunks_key = f"stream:job:{test_job_id}:chunks"
+
+    comm_stream_len = await comm_r.xlen(stream_key)
+    assert comm_stream_len >= 1
+    comm_chunks_len = await comm_r.xlen(chunks_key)
+    assert comm_chunks_len >= 1
+
+    # 4. Assert community keys DO NOT exist in Shared Persistent Redis (Fail-Closed Isolation)
+    shared_stream_type = await shared_r.type(stream_key)
+    assert shared_stream_type == "none"
+    shared_chunks_type = await shared_r.type(chunks_key)
+    assert shared_chunks_type == "none"
+
+    # 5. Clean up test keys in community redis
+    await comm_r.delete(stream_key, chunks_key)

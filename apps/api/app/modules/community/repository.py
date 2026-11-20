@@ -7,6 +7,7 @@ from typing import Any
 from uuid import UUID
 
 from app.core.database import get_pool
+from app.core.errors import AuthorizationError
 
 logger = logging.getLogger("ragbait.community.repository")
 
@@ -326,6 +327,7 @@ async def create_job(
     consent_policy_version: str,
     hard_deadline_at: datetime,
     job_id: UUID | None = None,
+    redis_run_id: str | None = None,
 ) -> dict[str, Any]:
     """Persist new community inference job in QUEUED status."""
     pool = get_pool()
@@ -336,9 +338,9 @@ async def create_job(
                 INSERT INTO public.community_inference_jobs (
                     id, requester_id, node_id, model_name, status,
                     payload_digest, authorization_key_id, consent_policy_version,
-                    hard_deadline_at
+                    hard_deadline_at, redis_run_id
                 )
-                VALUES ($1, $2, $3, $4, 'QUEUED', $5, $6, $7, $8)
+                VALUES ($1, $2, $3, $4, 'QUEUED', $5, $6, $7, $8, $9)
                 RETURNING *
                 """,
                 job_id,
@@ -349,6 +351,7 @@ async def create_job(
                 auth_key_id,
                 consent_policy_version,
                 hard_deadline_at,
+                redis_run_id,
             )
         else:
             row = await conn.fetchrow(
@@ -356,9 +359,9 @@ async def create_job(
                 INSERT INTO public.community_inference_jobs (
                     requester_id, node_id, model_name, status,
                     payload_digest, authorization_key_id, consent_policy_version,
-                    hard_deadline_at
+                    hard_deadline_at, redis_run_id
                 )
-                VALUES ($1, $2, $3, 'QUEUED', $4, $5, $6, $7)
+                VALUES ($1, $2, $3, 'QUEUED', $4, $5, $6, $7, $8)
                 RETURNING *
                 """,
                 requester_id,
@@ -368,6 +371,7 @@ async def create_job(
                 auth_key_id,
                 consent_policy_version,
                 hard_deadline_at,
+                redis_run_id,
             )
         return dict(row)
 
@@ -476,24 +480,201 @@ async def sweep_expired_jobs(batch_size: int = 50) -> list[dict[str, Any]]:
         return [dict(r) for r in rows]
 
 
-async def update_node_active_session(node_id: UUID, session_id: str) -> int:
-    """Update active session ID and increment session epoch for session fencing."""
+async def register_node_session(node_id: UUID, session_id: str) -> tuple[int, str]:
+    """Atomically register a new authenticated session under row lock, incrementing session_epoch."""
+    pool = get_pool()
+    async with pool.acquire() as conn:
+        async with conn.transaction():
+            row = await conn.fetchrow(
+                """
+                SELECT id, status, session_epoch
+                FROM public.community_nodes
+                WHERE id = $1
+                FOR UPDATE
+                """,
+                node_id,
+            )
+            if not row or row["status"] == "revoked":
+                raise AuthorizationError("Node does not exist or has been revoked")
+
+            new_epoch = row["session_epoch"] + 1
+            await conn.execute(
+                """
+                UPDATE public.community_nodes
+                SET active_session_id = $2,
+                    session_epoch = $3,
+                    status = 'active',
+                    last_seen_at = now(),
+                    updated_at = now()
+                WHERE id = $1
+                """,
+                node_id,
+                session_id,
+                new_epoch,
+            )
+            return new_epoch, session_id
+
+
+async def verify_node_session(
+    node_id: UUID, session_id: str, expected_epoch: int | None = None
+) -> bool:
+    """Authoritatively verify against PostgreSQL that the session_id and epoch are current and active."""
     pool = get_pool()
     async with pool.acquire() as conn:
         row = await conn.fetchrow(
             """
-            UPDATE public.community_nodes
-            SET active_session_id = $2,
-                session_epoch = session_epoch + 1,
-                last_seen_at = now(),
-                updated_at = now()
-            WHERE id = $1 AND status != 'revoked'
-            RETURNING session_epoch
+            SELECT active_session_id, session_epoch, status
+            FROM public.community_nodes
+            WHERE id = $1
             """,
             node_id,
-            session_id,
         )
-        return row["session_epoch"] if row else 0
+        if not row or row["status"] != "active":
+            return False
+        if row["active_session_id"] != session_id:
+            return False
+        if expected_epoch is not None and row["session_epoch"] != expected_epoch:
+            return False
+        return True
+
+
+async def update_job_status_fenced(
+    node_id: UUID,
+    session_id: str,
+    job_id: UUID,
+    status: str,
+    expected_epoch: int | None = None,
+    accepted_at: datetime | None = None,
+    started_at: datetime | None = None,
+    completed_at: datetime | None = None,
+    cancelled_at: datetime | None = None,
+    lease_expires_at: datetime | None = None,
+    failure_code: str | None = None,
+    failure_details: str | None = None,
+    reported_input_tokens: int | None = None,
+    reported_output_tokens: int | None = None,
+    duration_ms: int | None = None,
+    tokens_per_second: float | None = None,
+) -> dict[str, Any] | None:
+    """Atomically update job lifecycle state only if the worker's session is the authoritative active session."""
+    pool = get_pool()
+    async with pool.acquire() as conn:
+        async with conn.transaction():
+            node = await conn.fetchrow(
+                """
+                SELECT active_session_id, session_epoch, status
+                FROM public.community_nodes
+                WHERE id = $1
+                FOR SHARE
+                """,
+                node_id,
+            )
+            if not node or node["status"] != "active" or node["active_session_id"] != session_id:
+                logger.warning(
+                    f"Rejected fenced job update on {job_id}: Session {session_id} is superseded "
+                    f"(authoritative: {node['active_session_id'] if node else None})"
+                )
+                return None
+            if expected_epoch is not None and node["session_epoch"] != expected_epoch:
+                logger.warning(
+                    f"Rejected fenced job update on {job_id}: Epoch mismatch ({expected_epoch} vs {node['session_epoch']})"
+                )
+                return None
+
+            row = await conn.fetchrow(
+                """
+                UPDATE public.community_inference_jobs
+                SET status = $2,
+                    accepted_at = COALESCE($3, accepted_at),
+                    started_at = COALESCE($4, started_at),
+                    completed_at = COALESCE($5, completed_at),
+                    cancelled_at = COALESCE($6, cancelled_at),
+                    lease_expires_at = COALESCE($7, lease_expires_at),
+                    failure_code = COALESCE($8, failure_code),
+                    failure_details = COALESCE($9, failure_details),
+                    reported_input_tokens = COALESCE($10, reported_input_tokens),
+                    reported_output_tokens = COALESCE($11, reported_output_tokens),
+                    duration_ms = COALESCE($12, duration_ms),
+                    tokens_per_second = COALESCE($13, tokens_per_second),
+                    updated_at = now()
+                WHERE id = $1
+                  AND node_id = $14
+                  AND status NOT IN ('COMPLETED', 'FAILED', 'CANCELLED', 'EXPIRED', 'OUTCOME_UNKNOWN')
+                RETURNING *
+                """,
+                job_id,
+                status,
+                accepted_at,
+                started_at,
+                completed_at,
+                cancelled_at,
+                lease_expires_at,
+                failure_code,
+                failure_details,
+                reported_input_tokens,
+                reported_output_tokens,
+                duration_ms,
+                tokens_per_second,
+                node_id,
+            )
+            return dict(row) if row else None
+
+
+async def renew_job_lease_fenced(
+    node_id: UUID,
+    session_id: str,
+    job_id: UUID,
+    lease_expires_at: datetime,
+    expected_epoch: int | None = None,
+) -> dict[str, Any] | None:
+    """Renew job lease only if session is authoritative and active."""
+    return await update_job_status_fenced(
+        node_id=node_id,
+        session_id=session_id,
+        job_id=job_id,
+        status="RUNNING",
+        expected_epoch=expected_epoch,
+        lease_expires_at=lease_expires_at,
+    )
+
+
+async def reconcile_redis_restart_jobs(current_run_id: str) -> list[dict[str, Any]]:
+    """Transition non-terminal jobs whose volatile Redis queue generation differs from current Redis run_id."""
+    pool = get_pool()
+    now = datetime.now(UTC)
+    async with pool.acquire() as conn:
+        rows = await conn.fetch(
+            """
+            UPDATE public.community_inference_jobs
+            SET status = CASE
+                    WHEN status IN ('AGENT_ACCEPTED', 'RUNNING') THEN 'OUTCOME_UNKNOWN'
+                    ELSE 'EXPIRED'
+                END,
+                failure_code = CASE
+                    WHEN status IN ('AGENT_ACCEPTED', 'RUNNING') THEN 'REDIS_RESTART_STREAM_LOST'
+                    ELSE 'REDIS_RESTART_PAYLOAD_LOST'
+                END,
+                failure_details = CASE
+                    WHEN status IN ('AGENT_ACCEPTED', 'RUNNING') THEN 'Dedicated community Redis restarted mid-execution; stream lost'
+                    ELSE 'Dedicated community Redis restarted before job acceptance; payload evicted'
+                END,
+                completed_at = COALESCE(completed_at, $1),
+                updated_at = now()
+            WHERE status IN ('QUEUED', 'CLAIMED', 'SENT', 'AGENT_ACCEPTED', 'RUNNING')
+              AND redis_run_id IS NOT NULL
+              AND redis_run_id != $2
+            RETURNING id, node_id, status
+            """,
+            now,
+            current_run_id,
+        )
+        return [dict(r) for r in rows]
+
+
+async def update_node_active_session(node_id: UUID, session_id: str) -> int:
+    """Update active session ID and increment session epoch for session fencing."""
+    new_epoch, _ = await register_node_session(node_id, session_id)
+    return new_epoch
 
 
 async def get_node_active_session(node_id: UUID) -> str | None:

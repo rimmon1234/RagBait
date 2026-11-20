@@ -357,6 +357,9 @@ async def submit_community_job(
     payload_digest = crypto.compute_payload_digest(payload)
 
     # 5. Create authoritative record in PostgreSQL
+    from app.core.redis import get_community_redis_run_id
+
+    redis_run_id = await get_community_redis_run_id()
     try:
         job = await repository.create_job(
             requester_id=requester_id,
@@ -367,6 +370,7 @@ async def submit_community_job(
             consent_policy_version=req.consent_policy_version,
             hard_deadline_at=hard_deadline_at,
             job_id=job_id,
+            redis_run_id=redis_run_id,
         )
     except Exception:
         await streams.release_node_concurrency(node_id, job_id)
@@ -473,12 +477,31 @@ async def cancel_job(user_id: UUID, job_id: UUID) -> None:
     )
 
 
-async def recover_expired_community_jobs() -> int:
-    """Sweeper recovering dangling community jobs and releasing concurrency slots."""
+async def recover_expired_community_jobs(current_run_id: str | None = None) -> int:
+    """Sweeper recovering dangling community jobs, reconciling Redis restarts, and releasing concurrency slots."""
+    from app.core.redis import get_community_redis_run_id
+
+    total_recovered = 0
+    if current_run_id is None:
+        current_run_id = await get_community_redis_run_id()
+
+    # 1. Reconcile lost payloads/streams if dedicated volatile Redis restarted
+    if current_run_id:
+        restarted_jobs = await repository.reconcile_redis_restart_jobs(current_run_id)
+        for j in restarted_jobs:
+            try:
+                await streams.release_node_concurrency(node_id=j["node_id"], job_id=j["id"])
+            except Exception as e:
+                logger.warning(f"Error releasing concurrency for restarted job {j['id']}: {e}")
+        total_recovered += len(restarted_jobs)
+
+    # 2. Reconcile expired jobs by deadline/lease
     swept_jobs = await repository.sweep_expired_jobs(batch_size=50)
     for j in swept_jobs:
         try:
             await streams.release_node_concurrency(node_id=j["node_id"], job_id=j["id"])
         except Exception as e:
             logger.warning(f"Error releasing concurrency for swept job {j['id']}: {e}")
-    return len(swept_jobs)
+    total_recovered += len(swept_jobs)
+
+    return total_recovered

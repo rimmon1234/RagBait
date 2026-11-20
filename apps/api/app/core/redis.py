@@ -10,6 +10,7 @@ from app.core.errors import AppError, RateLimitError
 logger = logging.getLogger("ragbait.redis")
 
 _redis_client: aioredis.Redis | None = None
+_community_redis_client: aioredis.Redis | None = None
 
 
 async def init_redis() -> aioredis.Redis | None:
@@ -61,6 +62,66 @@ async def check_redis_health() -> bool:
         return True
     except Exception:
         return False
+
+
+async def init_community_redis() -> aioredis.Redis | None:
+    """Initialize dedicated volatile in-memory Redis client for community inference."""
+    global _community_redis_client
+    try:
+        logger.info(f"Connecting to dedicated Community Redis at {settings.COMMUNITY_REDIS_URL}...")
+        _community_redis_client = aioredis.from_url(
+            settings.COMMUNITY_REDIS_URL,
+            decode_responses=True,
+            socket_timeout=2.0,
+            socket_connect_timeout=2.0,
+        )
+        await _community_redis_client.ping()
+        logger.info("Dedicated Community Redis connection established.")
+        return _community_redis_client
+    except Exception as e:
+        logger.warning(f"Could not connect to Community Redis: {e}")
+        _community_redis_client = None
+        if settings.ENVIRONMENT == "production":
+            raise RuntimeError(f"Dedicated Community Redis is required in production: {e}") from e
+        return None
+
+
+async def close_community_redis() -> None:
+    """Close dedicated Community Redis connection."""
+    global _community_redis_client
+    if _community_redis_client is not None:
+        logger.info("Closing Community Redis connection...")
+        await _community_redis_client.aclose()
+        _community_redis_client = None
+
+
+def get_community_redis() -> aioredis.Redis | None:
+    """Return active dedicated Community Redis client. Does NOT fall back to shared Redis."""
+    return _community_redis_client
+
+
+async def check_community_redis_health() -> bool:
+    """Ping dedicated Community Redis to confirm health."""
+    if _community_redis_client is None:
+        return False
+    try:
+        await _community_redis_client.ping()
+        return True
+    except Exception:
+        return False
+
+
+async def get_community_redis_run_id() -> str | None:
+    """Retrieve runtime server run_id from dedicated Community Redis for queue generation tracking."""
+    client = get_community_redis()
+    if client is None:
+        return None
+    try:
+        info = await client.info("server")
+        return info.get("run_id")
+    except Exception as e:
+        logger.warning(f"Error fetching community redis run_id: {e}")
+        return None
 
 
 # Lua script for atomic sliding window / fixed window counter with expiry

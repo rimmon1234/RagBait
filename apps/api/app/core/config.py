@@ -49,8 +49,12 @@ class Settings(BaseSettings):
         description="Secret key for JWT verification if symmetric",
     )
 
-    # Redis & Rate Limiting
+    # Redis & Rate Limiting (M2.4 Shared Persistence)
     REDIS_URL: str = "redis://127.0.0.1:6379/0"
+    COMMUNITY_REDIS_URL: str = Field(
+        default="redis://127.0.0.1:6380/0",
+        description="Dedicated volatile in-memory Redis URL for ephemeral community inference queues",
+    )
     RATE_LIMIT_ENABLED: bool = True
     RATE_LIMIT_DEFAULT: int = 60
     RATE_LIMIT_HEARTBEAT: int = 1
@@ -197,6 +201,10 @@ class Settings(BaseSettings):
             ):
                 raise ValueError(
                     "Default development COMMUNITY_SERVER_SIGNING_KEY_HEX is not permitted in production"
+                )
+            if self.COMMUNITY_REDIS_URL == self.REDIS_URL:
+                raise ValueError(
+                    "COMMUNITY_REDIS_URL must use a dedicated volatile Redis instance distinct from REDIS_URL in production"
                 )
 
         if len(self.COMMUNITY_SERVER_SIGNING_KEY_HEX) != 64:

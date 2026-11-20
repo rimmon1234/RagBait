@@ -17,25 +17,17 @@ ADD COLUMN IF NOT EXISTS session_epoch integer NOT NULL DEFAULT 0;
 REVOKE ALL ON public.community_node_pairing_codes FROM authenticated;
 GRANT SELECT ON public.community_node_pairing_codes TO authenticated;
 
+-- Ensure code_hash column exists (created in initial M2.8 schema)
 ALTER TABLE public.community_node_pairing_codes
 ADD COLUMN IF NOT EXISTS code_hash text UNIQUE;
-
--- Backfill code_hash from existing plaintext codes if pgcrypto digest is available
-DO $$
-BEGIN
-    IF EXISTS (SELECT 1 FROM pg_proc WHERE proname = 'digest') THEN
-        UPDATE public.community_node_pairing_codes
-        SET code_hash = encode(digest(code, 'sha256'), 'hex')
-        WHERE code_hash IS NULL AND code IS NOT NULL;
-    END IF;
-END $$;
-
-ALTER TABLE public.community_node_pairing_codes
-ALTER COLUMN code DROP NOT NULL;
 
 -- 3. Lock down public.community_inference_jobs
 REVOKE ALL ON public.community_inference_jobs FROM authenticated;
 GRANT SELECT ON public.community_inference_jobs TO authenticated;
+
+-- Add Redis run_id for volatile queue restart and crash recovery
+ALTER TABLE public.community_inference_jobs
+ADD COLUMN IF NOT EXISTS redis_run_id text;
 
 -- 4. Defense-in-depth trigger: Protect server-managed node fields from PostgREST modification
 CREATE OR REPLACE FUNCTION public.protect_community_node_server_fields()

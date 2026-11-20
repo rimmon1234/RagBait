@@ -6,7 +6,7 @@ import os
 from typing import Any
 from uuid import UUID
 
-from app.core.redis import get_redis
+from app.core.redis import get_community_redis as get_redis
 from app.modules.community.schemas import SignedJobAuthorization
 
 logger = logging.getLogger("ragbait.community.streams")
@@ -60,6 +60,40 @@ async def consume_challenge_nonce(nonce: str, expected_node_id: UUID) -> bool:
     if not stored:
         return False
     return stored == str(expected_node_id)
+
+
+async def set_node_session_fencing(
+    node_id: UUID, session_id: str, epoch: int, ttl_seconds: int = 120
+) -> None:
+    """Project authoritative session and epoch to dedicated volatile Redis for atomic lockstep verification."""
+    r = get_redis()
+    if r is None:
+        return
+    key = f"ragbait:comm:node:{node_id}:session"
+    data = json.dumps({"session_id": session_id, "epoch": epoch})
+    await r.set(key, data, ex=ttl_seconds)
+
+
+async def check_node_session_fencing(
+    node_id: UUID, session_id: str, expected_epoch: int | None = None
+) -> bool:
+    """Check projected fencing key in Redis. Fails closed if missing."""
+    r = get_redis()
+    if r is None:
+        return False
+    key = f"ragbait:comm:node:{node_id}:session"
+    raw = await r.get(key)
+    if not raw:
+        return False
+    try:
+        val = json.loads(raw)
+        if val.get("session_id") != session_id:
+            return False
+        if expected_epoch is not None and val.get("epoch") != expected_epoch:
+            return False
+        return True
+    except Exception:
+        return False
 
 
 # ------------------------------------------------------------------------------
