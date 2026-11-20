@@ -25,6 +25,7 @@ import { isSecureLoopbackContext, queryLoopbackPermission } from "@/lib/local-in
 import { ollamaClient } from "@/lib/local-inference/ollama-client";
 import { isAbortError } from "@/lib/local-inference/ollama-errors";
 import type {
+  LoopbackPermissionState,
   OllamaChatMessage,
   OllamaConnectionState,
   OllamaTagModel,
@@ -149,7 +150,12 @@ export default function LocalInferencePage() {
       }
 
       // 2. Query Chrome Local Network Access (LNA) permission
-      const permResult = await queryLoopbackPermission();
+      let permResult: { state: LoopbackPermissionState; permissionStatus?: PermissionStatus };
+      try {
+        permResult = await queryLoopbackPermission();
+      } catch {
+        permResult = { state: "unsupported" };
+      }
       if (!isMounted) return;
 
       if (permResult.permissionStatus) {
@@ -161,21 +167,23 @@ export default function LocalInferencePage() {
             refreshOllama();
           } else if (updatedState === "denied") {
             setConnectionState("loopback_permission_denied");
-          } else if (updatedState === "prompt") {
+          } else {
             setConnectionState("loopback_permission_required");
           }
         });
       }
 
-      if (permResult.state === "prompt") {
-        // Modern Chrome requirement: NEVER initiate the first local request automatically
-        // when permission state is 'prompt'. Wait for explicit user gesture!
-        setConnectionState("loopback_permission_required");
+      if (permResult.state === "granted") {
+        // Only granted permission allows automatic probing on page load
+        refreshOllama();
       } else if (permResult.state === "denied") {
+        // Explicitly denied: show remediation instructions
         setConnectionState("loopback_permission_denied");
       } else {
-        // 'granted' or 'unsupported' (Safari, Firefox, dev environments without LNA flags)
-        refreshOllama();
+        // 'prompt' OR 'unsupported' (or query threw):
+        // According to Chrome Local Network Access guidance, when granular permission
+        // descriptor is unsupported or throws, treat it as prompt: require explicit user gesture!
+        setConnectionState("loopback_permission_required");
       }
     };
 

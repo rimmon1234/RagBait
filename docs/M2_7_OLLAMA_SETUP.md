@@ -64,22 +64,33 @@ Per the official Ollama documentation ([ollama faq](https://github.com/ollama/ol
 
 ---
 
-## 3. Modern Chrome Local Network Access (LNA) Specification
+## 3. Browser Compatibility & Local Network Access (LNA) Specification
 
-Modern Chromium browsers (Chrome 130+) enforce **Local Network Access (LNA)** protections to prevent public internet websites from silently pivoting into local devices (`127.0.0.1`).
+Web platform security for private network and loopback access (`127.0.0.1`) is governed by the W3C Local Network Access (LNA) specification and standard browser origin restrictions.
 
-RagBait strictly adheres to the W3C Local Network Access specification:
-1. **Secure Context Requirement**:
-   - Browser loopback access is restricted to secure top-level contexts (`HTTPS`).
-   - The browser exempts `http://localhost:3000` and `http://127.0.0.1:3000` as secure development contexts.
-   - Non-secure HTTP access from custom hostnames or LAN IPs is rejected with an `insecure_context` notice.
-2. **Explicit Address Space Declaration**:
-   - Every fetch request issued by RagBait declares `targetAddressSpace: "loopback"` in a type-safe manner.
-3. **Explicit User Gesture for Permission `prompt`**:
-   - If `navigator.permissions.query({ name: "loopback-network" })` returns `prompt`, RagBait **never** fires an automatic request on page load.
-   - A dedicated "Connect to Local Ollama" button is displayed. Clicking this button triggers the first local request within a genuine user gesture, allowing Chrome to display its permission prompt.
-4. **Site Settings Remediation for `denied`**:
-   - If the user previously clicked "Block" or site settings forbid loopback access, RagBait displays clear remediation steps directing the user to Chrome Site Settings (`chrome://settings/content/siteDetails`).
+### Chromium Phased Rollout & Permissions Nuance (Chrome / Edge)
+Local Network Access in Chromium is undergoing a phased rollout. **Chrome and Edge do not yet provide a universally active, out-of-the-box Permissions API descriptor across all stable channels without experimental flags or origin trials.**
+
+There is a critical distinction between two layers of LNA:
+1. **Network-Level Preflights**: Preflight requests with `targetAddressSpace: "loopback"` and headers such as `Access-Control-Request-Private-Network: true`.
+2. **Permissions API Query**: Calling `navigator.permissions.query({ name: "loopback-network" })`. In many standard Chrome installations, passing `"loopback-network"` throws a `TypeError: Failed to execute 'query' on 'Permissions': Failed to read the 'name' property from 'PermissionDescriptor': The provided value 'loopback-network' is not a valid enum value of type PermissionName`.
+
+### RagBait LNA State Machine & Safe Fallback
+To ensure security, privacy, and broad browser compatibility, RagBait implements a defensive state machine:
+- **`granted`**: The browser explicitly confirms loopback permission is granted. Automatic connection and model discovery are permitted on page load.
+- **`prompt`**: Permission has not yet been granted. RagBait **never** fires an automatic fetch on page load. It displays the notice *"Browser Local Network Permission Required"* and an explicit button **"Connect to Local Ollama"**. The first loopback request is triggered strictly within this user gesture, giving the browser the required user interaction to display a prompt if supported.
+- **`unsupported` / Query Exception**: If `navigator.permissions` is missing, the permission descriptor `"loopback-network"` is unsupported, or `permissions.query()` throws, RagBait safely treats the state as **`prompt`**. **It NEVER fires an automatic background fetch to `127.0.0.1` on page load.** The user must click **"Connect to Local Ollama"** to initiate local communication.
+- **`denied`**: The user or site settings explicitly blocked loopback access. All local network probing is completely blocked. RagBait displays clear remediation steps directing the user to Site Settings (`chrome://settings/content/siteDetails`).
+
+### Safari (WebKit) & Firefox (Gecko) Fallback
+- Neither Safari (WebKit) nor Firefox (Gecko) currently implements Chromium's `loopback-network` Permissions API or the `targetAddressSpace` fetch option.
+- In both browsers, querying `"loopback-network"` throws or fails. RagBait's safe fallback immediately classifies the state as `prompt` (`loopback_permission_required`), requiring the user to explicitly click **"Connect to Local Ollama"**.
+- Safari and Firefox strictly enforce standard Cross-Origin Resource Sharing (CORS). As long as `OLLAMA_ORIGINS` is configured with the RagBait origin (e.g. `http://localhost:3000`), loopback communication succeeds cleanly after the user gesture.
+
+### Secure Context & HTTPS Requirements
+- Browser loopback access is restricted to secure top-level contexts (`window.isSecureContext === true`).
+- The browser treats `http://localhost` and `http://127.0.0.1` as secure development contexts by default.
+- In staging and production environments, RagBait must be delivered over **HTTPS**. Accessing the application over plaintext HTTP from non-localhost origins (such as a LAN IP `http://192.168.x.x` or custom HTTP hostname) triggers an immediate `insecure_context` notice and prevents local network requests.
 
 ---
 

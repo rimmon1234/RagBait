@@ -62,7 +62,7 @@ describe("LocalInferencePage Component", () => {
     vi.restoreAllMocks();
   });
 
-  it("renders connected status and lists available models", async () => {
+  it("renders connected status and lists available models when permission is 'granted'", async () => {
     const mockModels: OllamaTagModel[] = [
       {
         name: "llama3.2:3b",
@@ -90,7 +90,7 @@ describe("LocalInferencePage Component", () => {
 
     render(<LocalInferencePage />);
 
-    // Wait for connection banner to show connected
+    // Wait for connection banner to show connected automatically on page load
     await waitFor(() => {
       expect(screen.getByText("Ollama Connected")).toBeInTheDocument();
       expect(screen.getByText(/v0.40.16/)).toBeInTheDocument();
@@ -136,10 +136,74 @@ describe("LocalInferencePage Component", () => {
     });
   });
 
-  it("displays remediation banner when LNA permission is 'denied'", async () => {
+  it("requires explicit user click and fires NO fetch on page load when permission is 'unsupported'", async () => {
+    vi.spyOn(lnaPermissions, "queryLoopbackPermission").mockResolvedValue({
+      state: "unsupported",
+    });
+
+    const checkSpy = vi.spyOn(ollamaClient, "checkConnection").mockResolvedValue({
+      state: "connected",
+      version: "0.40.16",
+    });
+    vi.spyOn(ollamaClient, "listModels").mockResolvedValue([]);
+
+    render(<LocalInferencePage />);
+
+    // Per Chrome LNA guidance: unsupported must be treated as prompt:
+    // NO automatic connection probe on page load!
+    await waitFor(() => {
+      expect(
+        screen.getByText("Browser Local Network Permission Required")
+      ).toBeInTheDocument();
+    });
+
+    expect(checkSpy).not.toHaveBeenCalled();
+
+    // Clicking Connect button triggers the probe
+    const connectBtn = screen.getByRole("button", { name: /Connect to Local Ollama/i });
+    fireEvent.click(connectBtn);
+
+    await waitFor(() => {
+      expect(checkSpy).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  it("handles permission query exceptions cleanly as unsupported/prompt without unhandled rejections", async () => {
+    vi.spyOn(lnaPermissions, "queryLoopbackPermission").mockRejectedValue(
+      new Error("Permissions API descriptor not recognized")
+    );
+
+    const checkSpy = vi.spyOn(ollamaClient, "checkConnection").mockResolvedValue({
+      state: "connected",
+      version: "0.40.16",
+    });
+    vi.spyOn(ollamaClient, "listModels").mockResolvedValue([]);
+
+    render(<LocalInferencePage />);
+
+    // When query throws: caught safely, treated as prompt/unsupported, NO fetch on page load!
+    await waitFor(() => {
+      expect(
+        screen.getByText("Browser Local Network Permission Required")
+      ).toBeInTheDocument();
+    });
+
+    expect(checkSpy).not.toHaveBeenCalled();
+
+    const connectBtn = screen.getByRole("button", { name: /Connect to Local Ollama/i });
+    fireEvent.click(connectBtn);
+
+    await waitFor(() => {
+      expect(checkSpy).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  it("displays remediation banner and prevents probing when LNA permission is 'denied'", async () => {
     vi.spyOn(lnaPermissions, "queryLoopbackPermission").mockResolvedValue({
       state: "denied",
     });
+
+    const checkSpy = vi.spyOn(ollamaClient, "checkConnection");
 
     render(<LocalInferencePage />);
 
@@ -149,6 +213,9 @@ describe("LocalInferencePage Component", () => {
       ).toBeInTheDocument();
       expect(screen.getByText(/Site Settings/i)).toBeInTheDocument();
     });
+
+    // Probing must be completely prevented
+    expect(checkSpy).not.toHaveBeenCalled();
   });
 
   it("renders neutral connection failed banner when connection fails", async () => {
