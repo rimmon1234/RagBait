@@ -1,16 +1,9 @@
 """Unit tests for Intelligent Routing Policy and Deterministic Comparator (M2.9)."""
 
 from uuid import UUID, uuid4
-import pytest
 
-from app.modules.llm_gateway.schemas import ChatCompletionRequest, ChatMessage
 from app.modules.routing.policy import filter_candidates, rank_candidates
-from app.modules.routing.schemas import (
-    CandidateFilterResult,
-    RoutingCandidate,
-    RoutingMode,
-    SourceType,
-)
+from app.modules.routing.schemas import RoutingCandidate, SourceType
 
 
 def _make_candidate(
@@ -55,15 +48,32 @@ def _make_candidate(
 
 def test_deterministic_ranking_identical_outputs():
     """Identical candidate sets must produce identical ranked orders every time."""
-    c1 = _make_candidate(model_id="m1_free", free_tier_eligible=True, pricing_input_cents_per_million=0, pricing_output_cents_per_million=0)
+    c1 = _make_candidate(
+        model_id="m1_free",
+        free_tier_eligible=True,
+        pricing_input_cents_per_million=0,
+        pricing_output_cents_per_million=0,
+    )
     c2 = _make_candidate(model_id="m2_community", source_type="community", credential_id=None)
-    c3 = _make_candidate(model_id="m3_pricier", pricing_input_cents_per_million=20, pricing_output_cents_per_million=40)
-    c4 = _make_candidate(model_id="m4_cheaper", pricing_input_cents_per_million=5, pricing_output_cents_per_million=10)
+    c3 = _make_candidate(
+        model_id="m3_pricier",
+        pricing_input_cents_per_million=20,
+        pricing_output_cents_per_million=40,
+    )
+    c4 = _make_candidate(
+        model_id="m4_cheaper",
+        pricing_input_cents_per_million=5,
+        pricing_output_cents_per_million=10,
+    )
 
     candidates = [c3, c1, c4, c2]
 
-    ranked_1 = rank_candidates(list(candidates), estimated_input_tokens=100, estimated_output_tokens=200)
-    ranked_2 = rank_candidates(list(candidates), estimated_input_tokens=100, estimated_output_tokens=200)
+    ranked_1 = rank_candidates(
+        list(candidates), estimated_input_tokens=100, estimated_output_tokens=200
+    )
+    ranked_2 = rank_candidates(
+        list(candidates), estimated_input_tokens=100, estimated_output_tokens=200
+    )
 
     assert [c.model_id for c in ranked_1] == [c.model_id for c in ranked_2]
     # Free tier first
@@ -77,9 +87,24 @@ def test_deterministic_ranking_identical_outputs():
 
 def test_deterministic_tie_breaker_alphabetical():
     """Candidates in the same tier and cost must be sorted alphabetically by provider/model identifier."""
-    c_b = _make_candidate(provider_id="beta_provider", model_id="m1", free_tier_eligible=True, pricing_input_cents_per_million=0)
-    c_a = _make_candidate(provider_id="alpha_provider", model_id="m1", free_tier_eligible=True, pricing_input_cents_per_million=0)
-    c_z = _make_candidate(provider_id="zeta_provider", model_id="m1", free_tier_eligible=True, pricing_input_cents_per_million=0)
+    c_b = _make_candidate(
+        provider_id="beta_provider",
+        model_id="m1",
+        free_tier_eligible=True,
+        pricing_input_cents_per_million=0,
+    )
+    c_a = _make_candidate(
+        provider_id="alpha_provider",
+        model_id="m1",
+        free_tier_eligible=True,
+        pricing_input_cents_per_million=0,
+    )
+    c_z = _make_candidate(
+        provider_id="zeta_provider",
+        model_id="m1",
+        free_tier_eligible=True,
+        pricing_input_cents_per_million=0,
+    )
 
     ranked = rank_candidates([c_z, c_b, c_a], estimated_input_tokens=50, estimated_output_tokens=50)
     assert [c.provider_id for c in ranked] == ["alpha_provider", "beta_provider", "zeta_provider"]
@@ -87,11 +112,28 @@ def test_deterministic_tie_breaker_alphabetical():
 
 def test_missing_pricing_represented_as_none_not_free():
     """Missing pricing must be represented as None, ranked last, NEVER treated as free tier or 0 cost."""
-    free_cand = _make_candidate(model_id="free_c", free_tier_eligible=True, pricing_input_cents_per_million=0, pricing_output_cents_per_million=0)
-    metered_known = _make_candidate(model_id="metered_k", pricing_input_cents_per_million=10, pricing_output_cents_per_million=10)
-    metered_unknown = _make_candidate(model_id="metered_u", pricing_input_cents_per_million=None, pricing_output_cents_per_million=None)
+    free_cand = _make_candidate(
+        model_id="free_c",
+        free_tier_eligible=True,
+        pricing_input_cents_per_million=0,
+        pricing_output_cents_per_million=0,
+    )
+    metered_known = _make_candidate(
+        model_id="metered_k",
+        pricing_input_cents_per_million=10,
+        pricing_output_cents_per_million=10,
+    )
+    metered_unknown = _make_candidate(
+        model_id="metered_u",
+        pricing_input_cents_per_million=None,
+        pricing_output_cents_per_million=None,
+    )
 
-    ranked = rank_candidates([metered_unknown, metered_known, free_cand], estimated_input_tokens=1000, estimated_output_tokens=500)
+    ranked = rank_candidates(
+        [metered_unknown, metered_known, free_cand],
+        estimated_input_tokens=1000,
+        estimated_output_tokens=500,
+    )
 
     # Free tier (Tier 0 in cost_tier)
     assert ranked[0].model_id == "free_c"
@@ -122,7 +164,9 @@ def test_exact_integer_microcent_calculation():
         pricing_input_cents_per_million=in_cents_per_m * 2,
         pricing_output_cents_per_million=out_cents_per_m * 2,
     )
-    ranked = rank_candidates([c_pricier, c_cheaper], estimated_input_tokens=est_in, estimated_output_tokens=est_out)
+    ranked = rank_candidates(
+        [c_pricier, c_cheaper], estimated_input_tokens=est_in, estimated_output_tokens=est_out
+    )
     assert ranked[0].model_id == "calc_c"
     assert ranked[1].model_id == "calc_expensive"
 

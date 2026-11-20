@@ -186,13 +186,19 @@ def rank_candidates(
 
     Lower score tuple ranks higher (0 is best).
     """
+
     def scoring_key(c: RoutingCandidate) -> tuple[Any, ...]:
         # Tier 1: User Request Alignment (0 = exact match, 1 = family match, 2 = other)
         pref_tier = 2
         if requested_model_id:
-            if c.model_id == requested_model_id or (c.is_routing_alias and c.model_id == requested_model_id):
+            if c.model_id == requested_model_id or (
+                c.is_routing_alias and c.model_id == requested_model_id
+            ):
                 pref_tier = 0
-            elif requested_model_id.lower() in c.family.lower() or c.family.lower() in requested_model_id.lower():
+            elif (
+                requested_model_id.lower() in c.family.lower()
+                or c.family.lower() in requested_model_id.lower()
+            ):
                 pref_tier = 1
 
         # Tier 2: Cost & Source Priority Preference
@@ -200,7 +206,11 @@ def rank_candidates(
         # 1: Community local inference node (volunteer peer compute, avoids cloud API charges)
         # 2: User-owned paid cloud credential (spends user's own budget before community resources)
         # 3: Community-shared paid cloud credential (preserves pooled community keys)
-        if c.source_type == "cloud" and c.free_tier_eligible and (c.pricing_input_cents_per_million or 0) == 0:
+        if (
+            c.source_type == "cloud"
+            and c.free_tier_eligible
+            and (c.pricing_input_cents_per_million or 0) == 0
+        ):
             cost_tier = 0
             microcents = 0
         elif c.source_type == "community":
@@ -208,7 +218,10 @@ def rank_candidates(
             microcents = 0
         elif c.source_type == "cloud" and not c.is_shared_credential:
             cost_tier = 2
-            if c.pricing_input_cents_per_million is not None and c.pricing_output_cents_per_million is not None:
+            if (
+                c.pricing_input_cents_per_million is not None
+                and c.pricing_output_cents_per_million is not None
+            ):
                 microcents = (
                     estimated_input_tokens * c.pricing_input_cents_per_million
                     + estimated_output_tokens * c.pricing_output_cents_per_million
@@ -217,7 +230,10 @@ def rank_candidates(
                 microcents = 999_999_999  # Missing price ranked last among metered
         else:
             cost_tier = 3
-            if c.pricing_input_cents_per_million is not None and c.pricing_output_cents_per_million is not None:
+            if (
+                c.pricing_input_cents_per_million is not None
+                and c.pricing_output_cents_per_million is not None
+            ):
                 microcents = (
                     estimated_input_tokens * c.pricing_input_cents_per_million
                     + estimated_output_tokens * c.pricing_output_cents_per_million
@@ -229,14 +245,18 @@ def rank_candidates(
         # 0 = normal capacity, 1 = cooling down
         # For community: negative remaining concurrency slots (more free slots ranks higher)
         health_tier = 1 if c.is_cooling_down else 0
-        concurrency_margin = -(c.max_concurrent_jobs - c.active_concurrency) if c.source_type == "community" else 0
+        concurrency_margin = (
+            -(c.max_concurrent_jobs - c.active_concurrency) if c.source_type == "community" else 0
+        )
 
         # Tier 4: Release Stage & Headroom
         stage_rank = {"ga": 0, "preview": 1, "experimental": 2}.get(c.release_stage, 3)
         context_headroom = -(c.context_window - (estimated_input_tokens + estimated_output_tokens))
 
         # Tier 5: Deterministic Stable Tie-Breaker (String sort)
-        tie_breaker = f"{c.provider_id}:{c.model_id}:{c.source_type}:{c.node_id or c.credential_id or ''}"
+        tie_breaker = (
+            f"{c.provider_id}:{c.model_id}:{c.source_type}:{c.node_id or c.credential_id or ''}"
+        )
 
         return (
             pref_tier,

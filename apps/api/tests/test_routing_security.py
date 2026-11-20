@@ -4,7 +4,6 @@ from collections.abc import AsyncIterator
 from unittest.mock import patch
 from uuid import UUID, uuid4
 
-import httpx
 import pytest
 
 from app.core.database import close_db_pool, get_pool, init_db_pool
@@ -16,7 +15,6 @@ from app.modules.credentials.vault import close_vault_pool, init_vault_pool
 from app.modules.llm_gateway.interfaces import NormalizedStreamChunk, NormalizedUsage
 from app.modules.llm_gateway.schemas import ChatCompletionRequest, ChatMessage
 from app.modules.routing import preview_route, route_and_dispatch
-from tests.conftest import create_test_jwt, make_test_profile
 
 CREATED_TEST_USERS: list[UUID] = []
 CREATED_TEST_CREDS: list[UUID] = []
@@ -140,6 +138,7 @@ async def test_cloud_only_never_selects_community_node():
 
     # Also verify direct candidate discovery excludes community sources
     from app.modules.routing.discovery import discover_all_candidates
+
     candidates = await discover_all_candidates(
         user_id=user_id,
         routing_mode="cloud_only",
@@ -298,7 +297,10 @@ async def test_telemetry_safe_headers_no_prompt_leak():
         idempotency_key=f"idem-sec6-{uuid4().hex[:8]}",
     )
 
-    with patch("app.modules.llm_gateway.providers.gemini.GeminiAdapter.stream", side_effect=_mock_stream_generator):
+    with patch(
+        "app.modules.llm_gateway.providers.gemini.GeminiAdapter.stream",
+        side_effect=_mock_stream_generator,
+    ):
         result, is_streaming, decision = await route_and_dispatch(user_id=user_id, req=req)
 
         # Inspect route decision metadata

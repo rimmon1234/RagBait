@@ -124,7 +124,10 @@ async def discover_cloud_candidates(
                     )
 
             if row_explicit["owner_id"] != user_id:
-                if row_explicit["sharing_scope"] != "community_shared" or not row_explicit["shared_consent"]:
+                if (
+                    row_explicit["sharing_scope"] != "community_shared"
+                    or not row_explicit["shared_consent"]
+                ):
                     raise AuthorizationError("Access denied: private owner-only credential")
                 prov_row = await conn.fetchrow(
                     "SELECT allows_community_sharing FROM public.llm_providers WHERE id = $1",
@@ -167,8 +170,16 @@ async def discover_cloud_candidates(
             # Missing or non-positive prices represented as None for metered models unless free_tier_eligible
             raw_in = m["input_cost_per_million_cents"]
             raw_out = m["output_cost_per_million_cents"]
-            in_cost = raw_in if raw_in is not None and raw_in > 0 else (0 if m["free_tier_eligible"] else None)
-            out_cost = raw_out if raw_out is not None and raw_out > 0 else (0 if m["free_tier_eligible"] else None)
+            in_cost = (
+                raw_in
+                if raw_in is not None and raw_in > 0
+                else (0 if m["free_tier_eligible"] else None)
+            )
+            out_cost = (
+                raw_out
+                if raw_out is not None and raw_out > 0
+                else (0 if m["free_tier_eligible"] else None)
+            )
 
             # Check cooldown status for this provider/model/credential
             is_cooling = False
@@ -203,7 +214,9 @@ async def discover_cloud_candidates(
                     is_shared_credential=is_shared,
                     pricing_input_cents_per_million=in_cost,
                     pricing_output_cents_per_million=out_cost,
-                    pricing_provenance="provider_published" if m["source_documentation"] else "estimated",
+                    pricing_provenance="provider_published"
+                    if m["source_documentation"]
+                    else "estimated",
                     pricing_updated_at=m["updated_at"],
                     free_tier_eligible=bool(m["free_tier_eligible"]),
                     is_cooling_down=is_cooling,

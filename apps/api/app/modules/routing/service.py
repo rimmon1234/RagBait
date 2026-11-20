@@ -10,9 +10,8 @@ from uuid import UUID, uuid4
 
 from app.core.config import settings
 from app.core.database import get_pool
-from app.core.errors import AuthorizationError, BadRequestError, ConflictError, NotFoundError
+from app.core.errors import BadRequestError, ConflictError, NotFoundError
 from app.modules.llm_gateway.schemas import ChatCompletionRequest, ChatCompletionResponse
-from app.modules.llm_gateway.service import get_model, get_provider
 from app.modules.llm_gateway.token_estimation import estimate_generation_tokens
 from app.modules.routing.discovery import discover_all_candidates
 from app.modules.routing.executor import (
@@ -24,8 +23,6 @@ from app.modules.routing.policy import filter_candidates, rank_candidates
 from app.modules.routing.schemas import (
     RouteDecision,
     RoutePreviewResponse,
-    RoutingCandidate,
-    RoutingMode,
 )
 
 logger = logging.getLogger("ragbait.routing.service")
@@ -107,7 +104,9 @@ async def route_and_dispatch(
     await check_user_idempotency(user_id, req.idempotency_key, payload_hash)
 
     # 2. Resolve target model preference
-    preferred_default = DEFAULT_COMMUNITY_MODEL if routing_mode == "community_only" else DEFAULT_CLOUD_MODEL
+    preferred_default = (
+        DEFAULT_COMMUNITY_MODEL if routing_mode == "community_only" else DEFAULT_CLOUD_MODEL
+    )
     target_model_id = req.model_id
 
     # 3. Community Consent Verification
@@ -165,16 +164,22 @@ async def route_and_dispatch(
 
     if not eligible:
         # Formulate descriptive error based on filter rejection reasons
-        rejection_reasons = {r.rejection_code: r.rejection_reason for r in filter_results if not r.eligible}
+        rejection_reasons = {
+            r.rejection_code: r.rejection_reason for r in filter_results if not r.eligible
+        }
         if "NO_ELIGIBLE_CREDENTIAL" in rejection_reasons:
             raise NotFoundError(
                 f"No active, authorized API credential available for provider '{req.provider_id or 'cloud'}'. "
                 "Please configure an API key in Credential Management."
             )
         if "COMMUNITY_CONCURRENCY_EXHAUSTED" in rejection_reasons:
-            raise ConflictError("Community nodes are currently at peak capacity. Please retry shortly.")
+            raise ConflictError(
+                "Community nodes are currently at peak capacity. Please retry shortly."
+            )
         if "PROVIDER_COOLDOWN_ACTIVE" in rejection_reasons:
-            raise ConflictError("Requested provider is temporarily cooling down due to upstream rate limits.")
+            raise ConflictError(
+                "Requested provider is temporarily cooling down due to upstream rate limits."
+            )
         raise ConflictError(
             f"No eligible inference sources available. Rejections: {list(rejection_reasons.keys())}"
         )
@@ -190,7 +195,11 @@ async def route_and_dispatch(
     # 8. Safe Pre-Dispatch Fallback Execution Loop
     last_error: Exception | None = None
     for attempt_idx, candidate in enumerate(ranked):
-        decision_reason = "exact_model_match" if candidate.model_id == target_model_id else "deterministic_ranking"
+        decision_reason = (
+            "exact_model_match"
+            if candidate.model_id == target_model_id
+            else "deterministic_ranking"
+        )
         if candidate.free_tier_eligible and (candidate.pricing_input_cents_per_million or 0) == 0:
             decision_reason = "free_tier_priority"
 
@@ -237,11 +246,13 @@ async def route_and_dispatch(
             last_error = pe
             if not pe.is_candidate_specific:
                 # Infrastructure or non-candidate error: halt immediately with ConflictError
-                raise ConflictError(f"Inference dispatch halted: {pe}")
+                raise ConflictError(f"Inference dispatch halted: {pe}") from pe
             continue
 
     if last_error:
-        raise ConflictError(f"All eligible inference candidates failed pre-dispatch admission: {last_error}")
+        raise ConflictError(
+            f"All eligible inference candidates failed pre-dispatch admission: {last_error}"
+        )
     raise ConflictError("No candidate could be executed")
 
 
@@ -251,7 +262,9 @@ async def preview_route(
 ) -> RoutePreviewResponse:
     """Preview prospective route selection without reserving admission or executing."""
     routing_mode = req.routing_mode
-    preferred_default = DEFAULT_COMMUNITY_MODEL if routing_mode == "community_only" else DEFAULT_CLOUD_MODEL
+    preferred_default = (
+        DEFAULT_COMMUNITY_MODEL if routing_mode == "community_only" else DEFAULT_CLOUD_MODEL
+    )
     target_model_id = req.model_id
 
     candidates = await discover_all_candidates(
@@ -289,8 +302,16 @@ async def preview_route(
     )
 
     selected = ranked[0] if ranked else None
-    reason = "exact_model_match" if (selected and selected.model_id == target_model_id) else "deterministic_ranking"
-    if selected and selected.free_tier_eligible and (selected.pricing_input_cents_per_million or 0) == 0:
+    reason = (
+        "exact_model_match"
+        if (selected and selected.model_id == target_model_id)
+        else "deterministic_ranking"
+    )
+    if (
+        selected
+        and selected.free_tier_eligible
+        and (selected.pricing_input_cents_per_million or 0) == 0
+    ):
         reason = "free_tier_priority"
 
     summary: dict[str, int] = {}

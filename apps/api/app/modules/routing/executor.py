@@ -1,8 +1,8 @@
 """Execution engine for committed routing candidates (Cloud and Community)."""
 
 import asyncio
-import json
 import logging
+import secrets
 from collections.abc import AsyncIterator
 from datetime import UTC, datetime, timedelta
 from typing import Any
@@ -10,7 +10,7 @@ from uuid import UUID, uuid4
 
 from app.core.config import settings
 from app.core.database import get_pool
-from app.core.errors import AppError, ConflictError
+from app.core.errors import ConflictError
 from app.core.redis import get_community_redis_run_id
 from app.modules.admission.errors import AdmissionRejectionError
 from app.modules.admission.ledger import mark_outcome_unknown_transactional
@@ -83,14 +83,18 @@ async def execute_cloud_candidate(
     except AdmissionRejectionError as are:
         # Check if candidate-specific (e.g. provider cooldown or provider quota) vs user-wide
         if are.category in ("provider_cooldown", "rate_limited", "quota_exhausted"):
-            logger.info(f"Candidate-specific admission rejection for {candidate.provider_id}: {are}")
+            logger.info(
+                f"Candidate-specific admission rejection for {candidate.provider_id}: {are}"
+            )
             raise PreDispatchCandidateError(str(are), is_candidate_specific=True) from are
         # User-wide limit (e.g. user budget cap, user RPM) cannot be bypassed by another candidate
         raise are
     except Exception as exc:
         err_msg = str(exc)
         is_cand_specific = "credential" in err_msg.lower() or "provider" in err_msg.lower()
-        raise PreDispatchCandidateError(f"Admission reservation failed: {exc}", is_candidate_specific=is_cand_specific) from exc
+        raise PreDispatchCandidateError(
+            f"Admission reservation failed: {exc}", is_candidate_specific=is_cand_specific
+        ) from exc
 
     # 2. Just-In-Time Vault Credential Decryption
     try:
@@ -102,7 +106,10 @@ async def execute_cloud_candidate(
         raw_key = decrypted.raw_key
     except Exception as exc:
         await release_reservation(reservation.reservation_id, reason="vault_decryption_failed")
-        raise PreDispatchCandidateError(f"Vault decryption failed for {candidate.provider_id}: {exc}", is_candidate_specific=True) from exc
+        raise PreDispatchCandidateError(
+            f"Vault decryption failed for {candidate.provider_id}: {exc}",
+            is_candidate_specific=True,
+        ) from exc
 
     # 3. Durable Dispatch Commitment (POST-DISPATCH: NO FALLBACK AFTER THIS POINT!)
     await mark_dispatched(reservation.reservation_id)
@@ -112,6 +119,7 @@ async def execute_cloud_candidate(
     messages_payload = [{"role": m.role, "content": m.content} for m in req.messages]
 
     if req.stream:
+
         async def stream_generator() -> AsyncIterator[str]:
             yield format_sse_event(
                 "generation_started",
@@ -213,7 +221,9 @@ async def execute_cloud_candidate(
             except Exception as exc:
                 logger.warning(f"Mid-stream generation error during {request_id}: {exc}")
                 try:
-                    await mark_outcome_unknown_transactional(reservation.reservation_id, reason="mid_stream_failure")
+                    await mark_outcome_unknown_transactional(
+                        reservation.reservation_id, reason="mid_stream_failure"
+                    )
                 except Exception:
                     pass
                 yield format_sse_event(
@@ -237,9 +247,11 @@ async def execute_cloud_candidate(
             max_output_tokens=token_estimate.reserved_output_tokens,
             top_p=req.params.top_p,
         )
-    except Exception as exc:
+    except Exception:
         try:
-            await mark_outcome_unknown_transactional(reservation.reservation_id, reason="non_streaming_failure")
+            await mark_outcome_unknown_transactional(
+                reservation.reservation_id, reason="non_streaming_failure"
+            )
         except Exception:
             pass
         raise
@@ -247,7 +259,8 @@ async def execute_cloud_candidate(
     usage = gen_result.usage or NormalizedUsage(
         input_tokens=token_estimate.estimated_input_tokens,
         output_tokens=estimate_text_tokens(gen_result.content),
-        total_tokens=token_estimate.estimated_input_tokens + estimate_text_tokens(gen_result.content),
+        total_tokens=token_estimate.estimated_input_tokens
+        + estimate_text_tokens(gen_result.content),
     )
 
     settlement = await settle_reservation(
@@ -330,24 +343,27 @@ async def execute_community_candidate(
 
     # 3. Create authoritative job in PostgreSQL (POST-DISPATCH: NO FALLBACK AFTER THIS POINT!)
     try:
-        job = await comm_repo.create_job(
+        await comm_repo.create_job(
             requester_id=user_id,
             node_id=node_id,
             model_name=candidate.model_id,
             payload_digest=payload_digest,
             auth_key_id=settings.COMMUNITY_KEY_ID,
-            consent_policy_version=req.community_consent_version or settings.COMMUNITY_CONSENT_POLICY_VERSION,
+            consent_policy_version=req.community_consent_version
+            or settings.COMMUNITY_CONSENT_POLICY_VERSION,
             hard_deadline_at=hard_deadline_at,
             job_id=job_id,
             redis_run_id=redis_run_id,
         )
     except Exception as exc:
         await comm_streams.release_node_concurrency(node_id, job_id)
-        raise PreDispatchCandidateError(f"Failed to record community job: {exc}", is_candidate_specific=False) from exc
+        raise PreDispatchCandidateError(
+            f"Failed to record community job: {exc}", is_candidate_specific=False
+        ) from exc
 
     # 4. Sign ticket & Enqueue into dedicated volatile Redis Stream
     # (FastAPI WebSocket worker reads and forwards to Node Agent over outbound WSS)
-    auth_nonce = comm_crypto.generate_challenge_nonce()
+    auth_nonce = secrets.token_hex(16)
     sig = comm_crypto.sign_job_authorization(
         job_id=job_id,
         node_id=node_id,
@@ -371,10 +387,13 @@ async def execute_community_candidate(
         key_id=settings.COMMUNITY_KEY_ID,
     )
 
-    await comm_streams.enqueue_job_dispatch(node_id=node_id, job_id=job_id, authorization=auth, payload=payload)
+    await comm_streams.enqueue_job_dispatch(
+        node_id=node_id, job_id=job_id, authorization=auth, payload=payload
+    )
 
     # 5. Stream results
     if req.stream:
+
         async def community_stream_generator() -> AsyncIterator[str]:
             yield format_sse_event(
                 "generation_started",
@@ -409,8 +428,12 @@ async def execute_community_candidate(
                         if c["done"]:
                             # Terminal frame reached
                             stats = c.get("stats") or {}
-                            input_tokens = stats.get("input_tokens", token_estimate.estimated_input_tokens)
-                            output_tokens = stats.get("output_tokens", estimate_text_tokens(collected_text))
+                            input_tokens = stats.get(
+                                "input_tokens", token_estimate.estimated_input_tokens
+                            )
+                            output_tokens = stats.get(
+                                "output_tokens", estimate_text_tokens(collected_text)
+                            )
 
                             yield format_sse_event(
                                 "usage",
@@ -438,13 +461,19 @@ async def execute_community_candidate(
 
                     # Check DB status for cancellation / failure
                     db_job = await comm_repo.get_job_by_id(job_id)
-                    if db_job and db_job["status"] in ("CANCELLED", "FAILED", "EXPIRED", "OUTCOME_UNKNOWN"):
+                    if db_job and db_job["status"] in (
+                        "CANCELLED",
+                        "FAILED",
+                        "EXPIRED",
+                        "OUTCOME_UNKNOWN",
+                    ):
                         yield format_sse_event(
                             "generation_error",
                             {
                                 "request_id": request_id,
                                 "error_code": db_job["status"],
-                                "message": db_job.get("failure_details") or "Community execution halted",
+                                "message": db_job.get("failure_details")
+                                or "Community execution halted",
                             },
                         )
                         return
@@ -488,7 +517,9 @@ async def execute_community_candidate(
 
             db_job = await comm_repo.get_job_by_id(job_id)
             if db_job and db_job["status"] in ("CANCELLED", "FAILED", "EXPIRED", "OUTCOME_UNKNOWN"):
-                raise ConflictError(f"Community job terminated with status {db_job['status']}: {db_job.get('failure_details')}")
+                raise ConflictError(
+                    f"Community job terminated with status {db_job['status']}: {db_job.get('failure_details')}"
+                )
 
             await asyncio.sleep(0.2)
             iters += 1

@@ -1,7 +1,7 @@
 """Schemas and data structures for Unified Intelligent Inference Routing (M2.9)."""
 
 from datetime import datetime
-from typing import Any, Literal
+from typing import Literal
 from uuid import UUID
 
 from pydantic import BaseModel, Field

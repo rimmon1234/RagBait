@@ -4,13 +4,19 @@ from collections.abc import AsyncIterator
 from unittest.mock import AsyncMock, patch
 from uuid import UUID, uuid4
 
-import httpx
 import pytest
 
 from app.core.database import close_db_pool, get_pool, init_db_pool
 from app.core.dependencies import get_current_profile, get_current_user
 from app.core.errors import ConflictError
-from app.core.redis import close_redis, get_redis, init_redis
+from app.core.redis import (
+    close_community_redis,
+    close_redis,
+    get_community_redis,
+    get_redis,
+    init_community_redis,
+    init_redis,
+)
 from app.core.security import AuthenticatedUser
 from app.main import app
 from app.modules.admission.errors import AdmissionRejectionError
@@ -28,6 +34,7 @@ from tests.conftest import create_test_jwt, make_test_profile
 
 CREATED_TEST_USERS: list[UUID] = []
 CREATED_TEST_CREDS: list[UUID] = []
+CREATED_TEST_NODES: list[UUID] = []
 
 
 @pytest.fixture(autouse=True)
@@ -35,6 +42,7 @@ async def setup_test_environment():
     await init_db_pool()
     await init_vault_pool()
     await init_redis()
+    await init_community_redis()
     redis_conn = get_redis()
     if redis_conn:
         try:
@@ -43,6 +51,14 @@ async def setup_test_environment():
             all_keys = (rate_keys or []) + (conc_keys or [])
             if all_keys:
                 await redis_conn.delete(*all_keys)
+        except Exception:
+            pass
+    cr_conn = get_community_redis()
+    if cr_conn:
+        try:
+            comm_keys = await cr_conn.keys("ragbait:comm:*") + await cr_conn.keys("stream:node:*")
+            if comm_keys:
+                await cr_conn.delete(*comm_keys)
         except Exception:
             pass
     yield
@@ -57,7 +73,24 @@ async def setup_test_environment():
                 await redis_conn.delete(*all_keys)
         except Exception:
             pass
+    cr_conn = get_community_redis()
+    if cr_conn:
+        try:
+            comm_keys = await cr_conn.keys("ragbait:comm:*") + await cr_conn.keys("stream:node:*")
+            if comm_keys:
+                await cr_conn.delete(*comm_keys)
+        except Exception:
+            pass
     pool = get_pool()
+    if CREATED_TEST_NODES:
+        try:
+            async with pool.acquire() as conn:
+                await conn.execute(
+                    "DELETE FROM public.community_nodes WHERE id = ANY($1)", CREATED_TEST_NODES
+                )
+        except Exception:
+            pass
+        CREATED_TEST_NODES.clear()
     if CREATED_TEST_CREDS:
         try:
             async with pool.acquire() as conn:
@@ -77,6 +110,7 @@ async def setup_test_environment():
     await close_vault_pool()
     await close_db_pool()
     await close_redis()
+    await close_community_redis()
 
 
 async def create_db_user(
@@ -179,7 +213,10 @@ async def test_route_and_dispatch_auto_mode_streaming():
         idempotency_key=f"idem-auto-{uuid4().hex[:8]}",
     )
 
-    with patch("app.modules.llm_gateway.providers.gemini.GeminiAdapter.stream", side_effect=_mock_stream_generator):
+    with patch(
+        "app.modules.llm_gateway.providers.gemini.GeminiAdapter.stream",
+        side_effect=_mock_stream_generator,
+    ):
         result, is_streaming, decision = await route_and_dispatch(user_id=user_id, req=req)
 
         assert is_streaming is True
@@ -229,7 +266,10 @@ async def test_server_controlled_default_model_when_omitted():
     )
     assert req.model_id is None
 
-    with patch("app.modules.llm_gateway.providers.gemini.GeminiAdapter.stream", side_effect=_mock_stream_generator):
+    with patch(
+        "app.modules.llm_gateway.providers.gemini.GeminiAdapter.stream",
+        side_effect=_mock_stream_generator,
+    ):
         result, is_streaming, decision = await route_and_dispatch(user_id=user_id, req=req)
 
         assert decision.model_id == "gemini-3.8-flash"
@@ -278,7 +318,10 @@ async def test_route_and_dispatch_non_streaming():
         resolved_model="gemini-3.8-flash",
     )
 
-    with patch("app.modules.llm_gateway.providers.gemini.GeminiAdapter.generate", AsyncMock(return_value=mock_gen_result)):
+    with patch(
+        "app.modules.llm_gateway.providers.gemini.GeminiAdapter.generate",
+        AsyncMock(return_value=mock_gen_result),
+    ):
         result, is_streaming, decision = await route_and_dispatch(user_id=user_id, req=req)
 
         assert is_streaming is False
@@ -319,7 +362,10 @@ async def test_idempotency_key_payload_hash_conflict():
         idempotency_key=shared_key,
     )
 
-    with patch("app.modules.llm_gateway.providers.gemini.GeminiAdapter.stream", side_effect=_mock_stream_generator):
+    with patch(
+        "app.modules.llm_gateway.providers.gemini.GeminiAdapter.stream",
+        side_effect=_mock_stream_generator,
+    ):
         result, _, _ = await route_and_dispatch(user_id=user_id, req=req_1)
         # Drain stream so reservation commits
         async for _ in result:
@@ -378,7 +424,10 @@ async def test_idempotency_cross_user_isolation():
         idempotency_key=same_key,
     )
 
-    with patch("app.modules.llm_gateway.providers.gemini.GeminiAdapter.stream", side_effect=_mock_stream_generator):
+    with patch(
+        "app.modules.llm_gateway.providers.gemini.GeminiAdapter.stream",
+        side_effect=_mock_stream_generator,
+    ):
         res_a, _, _ = await route_and_dispatch(user_id=user_a, req=req_a)
         async for _ in res_a:
             pass
@@ -442,13 +491,137 @@ async def test_pre_dispatch_fallback_on_candidate_specific_error():
             )
         # Next eligible provider (Groq) succeeds
         from app.modules.admission.service import reserve_generation as real_reserve
+
         return await real_reserve(admission_req)
 
     with patch("app.modules.routing.executor.reserve_generation", side_effect=mock_reserve):
-        with patch("app.modules.llm_gateway.providers.groq.GroqAdapter.stream", side_effect=_mock_stream_generator):
+        with patch(
+            "app.modules.llm_gateway.providers.groq.GroqAdapter.stream",
+            side_effect=_mock_stream_generator,
+        ):
             result, is_streaming, decision = await route_and_dispatch(user_id=user_id, req=req)
 
             assert is_streaming is True
             # Verified that it fell back to groq
             assert decision.provider_id == "groq"
             assert call_count >= 2
+
+
+@pytest.mark.asyncio
+async def test_route_and_dispatch_community_candidate():
+    """Verify end-to-end community candidate execution through unified router."""
+    import json
+
+    from cryptography.hazmat.primitives.asymmetric import ed25519
+    from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
+
+    from app.core.config import settings
+    from app.modules.community import crypto as comm_crypto
+    from app.modules.community import repository as comm_repo
+
+    requester_id = await create_db_user(email="comm_requester@studyhub.edu")
+    contributor_id = await create_db_user(email="comm_contributor@studyhub.edu")
+
+    node_priv = ed25519.Ed25519PrivateKey.generate()
+    node_pub_hex = node_priv.public_key().public_bytes(Encoding.Raw, PublicFormat.Raw).hex()
+    session_id = str(uuid4())
+
+    pool = get_pool()
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow(
+            """
+            INSERT INTO public.community_nodes (
+                owner_id, public_key, display_name, status, sharing_enabled,
+                max_concurrent_jobs, max_execution_duration, last_seen_at
+            )
+            VALUES ($1, $2, 'Station 1', 'active', true, 2, 120, now())
+            RETURNING id
+            """,
+            contributor_id,
+            node_pub_hex,
+        )
+        assert row is not None
+        node_id = row["id"]
+        CREATED_TEST_NODES.append(node_id)
+
+    # Register active session and sync llama3.2:3b enabled
+    await comm_repo.register_node_session(node_id, session_id)
+    await comm_repo.sync_node_models(node_id, [{"model_name": "llama3.2:3b"}])
+    async with pool.acquire() as conn:
+        await conn.execute(
+            "UPDATE public.community_node_models SET enabled = true WHERE node_id = $1 AND model_name = $2",
+            node_id,
+            "llama3.2:3b",
+        )
+
+    # Build completion request
+    prompt_text = "What is active learning?"
+    req = ChatCompletionRequest(
+        messages=[ChatMessage(role="user", content=prompt_text)],
+        routing_mode="community_only",
+        model="llama3.2:3b",
+        community_opt_in=True,
+        community_consent_version=settings.COMMUNITY_CONSENT_POLICY_VERSION,
+        stream=True,
+        idempotency_key=f"idem-comm-{uuid4().hex[:8]}",
+    )
+
+    # Execute through unified routing
+    result, is_streaming, decision = await route_and_dispatch(user_id=requester_id, req=req)
+
+    assert is_streaming is True
+    assert decision.selected_source == "community"
+    assert decision.provider_id == "ollama"
+    assert decision.model_id == "llama3.2:3b"
+    assert decision.node_id == node_id
+
+    # 1. Verify PostgreSQL job state
+    async with pool.acquire() as conn:
+        job_row = await conn.fetchrow(
+            "SELECT * FROM public.community_inference_jobs WHERE requester_id = $1 AND node_id = $2",
+            requester_id,
+            node_id,
+        )
+        assert job_row is not None
+        assert job_row["status"] == "QUEUED"
+        assert job_row["model_name"] == "llama3.2:3b"
+        job_id = job_row["id"]
+
+    # 2. Verify Redis Stream dispatch message
+    cr = get_community_redis()
+    assert cr is not None
+    stream_key = f"stream:node:{node_id}:jobs"
+    messages = await cr.xrange(stream_key)
+    assert len(messages) >= 1
+    msg_id, msg_data = messages[-1]
+    assert msg_data["job_id"] == str(job_id)
+
+    # 3. Verify signed authorization payload & signature validity
+    auth_data = json.loads(msg_data["authorization"])
+    assert auth_data["job_id"] == str(job_id)
+    assert auth_data["node_id"] == str(node_id)
+    assert auth_data["model_name"] == "llama3.2:3b"
+    assert len(auth_data["auth_nonce"]) == 32  # 16 bytes = 32 hex chars (128-bit)
+    assert len(auth_data["signature"]) == 128  # Ed25519 signature in hex
+
+    is_sig_valid = comm_crypto.verify_job_authorization(
+        signature_hex=auth_data["signature"],
+        job_id=job_id,
+        node_id=node_id,
+        model_name="llama3.2:3b",
+        payload_digest=auth_data["payload_digest"],
+        max_output_tokens=auth_data["max_output_tokens"],
+        hard_deadline_ts=auth_data["hard_deadline_ts"],
+        auth_nonce=auth_data["auth_nonce"],
+    )
+    assert is_sig_valid is True
+
+    # 4. Verify ZSET concurrency reservation acquired
+    zset_key = f"ragbait:comm:node:{node_id}:reservations"
+    score = await cr.zscore(zset_key, str(job_id))
+    assert score is not None
+
+    # 5. Verify generation_started event can be yielded without error
+    first_chunk = await anext(result)
+    assert "generation_started" in first_chunk
+    assert str(job_id) in first_chunk
