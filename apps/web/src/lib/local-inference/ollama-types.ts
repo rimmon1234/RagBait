@@ -91,7 +91,23 @@ export interface OllamaUsageStats {
   tokensPerSecond: number;
 }
 
-export type OllamaConnectionState = "checking" | "connected" | "disconnected" | "cors_blocked";
+export type IPAddressSpace = "loopback" | "private" | "public";
+
+export interface LoopbackRequestInit extends RequestInit {
+  targetAddressSpace?: IPAddressSpace;
+}
+
+export type LoopbackPermissionState = "granted" | "prompt" | "denied" | "unsupported";
+
+export type OllamaConnectionState =
+  | "checking"
+  | "connected"
+  | "disconnected"
+  | "connection_failed"
+  | "cors_blocked"
+  | "loopback_permission_required"
+  | "loopback_permission_denied"
+  | "insecure_context";
 
 export interface OllamaConnectionInfo {
   state: OllamaConnectionState;

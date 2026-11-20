@@ -348,5 +348,19 @@ Historical usage accounting is safeguarded against manipulation:
 ### 8.5 Client-Side Abort & Resource Management
 - **Immediate Cancellation**: Every generation request is tied to a standard DOM `AbortController`. When the user clicks "Stop" or navigates away, the underlying HTTP stream and reader are immediately closed, freeing GPU and CPU compute on the student's hardware.
 
+### 8.6 Modern Chrome Local Network Access (LNA) & Address Space Declaration
+- **`targetAddressSpace: "loopback"`**: In accordance with the W3C Local Network Access specification, all local loopback requests declare `targetAddressSpace: "loopback"`.
+- **User Gesture Enforcement**: When the browser permission state for `"loopback-network"` is `"prompt"`, RagBait never initiates background or automatic loopback fetches on page load. A user gesture (clicking "Connect to Local Ollama") is strictly required before the first local network request is dispatched.
+- **Secure Context Enforcement**: Loopback access is restricted to secure top-level contexts (`HTTPS` or localhost development).
+
+### 8.7 Reasoning / Thinking Token Isolation
+- **Non-Exposure of Raw Reasoning**: Chunks containing internal model reasoning (e.g. `message.thinking` from reasoning-capable local models such as Qwen 3 or DeepSeek R1) are strictly ignored during stream processing.
+- **Zero Logging or Storage of Thinking**: Internal thinking deltas are neither saved into conversation memory, rendered into the DOM, nor forwarded to telemetry or logs. Only user-facing `message.content` tokens are rendered.
+
+### 8.8 Local-Only Enforcement & Cloud Model Disclosures
+- **Ollama Cloud Routing Boundary**: Standard Ollama distributions may allow proxying or routing queries to cloud-hosted models if configured.
+- **Strict Local Execution Policy**: RagBait explicitly documents that users desiring 100% offline privacy must configure Ollama with `OLLAMA_NO_CLOUD=1` and `disable_ollama_cloud: true`. Because Ollama's local `/api/tags` endpoint does not provide a standardized `remote` indicator, RagBait discloses this limitation and instructs users to bind Ollama strictly to loopback and disable cloud fallback.
+
+
 
 

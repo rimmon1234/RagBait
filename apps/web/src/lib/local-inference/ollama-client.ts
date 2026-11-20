@@ -1,6 +1,8 @@
+import { isSecureLoopbackContext, queryLoopbackPermission } from "./lna-permissions";
 import { classifyFetchError, OllamaError } from "./ollama-errors";
 import { parseNDJSONStream } from "./ollama-stream";
 import type {
+  LoopbackRequestInit,
   OllamaChatChunk,
   OllamaChatMessage,
   OllamaChatOptions,
@@ -22,11 +24,15 @@ export const OLLAMA_BASE_URL = "http://127.0.0.1:11434";
 
 /**
  * Isolated fetch helper targeting local Ollama daemon.
- * Strictly omits credentials and rejects redirects to protect student tokens and cookies.
+ * Enforces:
+ * 1. credentials: "omit" - never sends cookies or Supabase auth headers.
+ * 2. redirect: "error" - rejects any HTTP redirect to prevent traversal attacks.
+ * 3. targetAddressSpace: "loopback" - declares loopback address space for Chrome Local Network Access (LNA).
+ * 4. cache: "no-store" - prevents browser caching of local API responses.
  */
 async function ollamaFetch(
   path: string,
-  options: RequestInit = {}
+  options: LoopbackRequestInit = {}
 ): Promise<Response> {
   const url = `${OLLAMA_BASE_URL}${path}`;
 
@@ -35,13 +41,14 @@ async function ollamaFetch(
     headers.set("Content-Type", "application/json");
   }
 
-  // Strictly enforce credentials omit and redirect error
-  const init: RequestInit = {
+  // Type-safe declaration of loopback address space compatible with modern browser LNA
+  const init: LoopbackRequestInit = {
     ...options,
     mode: "cors",
     credentials: "omit",
     redirect: "error",
     cache: "no-store",
+    targetAddressSpace: "loopback",
     headers,
   };
 
@@ -55,9 +62,28 @@ async function ollamaFetch(
 export class OllamaClient {
   /**
    * Probes the Ollama daemon for reachability and version.
-   * Differentiates between connected, disconnected (not running), and CORS blocked.
+   * Differentiates between connected, disconnected, permission denied, and opaque connection failures.
    */
   async checkConnection(signal?: AbortSignal): Promise<OllamaConnectionInfo> {
+    // 1. Verify secure context requirement
+    if (!isSecureLoopbackContext()) {
+      return {
+        state: "insecure_context",
+        error:
+          "Local Network Access requires a secure HTTPS origin or localhost development context.",
+      };
+    }
+
+    // 2. Query permission state if supported
+    const permResult = await queryLoopbackPermission();
+    if (permResult.state === "denied") {
+      return {
+        state: "loopback_permission_denied",
+        error:
+          "Browser Local Network Access permission was denied for http://127.0.0.1:11434.",
+      };
+    }
+
     try {
       const res = await ollamaFetch("/api/version", {
         method: "GET",
@@ -67,7 +93,7 @@ export class OllamaClient {
       if (!res.ok) {
         return {
           state: "disconnected",
-          error: `Ollama returned HTTP ${res.status}: ${res.statusText}`,
+          error: `Ollama daemon returned HTTP ${res.status}: ${res.statusText}`,
         };
       }
 
@@ -81,20 +107,32 @@ export class OllamaClient {
         if (err.code === "ABORTED") {
           return { state: "disconnected", error: "Connection probe canceled" };
         }
-        if (err.code === "CORS_BLOCKED") {
+
+        // Re-check permission state after failed fetch: user might have clicked Block in prompt
+        const postPermResult = await queryLoopbackPermission();
+        if (postPermResult.state === "denied") {
           return {
-            state: "cors_blocked",
+            state: "loopback_permission_denied",
             error:
-              "Unable to reach http://127.0.0.1:11434. Ensure Ollama is running and OLLAMA_ORIGINS is configured to allow this browser origin.",
+              "Browser Local Network Access permission was denied for http://127.0.0.1:11434.",
           };
         }
+
+        if (err.code === "CONNECTION_FAILED") {
+          return {
+            state: "connection_failed",
+            error: err.message,
+          };
+        }
+
         return {
           state: "disconnected",
           error: err.message,
         };
       }
+
       return {
-        state: "disconnected",
+        state: "connection_failed",
         error: err instanceof Error ? err.message : "Unknown connection error",
       };
     }
@@ -148,13 +186,15 @@ export class OllamaClient {
 
   /**
    * Initiates a streaming chat completion with the local Ollama instance (/api/chat).
-   * Parses the NDJSON stream in real-time, calling callbacks for deltas and final stats.
+   *
+   * NOTE: In accordance with M2.7 audit requirements, raw thinking/reasoning tokens
+   * (e.g. from Qwen 3 or DeepSeek R1) are strictly ignored and never exposed to the UI,
+   * caller callbacks, state, logs, or analytics. Only ordinary message.content is delivered.
    */
   async chatStream(
     request: OllamaChatRequest,
     callbacks: {
       onDelta?: (content: string) => void;
-      onThinkingDelta?: (thinking: string) => void;
       onStats?: (stats: OllamaUsageStats) => void;
     },
     signal?: AbortSignal
@@ -192,12 +232,9 @@ export class OllamaClient {
     await parseNDJSONStream<OllamaChatChunk>(
       res.body,
       (chunk) => {
+        // Exclusively process and yield user-visible content; ignore chunk.message?.thinking
         if (chunk.message?.content && callbacks.onDelta) {
           callbacks.onDelta(chunk.message.content);
-        }
-
-        if (chunk.message?.thinking && callbacks.onThinkingDelta) {
-          callbacks.onThinkingDelta(chunk.message.thinking);
         }
 
         if (chunk.done && callbacks.onStats) {
@@ -224,5 +261,5 @@ export class OllamaClient {
   }
 }
 
-// Export singleton instance for convenience
+// Export singleton instance
 export const ollamaClient = new OllamaClient();

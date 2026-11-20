@@ -303,10 +303,11 @@ flowchart TD
    - Direct Browser-to-Local Loopback Architecture: Client browser connects directly to `http://127.0.0.1:11434` via native fetch API.
    - Zero Cloud Backend Relay: Completely bypasses the cloud FastAPI backend, Supabase database, Redis queue, and public network. Prompts and completions never leave the user's machine.
    - Fixed Loopback Isolation: Hardcoded to `http://127.0.0.1:11434` with `credentials: "omit"` and `redirect: "error"`. No cookies or JWTs sent to Ollama daemon.
-   - Native Ollama REST & NDJSON Streaming: Robust client-side parser handling split chunks, multibyte UTF-8 codepoints across boundaries, and `AbortController` cancellation. Supports reasoning/thinking deltas (Qwen 3, DeepSeek R1).
+   - Native Ollama REST & NDJSON Streaming: Robust client-side parser handling split chunks, multibyte UTF-8 codepoints across boundaries, and `AbortController` cancellation. Safely ignores internal reasoning/thinking tokens (Qwen 3, DeepSeek R1) to deliver clean, user-facing completions without raw thinking exposure.
+   - Modern Chrome Local Network Access (LNA): Type-safe `targetAddressSpace: "loopback"` declaration, explicit user-gesture requirement when permission is `prompt`, and Site Settings remediation for `denied`.
    - Zero Persistence & Non-Billable: Ephemeral in-memory React state only; no database tables, no cloud ledger deductions, and no contributor credit attribution.
    - Protected Next.js Route (`/local-inference`): Full-featured playground with live connection state, local model discovery, parameter drawer (system prompt, temperature), prompt streaming, and on-device token throughput telemetry (tokens/sec, prompt/eval counts).
-   - Multi-Platform Setup Documentation: Comprehensive guide (`docs/M2_7_OLLAMA_SETUP.md`) for Windows, macOS, and Linux `OLLAMA_ORIGINS` CORS configuration.
+   - Multi-Platform Setup Documentation: Comprehensive guide (`docs/M2_7_OLLAMA_SETUP.md`) for Windows, macOS, and Linux `OLLAMA_ORIGINS` CORS configuration and `OLLAMA_NO_CLOUD=1` local-only enforcement.
 8. **M2.8 — Community-Shared Local Nodes (Mode B)**:
    - Ed25519 asymmetric handshake (`CHALLENGE`, `RESPONSE`, `AUTH_OK`) with Redis single-use nonce.
    - Server-signed job authorization tokens (`job_token`).

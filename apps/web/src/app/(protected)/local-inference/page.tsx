@@ -6,14 +6,14 @@ import {
   AlertCircle,
   AlertTriangle,
   CheckCircle2,
-  ChevronDown,
-  ChevronRight,
   Cpu,
   HelpCircle,
   Loader2,
+  Lock,
   RefreshCw,
   Send,
   Settings2,
+  ShieldAlert,
   ShieldCheck,
   Square,
   Terminal,
@@ -21,6 +21,7 @@ import {
   Zap,
 } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
+import { isSecureLoopbackContext, queryLoopbackPermission } from "@/lib/local-inference/lna-permissions";
 import { ollamaClient } from "@/lib/local-inference/ollama-client";
 import { isAbortError } from "@/lib/local-inference/ollama-errors";
 import type {
@@ -34,7 +35,6 @@ interface Message {
   id: string;
   role: "user" | "assistant";
   content: string;
-  thinking?: string;
 }
 
 export default function LocalInferencePage() {
@@ -58,7 +58,6 @@ export default function LocalInferencePage() {
   // Configuration drawer state
   const [showConfig, setShowConfig] = useState(false);
   const [showSetupGuide, setShowSetupGuide] = useState(false);
-  const [showThinking, setShowThinking] = useState(false);
   const [systemPrompt, setSystemPrompt] = useState(
     "You are a helpful, precise academic and coding assistant running locally on the student's machine."
   );
@@ -109,7 +108,7 @@ export default function LocalInferencePage() {
     checkAuth();
   }, [router]);
 
-  // Check Ollama connection and load models
+  // Connect to local Ollama daemon and discover models
   const refreshOllama = useCallback(async () => {
     setIsRefreshing(true);
     setConnectionState("checking");
@@ -135,10 +134,59 @@ export default function LocalInferencePage() {
     setIsRefreshing(false);
   }, []);
 
+  // Initialize permission state and determine whether auto-connect is permitted
   useEffect(() => {
-    if (!authLoading) {
-      refreshOllama();
-    }
+    if (authLoading) return;
+
+    let permissionStatusRef: PermissionStatus | null = null;
+    let isMounted = true;
+
+    const initConnection = async () => {
+      // 1. Check secure context requirement
+      if (!isSecureLoopbackContext()) {
+        if (isMounted) setConnectionState("insecure_context");
+        return;
+      }
+
+      // 2. Query Chrome Local Network Access (LNA) permission
+      const permResult = await queryLoopbackPermission();
+      if (!isMounted) return;
+
+      if (permResult.permissionStatus) {
+        permissionStatusRef = permResult.permissionStatus;
+        permissionStatusRef.addEventListener("change", () => {
+          if (!isMounted) return;
+          const updatedState = permissionStatusRef?.state;
+          if (updatedState === "granted") {
+            refreshOllama();
+          } else if (updatedState === "denied") {
+            setConnectionState("loopback_permission_denied");
+          } else if (updatedState === "prompt") {
+            setConnectionState("loopback_permission_required");
+          }
+        });
+      }
+
+      if (permResult.state === "prompt") {
+        // Modern Chrome requirement: NEVER initiate the first local request automatically
+        // when permission state is 'prompt'. Wait for explicit user gesture!
+        setConnectionState("loopback_permission_required");
+      } else if (permResult.state === "denied") {
+        setConnectionState("loopback_permission_denied");
+      } else {
+        // 'granted' or 'unsupported' (Safari, Firefox, dev environments without LNA flags)
+        refreshOllama();
+      }
+    };
+
+    initConnection();
+
+    return () => {
+      isMounted = false;
+      if (permissionStatusRef) {
+        permissionStatusRef.onchange = null;
+      }
+    };
   }, [authLoading, refreshOllama]);
 
   // Scroll to bottom when messages update
@@ -164,7 +212,6 @@ export default function LocalInferencePage() {
       id: assistantMessageId,
       role: "assistant",
       content: "",
-      thinking: "",
     };
 
     const updatedMessages = [...messages, userMessage];
@@ -199,15 +246,6 @@ export default function LocalInferencePage() {
             setMessages((prev) =>
               prev.map((m) =>
                 m.id === assistantMessageId ? { ...m, content: m.content + delta } : m
-              )
-            );
-          },
-          onThinkingDelta: (thinkingDelta) => {
-            setMessages((prev) =>
-              prev.map((m) =>
-                m.id === assistantMessageId
-                  ? { ...m, thinking: (m.thinking || "") + thinkingDelta }
-                  : m
               )
             );
           },
@@ -279,7 +317,7 @@ export default function LocalInferencePage() {
           </div>
           <p className="mt-1 text-sm text-gray-500">
             Execute open-source models on your local hardware via Ollama. Zero server routing,
-            zero latency cost, and zero data leaves your device.
+            zero latency cost, and zero prompt data leaves your device.
           </p>
         </div>
 
@@ -302,7 +340,7 @@ export default function LocalInferencePage() {
         </div>
       </div>
 
-      {/* Connection Status Banner */}
+      {/* Connection Status Banners */}
       {connectionState === "connected" ? (
         <div className="mb-6 flex items-center justify-between rounded-lg border border-emerald-200 bg-emerald-50/70 px-4 py-3 text-sm text-emerald-800">
           <div className="flex items-center gap-2.5">
@@ -319,30 +357,91 @@ export default function LocalInferencePage() {
             Direct browser-to-local loopback active
           </span>
         </div>
-      ) : connectionState === "cors_blocked" ? (
+      ) : connectionState === "loopback_permission_required" ? (
+        <div className="mb-6 rounded-lg border border-blue-200 bg-blue-50 p-4 text-sm text-blue-900">
+          <div className="flex items-start gap-3">
+            <Lock className="h-5 w-5 text-blue-600 shrink-0 mt-0.5" />
+            <div className="flex-1">
+              <p className="font-semibold text-blue-900">
+                Browser Local Network Permission Required
+              </p>
+              <p className="mt-1 text-xs text-blue-800 leading-relaxed">
+                Modern Chrome requires an explicit user click to initiate connection to your local loopback address (<code className="bg-blue-100 px-1 py-0.5 rounded">http://127.0.0.1:11434</code>).
+              </p>
+              <div className="mt-3 flex items-center gap-3">
+                <button
+                  onClick={refreshOllama}
+                  disabled={isRefreshing}
+                  className="rounded-md bg-blue-600 px-4 py-1.5 text-xs font-semibold text-white shadow-xs hover:bg-blue-700 disabled:opacity-50"
+                >
+                  {isRefreshing ? "Connecting..." : "Connect to Local Ollama"}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      ) : connectionState === "loopback_permission_denied" ? (
+        <div className="mb-6 rounded-lg border border-rose-200 bg-rose-50 p-4 text-sm text-rose-900">
+          <div className="flex items-start gap-3">
+            <ShieldAlert className="h-5 w-5 text-rose-600 shrink-0 mt-0.5" />
+            <div className="flex-1">
+              <p className="font-semibold text-rose-900">
+                Loopback Access Blocked by Browser
+              </p>
+              <p className="mt-1 text-xs text-rose-800 leading-relaxed">
+                Your browser denied permission to access <code className="bg-rose-100 px-1 py-0.5 rounded">http://127.0.0.1:11434</code>. To resolve this: Click the Site Settings icon (tune or lock symbol) in your browser address bar, set <strong>Local Network</strong> or <strong>Insecure content</strong> to <strong>Allow</strong>, then reload this page.
+              </p>
+              <div className="mt-2.5 flex items-center gap-3">
+                <button
+                  onClick={refreshOllama}
+                  disabled={isRefreshing}
+                  className="rounded-md bg-rose-700 px-3 py-1 text-xs font-medium text-white hover:bg-rose-800"
+                >
+                  Check Permission Again
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      ) : connectionState === "insecure_context" ? (
         <div className="mb-6 rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
           <div className="flex items-start gap-3">
             <AlertTriangle className="h-5 w-5 text-amber-600 shrink-0 mt-0.5" />
             <div className="flex-1">
-              <p className="font-semibold text-amber-900">
-                Ollama Reachable but Blocked by CORS (`OLLAMA_ORIGINS`)
-              </p>
+              <p className="font-semibold text-amber-900">Secure Context (HTTPS) Required</p>
               <p className="mt-1 text-xs text-amber-800 leading-relaxed">
-                Your browser prevented connecting to Ollama at <code className="bg-amber-100 px-1 py-0.5 rounded">http://127.0.0.1:11434</code> because cross-origin requests from this web app are not permitted by your Ollama configuration.
+                Modern browsers strictly require a secure HTTPS origin to communicate with local network services. For local development, access RagBait via <code className="bg-amber-100 px-1 py-0.5 rounded">http://localhost:3000</code> or <code className="bg-amber-100 px-1 py-0.5 rounded">http://127.0.0.1:3000</code>.
               </p>
-              <div className="mt-2.5 flex items-center gap-3">
-                <button
-                  onClick={() => setShowSetupGuide(true)}
-                  className="rounded-md bg-amber-700 px-3 py-1 text-xs font-medium text-white hover:bg-amber-800"
-                >
-                  Configure OLLAMA_ORIGINS
-                </button>
+            </div>
+          </div>
+        </div>
+      ) : connectionState === "connection_failed" ? (
+        <div className="mb-6 rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
+          <div className="flex items-start gap-3">
+            <AlertTriangle className="h-5 w-5 text-amber-600 shrink-0 mt-0.5" />
+            <div className="flex-1">
+              <p className="font-semibold text-amber-900">Cannot Connect to Ollama</p>
+              <p className="mt-1 text-xs text-amber-800 leading-relaxed">
+                Unable to establish a connection with <code className="bg-amber-100 px-1 py-0.5 rounded">http://127.0.0.1:11434</code>. The browser reported an opaque network failure. Please verify each of the following:
+              </p>
+              <ul className="mt-2 list-disc list-inside text-xs text-amber-900 space-y-1">
+                <li>Ollama is running on your machine (<code className="bg-amber-100 px-1 py-0.5 rounded">ollama serve</code>).</li>
+                <li><code className="bg-amber-100 px-1 py-0.5 rounded">OLLAMA_ORIGINS</code> is configured to allow this web origin.</li>
+                <li>Browser Local Network Access is not blocked in Site Settings.</li>
+              </ul>
+              <div className="mt-3 flex items-center gap-3">
                 <button
                   onClick={refreshOllama}
                   disabled={isRefreshing}
-                  className="text-xs font-medium text-amber-900 underline hover:no-underline"
+                  className="rounded-md bg-amber-700 px-3 py-1 text-xs font-medium text-white hover:bg-amber-800"
                 >
                   Retry Connection
+                </button>
+                <button
+                  onClick={() => setShowSetupGuide(true)}
+                  className="text-xs font-medium text-amber-900 underline hover:no-underline"
+                >
+                  View Setup Guide
                 </button>
               </div>
             </div>
@@ -355,7 +454,7 @@ export default function LocalInferencePage() {
             <div className="flex-1">
               <p className="font-semibold text-rose-900">Ollama Daemon Offline</p>
               <p className="mt-1 text-xs text-rose-800 leading-relaxed">
-                Cannot reach Ollama at <code className="bg-rose-100 px-1 py-0.5 rounded">http://127.0.0.1:11434</code>. Please ensure Ollama is installed and running on your computer.
+                The Ollama service returned an error or is offline at <code className="bg-rose-100 px-1 py-0.5 rounded">http://127.0.0.1:11434</code>. Please ensure Ollama is installed and running.
               </p>
               <div className="mt-2.5 flex items-center gap-3">
                 <button
@@ -597,29 +696,6 @@ Environment="OLLAMA_ORIGINS=http://localhost:3000,http://127.0.0.1:3000"`}
                         : "bg-gray-100 text-gray-800 rounded-tl-xs border border-gray-200/80"
                     }`}
                   >
-                    {/* Expandable Thinking Process (for reasoning models like Qwen 3 / DeepSeek R1) */}
-                    {msg.thinking && (
-                      <div className="mb-2.5 rounded-lg border border-purple-200 bg-purple-50/70 p-2.5 text-xs text-purple-900">
-                        <button
-                          type="button"
-                          onClick={() => setShowThinking(!showThinking)}
-                          className="flex items-center gap-1 font-semibold text-purple-800 hover:text-purple-950"
-                        >
-                          {showThinking ? (
-                            <ChevronDown className="h-3.5 w-3.5" />
-                          ) : (
-                            <ChevronRight className="h-3.5 w-3.5" />
-                          )}
-                          <span>Reasoning Process ({msg.thinking.length} chars)</span>
-                        </button>
-                        {showThinking && (
-                          <pre className="mt-2 whitespace-pre-wrap font-sans text-xs text-purple-950 leading-relaxed border-t border-purple-200/60 pt-2">
-                            {msg.thinking}
-                          </pre>
-                        )}
-                      </div>
-                    )}
-
                     <div className="whitespace-pre-wrap font-sans">
                       {msg.content || (isStreaming && msg.role === "assistant" ? "..." : "")}
                     </div>
@@ -766,6 +842,10 @@ Environment="OLLAMA_ORIGINS=http://localhost:3000,http://127.0.0.1:3000"`}
                 <span>Zero cloud budget consumption.</span>
               </li>
             </ul>
+
+            <div className="mt-3.5 pt-3 border-t border-gray-100 text-[11px] text-gray-500 leading-normal">
+              <strong>Local Execution Notice:</strong> For guaranteed offline execution without cloud routing or external web search, run Ollama with <code className="bg-gray-100 px-1 py-0.5 rounded font-mono text-[10px]">OLLAMA_NO_CLOUD=1</code>.
+            </div>
           </div>
         </div>
       </div>

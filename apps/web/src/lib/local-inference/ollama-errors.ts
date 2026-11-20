@@ -3,6 +3,10 @@
  */
 
 export type OllamaErrorCode =
+  | "CONNECTION_FAILED"
+  | "LOOPBACK_PERMISSION_DENIED"
+  | "LOOPBACK_PERMISSION_REQUIRED"
+  | "INSECURE_CONTEXT"
   | "OLLAMA_UNREACHABLE"
   | "CORS_BLOCKED"
   | "MODEL_NOT_FOUND"
@@ -37,7 +41,11 @@ export function isAbortError(err: unknown): boolean {
 
 /**
  * Normalizes an unknown network error when connecting to Ollama.
- * In browser environments, a CORS block or refusal typically produces a TypeError ("Failed to fetch" or "NetworkError").
+ *
+ * NOTE: Modern web browsers strictly redact cross-origin network errors for security reasons.
+ * A failure due to Ollama being stopped, a CORS preflight failure, or a Local Network Access (LNA)
+ * block all result in an identical generic TypeError ("Failed to fetch" or "NetworkError").
+ * We must NOT invent certainty from opaque browser errors by assuming CORS is the only cause.
  */
 export function classifyFetchError(err: unknown): OllamaError {
   if (err instanceof OllamaError) {
@@ -49,11 +57,11 @@ export function classifyFetchError(err: unknown): OllamaError {
     }
 
     const msg = err.message.toLowerCase();
-    // Common browser messages for CORS or connection failure to loopback
+    // Generic opaque browser errors for network failure, connection refused, or blocked fetch
     if (msg.includes("failed to fetch") || msg.includes("networkerror") || msg.includes("load failed")) {
       return new OllamaError(
-        "CORS_BLOCKED",
-        "Unable to connect to Ollama at http://127.0.0.1:11434. Ensure Ollama is running and OLLAMA_ORIGINS allows this web origin.",
+        "CONNECTION_FAILED",
+        "Unable to connect to Ollama at http://127.0.0.1:11434. The browser blocked or failed the network request. Check that the Ollama daemon is running, that OLLAMA_ORIGINS allows this origin, and that browser local network permissions are granted.",
         undefined,
         err
       );

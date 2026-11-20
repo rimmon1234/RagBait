@@ -1,6 +1,7 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import LocalInferencePage from "@/app/(protected)/local-inference/page";
+import * as lnaPermissions from "@/lib/local-inference/lna-permissions";
 import { ollamaClient } from "@/lib/local-inference/ollama-client";
 import type { OllamaTagModel, OllamaUsageStats } from "@/lib/local-inference/ollama-types";
 
@@ -34,6 +35,11 @@ window.HTMLElement.prototype.scrollIntoView = vi.fn();
 describe("LocalInferencePage Component", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+
+    vi.spyOn(lnaPermissions, "isSecureLoopbackContext").mockReturnValue(true);
+    vi.spyOn(lnaPermissions, "queryLoopbackPermission").mockResolvedValue({
+      state: "granted",
+    });
 
     // Default global fetch mock for /api/v1/me
     vi.spyOn(globalThis, "fetch").mockImplementation(async (url) => {
@@ -98,18 +104,64 @@ describe("LocalInferencePage Component", () => {
     expect(select.options[1].text).toContain("qwen2.5-coder:7b");
   });
 
-  it("renders CORS warning banner when connection state is cors_blocked", async () => {
-    vi.spyOn(ollamaClient, "checkConnection").mockResolvedValueOnce({
-      state: "cors_blocked",
-      error: "Unable to reach http://127.0.0.1:11434. Ensure OLLAMA_ORIGINS is configured.",
+  it("requires explicit user click before connecting when LNA permission is 'prompt'", async () => {
+    vi.spyOn(lnaPermissions, "queryLoopbackPermission").mockResolvedValue({
+      state: "prompt",
+    });
+
+    const checkSpy = vi.spyOn(ollamaClient, "checkConnection").mockResolvedValue({
+      state: "connected",
+      version: "0.40.16",
+    });
+    vi.spyOn(ollamaClient, "listModels").mockResolvedValue([]);
+
+    render(<LocalInferencePage />);
+
+    // Must show permission required banner and NOT initiate checkConnection on page load
+    await waitFor(() => {
+      expect(
+        screen.getByText("Browser Local Network Permission Required")
+      ).toBeInTheDocument();
+    });
+
+    expect(checkSpy).not.toHaveBeenCalled();
+
+    // User gesture click on Connect button
+    const connectBtn = screen.getByRole("button", { name: /Connect to Local Ollama/i });
+    fireEvent.click(connectBtn);
+
+    // Now checkConnection is triggered
+    await waitFor(() => {
+      expect(checkSpy).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  it("displays remediation banner when LNA permission is 'denied'", async () => {
+    vi.spyOn(lnaPermissions, "queryLoopbackPermission").mockResolvedValue({
+      state: "denied",
     });
 
     render(<LocalInferencePage />);
 
     await waitFor(() => {
       expect(
-        screen.getByText(/Blocked by CORS \(`OLLAMA_ORIGINS`\)/i)
+        screen.getByText("Loopback Access Blocked by Browser")
       ).toBeInTheDocument();
+      expect(screen.getByText(/Site Settings/i)).toBeInTheDocument();
+    });
+  });
+
+  it("renders neutral connection failed banner when connection fails", async () => {
+    vi.spyOn(ollamaClient, "checkConnection").mockResolvedValueOnce({
+      state: "connection_failed",
+      error: "Opaque fetch failure",
+    });
+
+    render(<LocalInferencePage />);
+
+    await waitFor(() => {
+      expect(screen.getByText("Cannot Connect to Ollama")).toBeInTheDocument();
+      expect(screen.getByText(/OLLAMA_ORIGINS/i)).toBeInTheDocument();
     });
   });
 
@@ -126,13 +178,13 @@ describe("LocalInferencePage Component", () => {
     });
   });
 
-  it("handles prompt submission and streams response tokens", async () => {
+  it("handles prompt submission and ensures thinking fields NEVER appear in rendered UI", async () => {
     const mockModels: OllamaTagModel[] = [
       {
-        name: "llama3.2:3b",
-        model: "llama3.2:3b",
+        name: "qwen3:0.6b",
+        model: "qwen3:0.6b",
         modified_at: "2026-01-01T00:00:00Z",
-        size: 2000000000,
+        size: 520000000,
         digest: "abc",
       },
     ];
@@ -144,41 +196,45 @@ describe("LocalInferencePage Component", () => {
     vi.spyOn(ollamaClient, "listModels").mockResolvedValue(mockModels);
 
     const mockStats: OllamaUsageStats = {
-      totalDurationMs: 1500,
-      loadDurationMs: 50,
-      promptEvalCount: 12,
-      promptEvalDurationMs: 300,
-      evalCount: 45,
-      evalDurationMs: 1150,
-      tokensPerSecond: 39.1,
+      totalDurationMs: 1200,
+      loadDurationMs: 30,
+      promptEvalCount: 15,
+      promptEvalDurationMs: 250,
+      evalCount: 30,
+      evalDurationMs: 920,
+      tokensPerSecond: 32.6,
     };
 
+    // Even if an internal model had thinking tokens, chatStream only passes content deltas
     vi.spyOn(ollamaClient, "chatStream").mockImplementation(
       async (_req, callbacks) => {
-        callbacks.onDelta?.("Hello! ");
-        callbacks.onDelta?.("I am running locally.");
+        callbacks.onDelta?.("Visible assistant response.");
         callbacks.onStats?.(mockStats);
       }
     );
 
     render(<LocalInferencePage />);
 
-    const textarea = await screen.findByPlaceholderText(/Ask llama3.2:3b/i);
-    fireEvent.change(textarea, { target: { value: "Tell me a fun fact" } });
+    const textarea = await screen.findByPlaceholderText(/Ask qwen3:0.6b/i);
+    fireEvent.change(textarea, { target: { value: "Explain gravity" } });
 
     const sendBtn = screen.getByRole("button", { name: /send/i });
     fireEvent.click(sendBtn);
 
     // Verify user prompt and assistant response appear
     await waitFor(() => {
-      expect(screen.getByText("Tell me a fun fact")).toBeInTheDocument();
+      expect(screen.getByText("Explain gravity")).toBeInTheDocument();
       expect(
-        screen.getByText("Hello! I am running locally.")
+        screen.getByText("Visible assistant response.")
       ).toBeInTheDocument();
     });
 
-    // Verify usage statistics card updated
-    expect(screen.getByText("39.1")).toBeInTheDocument();
-    expect(screen.getByText("45")).toBeInTheDocument();
+    // REGRESSION TEST: Thinking/reasoning process must NEVER appear in the rendered document
+    expect(screen.queryByText(/Reasoning Process/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/thinking/i)).not.toBeInTheDocument();
+
+    // Verify usage telemetry
+    expect(screen.getByText("32.6")).toBeInTheDocument();
+    expect(screen.getByText("30")).toBeInTheDocument();
   });
 });

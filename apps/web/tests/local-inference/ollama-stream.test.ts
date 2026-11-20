@@ -147,4 +147,20 @@ describe("parseNDJSONStream", () => {
     });
     expect(results).toHaveLength(1);
   });
+
+  it("safely accepts chunks with message.thinking without breaking stream parsing", async () => {
+    const raw =
+      '{"message":{"role":"assistant","content":"","thinking":"internal thought"}}\n' +
+      '{"message":{"role":"assistant","content":"public answer","thinking":""}}\n' +
+      '{"done":true}\n';
+    const stream = createStream([raw]);
+
+    const results: any[] = [];
+    await parseNDJSONStream(stream, (chunk) => results.push(chunk));
+
+    expect(results).toHaveLength(3);
+    expect(results[0].message.thinking).toBe("internal thought");
+    expect(results[1].message.content).toBe("public answer");
+    expect(results[2].done).toBe(true);
+  });
 });

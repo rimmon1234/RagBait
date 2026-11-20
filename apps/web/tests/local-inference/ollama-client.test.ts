@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import * as lnaPermissions from "@/lib/local-inference/lna-permissions";
 import { OllamaClient, OLLAMA_BASE_URL } from "@/lib/local-inference/ollama-client";
 import { OllamaError } from "@/lib/local-inference/ollama-errors";
 
@@ -8,14 +9,18 @@ describe("OllamaClient", () => {
   beforeEach(() => {
     client = new OllamaClient();
     vi.restoreAllMocks();
+    vi.spyOn(lnaPermissions, "isSecureLoopbackContext").mockReturnValue(true);
+    vi.spyOn(lnaPermissions, "queryLoopbackPermission").mockResolvedValue({
+      state: "granted",
+    });
   });
 
   afterEach(() => {
     vi.restoreAllMocks();
   });
 
-  describe("Endpoint and Security Isolation", () => {
-    it("strictly targets http://127.0.0.1:11434 and enforces credentials omit", async () => {
+  describe("Endpoint, Security and LNA Declaration", () => {
+    it("strictly targets http://127.0.0.1:11434 with targetAddressSpace loopback and credentials omit", async () => {
       const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
         new Response(JSON.stringify({ version: "0.40.16" }), { status: 200 })
       );
@@ -28,8 +33,9 @@ describe("OllamaClient", () => {
       expect(init?.credentials).toBe("omit");
       expect(init?.redirect).toBe("error");
       expect(init?.mode).toBe("cors");
+      expect((init as any)?.targetAddressSpace).toBe("loopback");
 
-      // Verify no Auth headers are leaked
+      // Verify no Auth headers or cookies are leaked
       const headers = new Headers(init?.headers);
       expect(headers.has("Authorization")).toBe(false);
       expect(headers.has("Cookie")).toBe(false);
@@ -47,14 +53,35 @@ describe("OllamaClient", () => {
       expect(res.version).toBe("0.4.0");
     });
 
-    it("returns cors_blocked when fetch throws TypeError (Failed to fetch)", async () => {
+    it("returns insecure_context when origin is not secure HTTPS or localhost", async () => {
+      vi.spyOn(lnaPermissions, "isSecureLoopbackContext").mockReturnValue(false);
+
+      const res = await client.checkConnection();
+      expect(res.state).toBe("insecure_context");
+      expect(res.error).toContain("secure HTTPS origin");
+    });
+
+    it("returns loopback_permission_denied when browser LNA permission is denied", async () => {
+      vi.spyOn(lnaPermissions, "queryLoopbackPermission").mockResolvedValue({
+        state: "denied",
+      });
+
+      const res = await client.checkConnection();
+      expect(res.state).toBe("loopback_permission_denied");
+      expect(res.error).toContain("permission was denied");
+    });
+
+    it("returns connection_failed with neutral explanation when fetch throws opaque TypeError (Failed to fetch)", async () => {
       vi.spyOn(globalThis, "fetch").mockRejectedValueOnce(
         new TypeError("Failed to fetch")
       );
 
       const res = await client.checkConnection();
-      expect(res.state).toBe("cors_blocked");
+      // Opaque browser errors must not assume CORS as the only cause
+      expect(res.state).toBe("connection_failed");
+      expect(res.error).toContain("Ollama daemon is running");
       expect(res.error).toContain("OLLAMA_ORIGINS");
+      expect(res.error).toContain("local network permissions");
     });
 
     it("returns disconnected when Ollama returns HTTP 500", async () => {
@@ -133,13 +160,13 @@ describe("OllamaClient", () => {
   });
 
   describe("chatStream", () => {
-    it("parses text, thinking, and statistics correctly", async () => {
+    it("delivers content deltas and statistics while safely ignoring thinking deltas", async () => {
       const encoder = new TextEncoder();
       const chunks = [
         JSON.stringify({
           model: "qwen3:0.6b",
           created_at: "2026-01-01T00:00:00Z",
-          message: { role: "assistant", content: "", thinking: "Thinking..." },
+          message: { role: "assistant", content: "", thinking: "Thinking internal tokens..." },
           done: false,
         }) + "\n",
         JSON.stringify({
@@ -176,7 +203,6 @@ describe("OllamaClient", () => {
       );
 
       const deltas: string[] = [];
-      const thinkingDeltas: string[] = [];
       let finalStats: any = null;
 
       await client.chatStream(
@@ -186,7 +212,6 @@ describe("OllamaClient", () => {
         },
         {
           onDelta: (d) => deltas.push(d),
-          onThinkingDelta: (td) => thinkingDeltas.push(td),
           onStats: (s) => {
             finalStats = s;
           },
@@ -194,7 +219,6 @@ describe("OllamaClient", () => {
       );
 
       expect(deltas.join("")).toBe("Hello world!");
-      expect(thinkingDeltas.join("")).toBe("Thinking...");
       expect(finalStats).toEqual({
         totalDurationMs: 2000,
         loadDurationMs: 100,
