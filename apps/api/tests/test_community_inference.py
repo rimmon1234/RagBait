@@ -10,6 +10,8 @@ Validates:
 """
 
 import secrets
+import time
+from datetime import UTC, datetime, timedelta
 from uuid import UUID, uuid4
 
 import httpx
@@ -19,10 +21,10 @@ from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
 
 from app.core.database import close_db_pool, get_pool, init_db_pool
 from app.core.dependencies import get_current_profile, get_current_user
-from app.core.redis import close_redis, init_redis
+from app.core.redis import close_redis, get_redis, init_redis
 from app.core.security import AuthenticatedUser
 from app.main import app
-from app.modules.community import crypto, repository
+from app.modules.community import crypto, repository, streams
 from app.modules.users.schemas import ApprovalStatus, UserRole
 from tests.conftest import create_test_jwt, make_test_profile
 
@@ -33,7 +35,14 @@ CREATED_TEST_USERS: list[UUID] = []
 async def setup_test_environment():
     """Ensure database connection pools and Redis are initialized and cleaned up."""
     await init_db_pool()
-    await init_redis()
+    r = await init_redis()
+    if r:
+        try:
+            keys = await r.keys("ragbait:ratelimit:*")
+            if keys:
+                await r.delete(*keys)
+        except Exception:
+            pass
     yield
     app.dependency_overrides.clear()
     if CREATED_TEST_USERS:
@@ -44,6 +53,13 @@ async def setup_test_environment():
         except Exception:
             pass
         CREATED_TEST_USERS.clear()
+    if r:
+        try:
+            keys = await r.keys("ragbait:ratelimit:*")
+            if keys:
+                await r.delete(*keys)
+        except Exception:
+            pass
     await close_db_pool()
     await close_redis()
 
@@ -199,7 +215,8 @@ async def test_pairing_code_and_node_registration(client: httpx.AsyncClient):
     data = resp.json()
     pairing_code = data["pairing_code"]
     assert pairing_code.startswith("RB-")
-    assert len(pairing_code) == 9
+    # 128 bits of entropy: 'RB-' + four 8-hex blocks with 3 hyphens = 38 chars
+    assert len(pairing_code) == 38
     assert data["ttl_seconds"] == 300
 
     # 2. Attempt pairing with invalid code
@@ -460,3 +477,336 @@ async def test_dual_consent_and_job_submission(client: httpx.AsyncClient):
     status_resp_after = await client.get(f"/api/v1/community/jobs/{job_id}", headers=headers_r)
     assert status_resp_after.status_code == 200
     assert status_resp_after.json()["status"].upper() == "CANCELLED"
+
+
+def test_signing_key_pair_validation():
+    """Verify SEC-06: Server validates cryptographic match between signing and verifying keys."""
+    from app.core.config import Settings
+    from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+
+    # 1. Matching pair passes
+    priv_key = Ed25519PrivateKey.generate()
+    priv_hex = priv_key.private_bytes_raw().hex()
+    pub_hex = priv_key.public_key().public_bytes_raw().hex()
+
+    s = Settings(
+        COMMUNITY_SERVER_SIGNING_KEY_HEX=priv_hex,
+        COMMUNITY_SERVER_VERIFYING_KEY_HEX=pub_hex,
+    )
+    assert s.COMMUNITY_SERVER_SIGNING_KEY_HEX == priv_hex
+
+    # 2. Mismatched pair raises ValueError
+    other_priv = Ed25519PrivateKey.generate()
+    other_pub_hex = other_priv.public_key().public_bytes_raw().hex()
+    with pytest.raises(ValueError, match="does not match the public key derived"):
+        Settings(
+            COMMUNITY_SERVER_SIGNING_KEY_HEX=priv_hex,
+            COMMUNITY_SERVER_VERIFYING_KEY_HEX=other_pub_hex,
+        )
+
+    # 3. Invalid key lengths raise ValueError
+    with pytest.raises(ValueError):
+        Settings(
+            COMMUNITY_SERVER_SIGNING_KEY_HEX="badhex",
+            COMMUNITY_SERVER_VERIFYING_KEY_HEX=pub_hex,
+        )
+
+
+@pytest.mark.asyncio
+async def test_nonce_fail_closed_and_replay_prevention(monkeypatch):
+    """Verify SEC-05: Nonce handling fails closed when Redis is unavailable, rejects replay."""
+    from app.core.errors import AppError
+    from app.modules.community import streams
+
+    node_id = uuid4()
+
+    # 1. When Redis is unavailable -> Fails closed with 503 AppError
+    monkeypatch.setattr(streams, "get_redis", lambda: None)
+    with pytest.raises(AppError) as exc_info:
+        await streams.create_challenge_nonce(node_id)
+    assert exc_info.value.status_code == 503
+
+    with pytest.raises(AppError) as exc_info:
+        await streams.consume_challenge_nonce("a" * 64, node_id)
+    assert exc_info.value.status_code == 503
+
+    # 2. When Redis is available -> Single use and replay resistance
+    fake_redis_store = {}
+
+    class MockRedis:
+        async def set(self, key, value, ex=None, nx=False):
+            if nx and key in fake_redis_store:
+                return None
+            fake_redis_store[key] = value
+            return True
+
+        async def getdel(self, key):
+            return fake_redis_store.pop(key, None)
+
+    mock_r = MockRedis()
+    monkeypatch.setattr(streams, "get_redis", lambda: mock_r)
+
+    nonce = await streams.create_challenge_nonce(node_id)
+    assert len(nonce) == 64
+
+    # Wrong node fails
+    wrong_node = uuid4()
+    # Need to re-create because getdel consumes on check
+    nonce2 = await streams.create_challenge_nonce(node_id)
+    assert await streams.consume_challenge_nonce(nonce2, wrong_node) is False
+
+    # Valid node succeeds once
+    nonce3 = await streams.create_challenge_nonce(node_id)
+    assert await streams.consume_challenge_nonce(nonce3, node_id) is True
+
+    # Replay fails (already consumed)
+    assert await streams.consume_challenge_nonce(nonce3, node_id) is False
+
+
+def test_trusted_proxy_client_ip_resolution():
+    """Verify SEC-02: get_trusted_client_ip ignores untrusted X-Forwarded-For headers."""
+    from app.core.config import settings
+    from app.core.dependencies import get_trusted_client_ip
+    from starlette.requests import Request
+
+    # Case 1: No trusted proxies configured -> uses client.host directly
+    req1 = Request({"type": "http", "client": ("198.51.100.10", 12345), "headers": [(b"x-forwarded-for", b"203.0.113.195")]})
+    assert get_trusted_client_ip(req1) == "198.51.100.10"
+
+    # Case 2: Direct peer is in TRUSTED_PROXY_IPS -> parses rightmost untrusted hop
+    orig_trusted = settings.TRUSTED_PROXY_IPS
+    try:
+        settings.TRUSTED_PROXY_IPS = ["10.0.0.1", "10.0.0.2"]
+        req2 = Request({
+            "type": "http",
+            "client": ("10.0.0.1", 12345),
+            "headers": [(b"x-forwarded-for", b"203.0.113.50, 198.51.100.22, 10.0.0.2")],
+        })
+        # 10.0.0.2 is trusted, so rightmost untrusted is 198.51.100.22
+        assert get_trusted_client_ip(req2) == "198.51.100.22"
+
+        # Case 3: Direct peer is NOT in TRUSTED_PROXY_IPS -> ignores header completely
+        req3 = Request({
+            "type": "http",
+            "client": ("192.168.1.100", 12345),
+            "headers": [(b"x-forwarded-for", b"8.8.8.8")],
+        })
+        assert get_trusted_client_ip(req3) == "192.168.1.100"
+    finally:
+        settings.TRUSTED_PROXY_IPS = orig_trusted
+
+
+@pytest.mark.asyncio
+async def test_sse_stream_authentication_and_authorization(client: httpx.AsyncClient):
+    """Verify SEC-01: SSE job stream requires authentication and strictly permits only requester."""
+    requester_id = await create_db_user()
+    other_user_id = await create_db_user()
+    node_owner_id = await create_db_user()
+
+    # 1. Register a node for node_owner directly in repository
+    node_priv = ed25519.Ed25519PrivateKey.generate()
+    node_pub_hex = node_priv.public_key().public_bytes(Encoding.Raw, PublicFormat.Raw).hex()
+    node = await repository.create_node(
+        owner_id=node_owner_id,
+        display_name="Stream Test Node",
+        public_key=node_pub_hex,
+    )
+    node_id = node["id"]
+    await repository.update_node_status(node_id, "active")
+    await repository.update_node_config(node_id, node_owner_id, sharing_enabled=True)
+    await repository.update_node_heartbeat(node_id)
+    await repository.sync_node_models(node_id, [{"model_name": "qwen2.5:1.5b"}])
+    headers_owner = setup_auth_context(node_owner_id)
+
+    # Enable model
+    await client.put(
+        f"/api/v1/community/nodes/{node_id}/models",
+        json={"models": [{"model_name": "qwen2.5:1.5b", "enabled": True}]},
+        headers=headers_owner,
+    )
+
+    # 2. Requester submits a job
+    headers_req = setup_auth_context(requester_id)
+    submit_resp = await client.post(
+        "/api/v1/community/jobs/submit",
+        json={
+            "model_name": "qwen2.5:1.5b",
+            "messages": [{"role": "user", "content": "Hello"}],
+            "consent_accepted": True,
+        },
+        headers=headers_req,
+    )
+    job_id = submit_resp.json()["job_id"]
+
+    # 3. Anonymous request to SSE stream -> 401 Unauthorized
+    app.dependency_overrides.clear()
+    anon_resp = await client.get(f"/api/v1/community/jobs/{job_id}/stream")
+    assert anon_resp.status_code == 401
+
+    # 4. Third-party student request to SSE stream -> 403 Forbidden
+    headers_other = setup_auth_context(other_user_id)
+    other_resp = await client.get(f"/api/v1/community/jobs/{job_id}/stream", headers=headers_other)
+    assert other_resp.status_code == 403
+
+    # 5. Node owner request to SSE stream -> 403 Forbidden (node owner must NOT have access to requester stream)
+    owner_stream_resp = await client.get(f"/api/v1/community/jobs/{job_id}/stream", headers=headers_owner)
+    assert owner_stream_resp.status_code == 403
+
+    # 6. Non-existent job with requester auth -> 404 Not Found
+    non_existent = str(uuid4())
+    not_found_resp = await client.get(f"/api/v1/community/jobs/{non_existent}/stream", headers=headers_req)
+    assert not_found_resp.status_code == 404
+
+    # 7. Authorized requester receives 200 StreamingResponse and chunks
+    headers_req = setup_auth_context(requester_id)
+    await streams.append_job_chunk(job_id=UUID(job_id), seq_id=1, delta="Done", done=True)
+    async with client.stream("GET", f"/api/v1/community/jobs/{job_id}/stream", headers=headers_req) as sse_stream:
+        assert sse_stream.status_code == 200
+        assert "text/event-stream" in sse_stream.headers.get("content-type", "")
+        lines = [line async for line in sse_stream.aiter_lines()]
+        assert any("Done" in l for l in lines)
+
+
+@pytest.mark.asyncio
+async def test_terminal_job_status_guard_cas():
+    """Verify REL-03: update_job_status CAS guard prevents mutating terminal states."""
+    user_id = await create_db_user()
+    node = await repository.create_node(
+        owner_id=user_id,
+        display_name="Guard Test Node",
+        public_key=ed25519.Ed25519PrivateKey.generate().public_key().public_bytes(Encoding.Raw, PublicFormat.Raw).hex(),
+    )
+    node_id = node["id"]
+    job = await repository.create_job(
+        requester_id=user_id,
+        node_id=node_id,
+        model_name="llama3.2:1b",
+        payload_digest="a" * 64,
+        auth_key_id="k1",
+        consent_policy_version="2026-02-09",
+        hard_deadline_at=datetime.now(UTC) + timedelta(minutes=5),
+    )
+    job_id = job["id"]
+
+    # 1. Cancel the job (transition to CANCELLED)
+    cancelled = await repository.update_job_status(
+        job_id=job_id,
+        status="CANCELLED",
+        cancelled_at=datetime.now(UTC),
+    )
+    assert cancelled is not None
+    assert cancelled["status"] == "CANCELLED"
+
+    # 2. Attempt late transition to COMPLETED (e.g. from late WS frame)
+    late_completed = await repository.update_job_status(
+        job_id=job_id,
+        status="COMPLETED",
+        completed_at=datetime.now(UTC),
+    )
+    # CAS guard should return None (0 rows updated)
+    assert late_completed is None
+
+    # Verify status in DB is still CANCELLED
+    db_job = await repository.get_job_by_id(job_id)
+    assert db_job["status"] == "CANCELLED"
+
+
+@pytest.mark.asyncio
+async def test_sweeper_recovers_queued_sent_jobs_and_releases_zset_concurrency():
+    """Verify REL-02: sweeper recovers expired QUEUED/SENT jobs and deallocates ZSET reservation."""
+    from app.modules.community import service
+    from app.core.redis import get_redis
+
+    user_id = await create_db_user()
+    node = await repository.create_node(
+        owner_id=user_id,
+        display_name="Sweeper Test Node",
+        public_key=ed25519.Ed25519PrivateKey.generate().public_key().public_bytes(Encoding.Raw, PublicFormat.Raw).hex(),
+    )
+    node_id = node["id"]
+    past_deadline = datetime.now(UTC) - timedelta(seconds=10)
+
+    # Create expired QUEUED job
+    job = await repository.create_job(
+        requester_id=user_id,
+        node_id=node_id,
+        model_name="llama3.2:1b",
+        payload_digest="b" * 64,
+        auth_key_id="k1",
+        consent_policy_version="2026-02-09",
+        hard_deadline_at=past_deadline,
+    )
+    job_id = job["id"]
+
+    # Acquire ZSET concurrency reservation
+    acquired = await streams.acquire_node_concurrency(
+        node_id=node_id,
+        job_id=job_id,
+        max_concurrent=5,
+        lease_expires_at=past_deadline.timestamp(),
+    )
+    assert acquired is True
+
+    # Run sweeper
+    swept_count = await service.recover_expired_community_jobs()
+    assert swept_count >= 1
+
+    # Verify DB status transitioned to EXPIRED
+    db_job = await repository.get_job_by_id(job_id)
+    assert db_job["status"] == "EXPIRED"
+    assert db_job["failure_code"] == "HARD_DEADLINE_EXPIRED"
+
+    # Verify ZSET reservation is deleted
+    r = get_redis()
+    if r:
+        zscore = await r.zscore(f"ragbait:comm:node:{node_id}:reservations", str(job_id))
+        assert zscore is None
+
+
+@pytest.mark.asyncio
+async def test_job_dispatch_stream_ack_and_delete():
+    """Verify REL-01: stream entries are acknowledged and pruned via ack_and_delete_job_dispatch."""
+    from app.core.redis import get_redis
+    from app.modules.community.schemas import SignedJobAuthorization
+
+    node_id = uuid4()
+    job_id = uuid4()
+    r = get_redis()
+    if not r:
+        pytest.skip("Redis not configured")
+
+    auth = SignedJobAuthorization(
+        job_id=job_id,
+        node_id=node_id,
+        model_name="llama3.2:1b",
+        payload_digest="digest",
+        max_output_tokens=100,
+        hard_deadline_ts=int(time.time()) + 300,
+        auth_nonce="nonce",
+        signature="0" * 128,
+        key_id="k1",
+    )
+
+    entry_id = await streams.enqueue_job_dispatch(
+        node_id=node_id,
+        job_id=job_id,
+        authorization=auth,
+        payload={"model": "llama3.2:1b"},
+    )
+    assert entry_id is not None
+
+    # Read pending job
+    entries = await streams.read_pending_jobs(node_id, consumer_id="test-consumer", count=1)
+    assert len(entries) == 1
+    assert entries[0]["entry_id"] == entry_id
+
+    # Acknowledge and delete upon acceptance
+    await streams.ack_and_delete_job_dispatch(node_id, entry_id)
+
+    # Check PEL is empty
+    xinfo = await r.xpending(f"stream:node:{node_id}:jobs", streams.CONSUMER_GROUP_NAME)
+    assert xinfo["pending"] == 0
+
+    # Check stream entry was deleted
+    stream_entries = await r.xrange(f"stream:node:{node_id}:jobs", min=entry_id, max=entry_id)
+    assert len(stream_entries) == 0

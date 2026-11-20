@@ -56,6 +56,12 @@ class Settings(BaseSettings):
     RATE_LIMIT_HEARTBEAT: int = 1
     RATE_LIMIT_ADMIN_READ: int = 60
     RATE_LIMIT_ADMIN_MUTATE: int = 30
+    RATE_LIMIT_PAIR_ATTEMPT: int = 5
+    RATE_LIMIT_PAIR_CODE_CREATE: int = 10
+    TRUSTED_PROXY_IPS: list[str] = Field(
+        default_factory=list,
+        description="List of trusted reverse proxy IP addresses for client IP resolution",
+    )
 
     # Presence
     HEARTBEAT_INTERVAL_SECONDS: int = 60
@@ -110,6 +116,7 @@ class Settings(BaseSettings):
     COMMUNITY_JOB_LEASE_SECONDS: int = 30
     COMMUNITY_JOB_HARD_DEADLINE_SECONDS: int = 300
     COMMUNITY_SWEEPER_INTERVAL_SECONDS: int = 15
+    COMMUNITY_PENDING_CLAIM_IDLE_SECONDS: int = 30
     COMMUNITY_CONSENT_POLICY_VERSION: str = "2026-02-community-v1"
 
     @model_validator(mode="after")
@@ -196,6 +203,26 @@ class Settings(BaseSettings):
             raise ValueError(
                 "COMMUNITY_SERVER_SIGNING_KEY_HEX must be a 64-character hex string (32 bytes)"
             )
+        if len(self.COMMUNITY_SERVER_VERIFYING_KEY_HEX) != 64:
+            raise ValueError(
+                "COMMUNITY_SERVER_VERIFYING_KEY_HEX must be a 64-character hex string (32 bytes)"
+            )
+
+        try:
+            priv_bytes = bytes.fromhex(self.COMMUNITY_SERVER_SIGNING_KEY_HEX)
+            pub_bytes = bytes.fromhex(self.COMMUNITY_SERVER_VERIFYING_KEY_HEX)
+            from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+
+            priv_key = Ed25519PrivateKey.from_private_bytes(priv_bytes)
+            derived_pub_hex = priv_key.public_key().public_bytes_raw().hex()
+            if derived_pub_hex.lower() != self.COMMUNITY_SERVER_VERIFYING_KEY_HEX.lower():
+                raise ValueError(
+                    "COMMUNITY_SERVER_VERIFYING_KEY_HEX does not match the public key derived from COMMUNITY_SERVER_SIGNING_KEY_HEX"
+                )
+        except ValueError:
+            raise
+        except Exception as e:
+            raise ValueError(f"Invalid community cryptographic key configuration: {e}") from e
 
         return self
 

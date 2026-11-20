@@ -130,3 +130,25 @@ rate_limit_general = rate_limiter("api", settings.RATE_LIMIT_DEFAULT, 60)
 rate_limit_heartbeat = rate_limiter("heartbeat", settings.RATE_LIMIT_HEARTBEAT, 45)
 rate_limit_admin_read = rate_limiter("admin_read", settings.RATE_LIMIT_ADMIN_READ, 60)
 rate_limit_admin_mutate = rate_limiter("admin_mutate", settings.RATE_LIMIT_ADMIN_MUTATE, 60)
+rate_limit_pair_code_create = rate_limiter("pair_code_create", settings.RATE_LIMIT_PAIR_CODE_CREATE, 3600)
+
+
+def get_trusted_client_ip(request: Request) -> str:
+    """Extract client IP, validating against TRUSTED_PROXY_IPS before reading X-Forwarded-For."""
+    peer_ip = request.client.host if request.client else "127.0.0.1"
+    if not settings.TRUSTED_PROXY_IPS or peer_ip not in settings.TRUSTED_PROXY_IPS:
+        return peer_ip
+
+    forwarded = request.headers.get("x-forwarded-for")
+    if not forwarded:
+        return peer_ip
+
+    # Parse rightmost untrusted hop
+    hops = [h.strip() for h in forwarded.split(",") if h.strip()]
+    if not hops:
+        return peer_ip
+
+    for hop in reversed(hops):
+        if hop not in settings.TRUSTED_PROXY_IPS:
+            return hop
+    return hops[0]

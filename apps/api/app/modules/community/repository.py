@@ -2,7 +2,7 @@
 
 import json
 import logging
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Any
 from uuid import UUID
 
@@ -325,28 +325,50 @@ async def create_job(
     auth_key_id: str,
     consent_policy_version: str,
     hard_deadline_at: datetime,
+    job_id: UUID | None = None,
 ) -> dict[str, Any]:
     """Persist new community inference job in QUEUED status."""
     pool = get_pool()
     async with pool.acquire() as conn:
-        row = await conn.fetchrow(
-            """
-            INSERT INTO public.community_inference_jobs (
-                requester_id, node_id, model_name, status,
-                payload_digest, authorization_key_id, consent_policy_version,
-                hard_deadline_at
+        if job_id:
+            row = await conn.fetchrow(
+                """
+                INSERT INTO public.community_inference_jobs (
+                    id, requester_id, node_id, model_name, status,
+                    payload_digest, authorization_key_id, consent_policy_version,
+                    hard_deadline_at
+                )
+                VALUES ($1, $2, $3, $4, 'QUEUED', $5, $6, $7, $8)
+                RETURNING *
+                """,
+                job_id,
+                requester_id,
+                node_id,
+                model_name,
+                payload_digest,
+                auth_key_id,
+                consent_policy_version,
+                hard_deadline_at,
             )
-            VALUES ($1, $2, $3, 'QUEUED', $4, $5, $6, $7)
-            RETURNING *
-            """,
-            requester_id,
-            node_id,
-            model_name,
-            payload_digest,
-            auth_key_id,
-            consent_policy_version,
-            hard_deadline_at,
-        )
+        else:
+            row = await conn.fetchrow(
+                """
+                INSERT INTO public.community_inference_jobs (
+                    requester_id, node_id, model_name, status,
+                    payload_digest, authorization_key_id, consent_policy_version,
+                    hard_deadline_at
+                )
+                VALUES ($1, $2, $3, 'QUEUED', $4, $5, $6, $7)
+                RETURNING *
+                """,
+                requester_id,
+                node_id,
+                model_name,
+                payload_digest,
+                auth_key_id,
+                consent_policy_version,
+                hard_deadline_at,
+            )
         return dict(row)
 
 
@@ -396,6 +418,7 @@ async def update_job_status(
                 tokens_per_second = COALESCE($13, tokens_per_second),
                 updated_at = now()
             WHERE id = $1
+              AND status NOT IN ('COMPLETED', 'FAILED', 'CANCELLED', 'EXPIRED', 'OUTCOME_UNKNOWN')
             RETURNING *
             """,
             job_id,
@@ -415,30 +438,73 @@ async def update_job_status(
         return dict(row) if row else None
 
 
-async def sweep_expired_jobs(batch_size: int = 50) -> int:
-    """Identify dangling running jobs whose lease expired, mark OUTCOME_UNKNOWN."""
+async def sweep_expired_jobs(batch_size: int = 50) -> list[dict[str, Any]]:
+    """Identify expired or dangling jobs across non-terminal states and transition atomically."""
     pool = get_pool()
+    now = datetime.now(UTC)
     async with pool.acquire() as conn:
-        res = await conn.execute(
+        rows = await conn.fetch(
             """
             UPDATE public.community_inference_jobs
-            SET status = 'OUTCOME_UNKNOWN',
-                failure_code = 'LEASE_EXPIRED',
-                failure_details = 'Node lease expired without renewal',
+            SET status = CASE
+                    WHEN status = 'RUNNING' THEN 'OUTCOME_UNKNOWN'
+                    ELSE 'EXPIRED'
+                END,
+                failure_code = CASE
+                    WHEN status = 'RUNNING' THEN 'LEASE_EXPIRED'
+                    ELSE 'HARD_DEADLINE_EXPIRED'
+                END,
+                failure_details = CASE
+                    WHEN status = 'RUNNING' THEN 'Node lease expired without renewal'
+                    ELSE 'Hard execution deadline elapsed before completion'
+                END,
+                completed_at = COALESCE(completed_at, $1),
                 updated_at = now()
             WHERE id IN (
                 SELECT id FROM public.community_inference_jobs
-                WHERE status = 'RUNNING' AND lease_expires_at < now()
-                ORDER BY lease_expires_at ASC
-                LIMIT $1
+                WHERE (status = 'RUNNING' AND lease_expires_at < $1)
+                   OR (status IN ('QUEUED', 'CLAIMED', 'SENT', 'AGENT_ACCEPTED') AND hard_deadline_at < $1)
+                ORDER BY created_at ASC
+                LIMIT $2
                 FOR UPDATE SKIP LOCKED
             )
+            RETURNING id, node_id, status
             """,
+            now,
             batch_size,
         )
-        if res.startswith("UPDATE "):
-            return int(res.split(" ")[1])
-        return 0
+        return [dict(r) for r in rows]
+
+
+async def update_node_active_session(node_id: UUID, session_id: str) -> int:
+    """Update active session ID and increment session epoch for session fencing."""
+    pool = get_pool()
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow(
+            """
+            UPDATE public.community_nodes
+            SET active_session_id = $2,
+                session_epoch = session_epoch + 1,
+                last_seen_at = now(),
+                updated_at = now()
+            WHERE id = $1 AND status != 'revoked'
+            RETURNING session_epoch
+            """,
+            node_id,
+            session_id,
+        )
+        return row["session_epoch"] if row else 0
+
+
+async def get_node_active_session(node_id: UUID) -> str | None:
+    """Fetch currently active session ID for session fencing verification."""
+    pool = get_pool()
+    async with pool.acquire() as conn:
+        val = await conn.fetchval(
+            "SELECT active_session_id FROM public.community_nodes WHERE id = $1",
+            node_id,
+        )
+        return val
 
 
 # ------------------------------------------------------------------------------

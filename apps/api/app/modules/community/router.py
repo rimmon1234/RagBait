@@ -7,11 +7,18 @@ from collections.abc import AsyncGenerator
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Header, status
+from fastapi import APIRouter, Depends, Header, Request, status
 from fastapi.responses import StreamingResponse
 
-from app.core.dependencies import rate_limit_general, require_approved_user
-from app.core.errors import NotFoundError
+from app.core.config import settings
+from app.core.dependencies import (
+    get_trusted_client_ip,
+    rate_limit_general,
+    rate_limit_pair_code_create,
+    require_approved_user,
+)
+from app.core.errors import AuthorizationError, NotFoundError
+from app.core.redis import check_rate_limit
 from app.modules.community import repository, service, streams
 from app.modules.community.schemas import (
     CommunityAvailableModel,
@@ -41,7 +48,7 @@ community_router.include_router(ws_router)
 @community_router.post(
     "/nodes/pair-code",
     response_model=PairingCodeResponse,
-    dependencies=[Depends(rate_limit_general)],
+    dependencies=[Depends(rate_limit_pair_code_create)],
 )
 async def create_pairing_code(
     current_user: Annotated[UserProfile, Depends(require_approved_user)],
@@ -55,8 +62,18 @@ async def create_pairing_code(
     response_model=NodePairResponse,
     status_code=status.HTTP_201_CREATED,
 )
-async def pair_node_agent(req: NodePairRequest) -> NodePairResponse:
-    """Complete device pairing using a valid one-time pairing code."""
+async def pair_node_agent(
+    req: NodePairRequest,
+    request: Request,
+) -> NodePairResponse:
+    """Complete device pairing using a valid one-time pairing code with IP rate limiting."""
+    client_ip = get_trusted_client_ip(request)
+    await check_rate_limit(
+        key_prefix="pair_attempt",
+        identifier=client_ip,
+        limit=settings.RATE_LIMIT_PAIR_ATTEMPT,
+        window_seconds=300,
+    )
     return await service.complete_pairing(req)
 
 
@@ -212,13 +229,21 @@ async def cancel_community_job(
 @community_router.get("/jobs/{job_id}/stream")
 async def stream_community_job_results(
     job_id: UUID,
+    current_user: Annotated[UserProfile, Depends(require_approved_user)],
     last_event_id: Annotated[str | None, Header(alias="Last-Event-ID")] = None,
 ) -> StreamingResponse:
-    """Stream token chunks from Redis Stream over Server-Sent Events (SSE)."""
+    """Stream token chunks from Redis Stream over Server-Sent Events (SSE).
+
+    Requires authenticated requester ownership. Node owner is explicitly forbidden.
+    """
     # Verify job exists
     job = await repository.get_job_by_id(job_id)
     if not job:
         raise NotFoundError("Inference job not found")
+
+    # Authorize requester: strictly requester only (node owner cannot view content)
+    if job["requester_id"] != current_user.id:
+        raise AuthorizationError("Access denied: You do not have permission to view this inference stream")
 
     start_seq = 1
     if last_event_id:
@@ -228,6 +253,8 @@ async def stream_community_job_results(
             start_seq = 1
 
     async def sse_event_generator() -> AsyncGenerator[str, None]:
+        # Yield initial SSE comment to commit HTTP headers and establish connection immediately
+        yield ": connected\n\n"
         current_seq = start_seq
         max_poll_iterations = 600  # Up to 5 minutes timeout
         iterations = 0

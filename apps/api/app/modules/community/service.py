@@ -5,7 +5,7 @@ import logging
 import secrets
 from datetime import UTC, datetime, timedelta
 from typing import Any
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from app.core.config import settings
 from app.core.errors import AuthorizationError, BadRequestError, ConflictError, NotFoundError
@@ -32,8 +32,10 @@ logger = logging.getLogger("ragbait.community.service")
 # 1. Pairing & Lifecycle
 # ------------------------------------------------------------------------------
 async def generate_pairing_code(owner_id: UUID) -> PairingCodeResponse:
-    """Generate a single-use 8-character pairing code with 5-minute expiry."""
-    raw_code = f"RB-{secrets.token_hex(3).upper()}"
+    """Generate a single-use 128-bit pairing token (32 hex chars) with configured expiry."""
+    raw_bytes = secrets.token_bytes(16)
+    hex_str = raw_bytes.hex().upper()
+    raw_code = f"RB-{hex_str[:8]}-{hex_str[8:16]}-{hex_str[16:24]}-{hex_str[24:32]}"
     code_hash = hashlib.sha256(raw_code.encode("utf-8")).hexdigest()
     expires_at = datetime.now(UTC) + timedelta(seconds=settings.COMMUNITY_PAIRING_CODE_TTL_SECONDS)
 
@@ -52,7 +54,8 @@ async def generate_pairing_code(owner_id: UUID) -> PairingCodeResponse:
 
 async def complete_pairing(req: NodePairRequest) -> NodePairResponse:
     """Validate and consume pairing code, registering node's public key."""
-    code_hash = hashlib.sha256(req.pairing_code.strip().encode("utf-8")).hexdigest()
+    canonical_code = req.pairing_code.strip().upper()
+    code_hash = hashlib.sha256(canonical_code.encode("utf-8")).hexdigest()
     owner_id = await repository.consume_pairing_code(code_hash)
     if not owner_id:
         raise BadRequestError("Invalid, expired, or already used pairing code")
@@ -326,9 +329,16 @@ async def submit_community_job(
         )
 
     node_id = node["id"]
+    hard_deadline_at = datetime.now(UTC) + timedelta(seconds=node["max_execution_duration"])
+    job_id = uuid4()
 
-    # 3. Check and acquire node concurrency slot
-    has_capacity = await streams.acquire_node_concurrency(node_id, node["max_concurrent_jobs"])
+    # 3. Check and acquire node concurrency slot using atomic ZSET reservation
+    has_capacity = await streams.acquire_node_concurrency(
+        node_id=node_id,
+        job_id=job_id,
+        max_concurrent=node["max_concurrent_jobs"],
+        lease_expires_at=hard_deadline_at.timestamp(),
+    )
     if not has_capacity:
         raise ConflictError(
             f"Community node for '{req.model_name}' has reached its maximum concurrent capacity. Please retry shortly."
@@ -347,17 +357,20 @@ async def submit_community_job(
     payload_digest = crypto.compute_payload_digest(payload)
 
     # 5. Create authoritative record in PostgreSQL
-    hard_deadline_at = datetime.now(UTC) + timedelta(seconds=node["max_execution_duration"])
-    job = await repository.create_job(
-        requester_id=requester_id,
-        node_id=node_id,
-        model_name=req.model_name,
-        payload_digest=payload_digest,
-        auth_key_id=settings.COMMUNITY_KEY_ID,
-        consent_policy_version=req.consent_policy_version,
-        hard_deadline_at=hard_deadline_at,
-    )
-    job_id = job["id"]
+    try:
+        job = await repository.create_job(
+            requester_id=requester_id,
+            node_id=node_id,
+            model_name=req.model_name,
+            payload_digest=payload_digest,
+            auth_key_id=settings.COMMUNITY_KEY_ID,
+            consent_policy_version=req.consent_policy_version,
+            hard_deadline_at=hard_deadline_at,
+            job_id=job_id,
+        )
+    except Exception:
+        await streams.release_node_concurrency(node_id, job_id)
+        raise
 
     # 6. Generate server-signed job authorization token
     auth_nonce = secrets.token_hex(16)
@@ -454,13 +467,18 @@ async def cancel_job(user_id: UUID, job_id: UUID) -> None:
     )
 
     # Release concurrency lease in Redis
-    await streams.release_node_concurrency(job["node_id"])
+    await streams.release_node_concurrency(job["node_id"], job_id)
     await repository.record_audit_event(
         user_id, "job_cancelled", job["node_id"], {"job_id": str(job_id)}
     )
 
 
 async def recover_expired_community_jobs() -> int:
-    """Sweeper recovering dangling community jobs."""
-    swept = await repository.sweep_expired_jobs(batch_size=50)
-    return swept
+    """Sweeper recovering dangling community jobs and releasing concurrency slots."""
+    swept_jobs = await repository.sweep_expired_jobs(batch_size=50)
+    for j in swept_jobs:
+        try:
+            await streams.release_node_concurrency(node_id=j["node_id"], job_id=j["id"])
+        except Exception as e:
+            logger.warning(f"Error releasing concurrency for swept job {j['id']}: {e}")
+    return len(swept_jobs)

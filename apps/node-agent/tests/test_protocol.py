@@ -6,6 +6,7 @@ from ragbait_node.protocol import (
     WSHeartbeatMessage,
     WSJobChunkMessage,
     WSJobCompletedMessage,
+    WSJobDispatchMessage,
 )
 
 
@@ -33,3 +34,36 @@ def test_protocol_frames():
     )
     assert comp.type == "job_completed"
     assert comp.tokens_per_second == 40.0
+
+
+def test_config_allowed_models(tmp_path):
+    from ragbait_node.config import NodeConfig
+
+    cfg = NodeConfig(node_id="n1", allowed_models=["llama3:8b", "mistral:7b"], config_dir=tmp_path)
+    cfg.save()
+    loaded = NodeConfig.load(tmp_path)
+    assert loaded.allowed_models == ["llama3:8b", "mistral:7b"]
+
+
+async def test_client_model_allowlist_rejection(tmp_path):
+    from unittest.mock import AsyncMock, patch
+    from ragbait_node.client import NodeClient
+    from ragbait_node.config import NodeConfig
+
+    cfg = NodeConfig(
+        node_id="n1",
+        server_public_key="0" * 64,
+        allowed_models=["llama3:8b"],
+        config_dir=tmp_path,
+    )
+    client = NodeClient(cfg)
+    mock_ws = AsyncMock()
+
+    with patch("ragbait_node.crypto.verify_server_job_authorization", return_value=True):
+        msg = WSJobDispatchMessage(
+            job_id="job-unauthorized",
+            authorization={"model_name": "phi3:mini"},
+            payload={"model": "phi3:mini", "messages": []},
+        )
+        await client._handle_job_dispatch(mock_ws, msg)
+        mock_ws.send.assert_not_called()

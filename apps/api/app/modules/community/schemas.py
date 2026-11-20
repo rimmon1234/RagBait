@@ -23,7 +23,7 @@ class PairingCodeResponse(BaseModel):
 class NodePairRequest(BaseModel):
     """Request sent by agent to claim a pairing code and register public key."""
 
-    pairing_code: str = Field(..., min_length=6, max_length=16)
+    pairing_code: str = Field(..., min_length=6, max_length=64)
     public_key: str = Field(..., pattern=r"^[0-9a-f]{64}$")
     display_name: str = Field(..., min_length=2, max_length=64)
     agent_version: str = Field(default="0.1.0", max_length=32)

@@ -101,19 +101,21 @@ uv sync
 
 ### Pairing with RagBait Account
 1. Open the RagBait Web UI and navigate to **Community Nodes** (`/community-nodes`).
-2. Click **Pair New Node** to generate an 8-character single-use pairing code (e.g., `RB-A1B2C3`).
+2. Click **Pair New Node** to generate a 128-bit single-use pairing code (e.g., `RB-A1B2C3D4-E5F60718-9A0B1C2D-3E4F5A6B`).
 3. In terminal, run:
 ```bash
-uv run ragbait-node pair --server http://127.0.0.1:8000 --code RB-A1B2C3
+uv run ragbait-node pair --server http://127.0.0.1:8000 --code RB-A1B2C3D4-E5F60718-9A0B1C2D-3E4F5A6B --models llama3.2:3b,mistral:7b
 ```
 This will:
 - Generate a local Ed25519 keypair if one does not exist (`~/.ragbait-node/node_key.pem`).
 - Send the public key and device metadata to the server.
-- Save configuration locally (`~/.ragbait-node/config.json`).
+- Save configuration and allowed models locally (`~/.ragbait-node/config.json`).
 
 ### Running the Agent Daemon
 ```bash
 uv run ragbait-node run
+# Or override allowed models locally:
+uv run ragbait-node run --models llama3.2:3b
 ```
 The agent will:
 1. Verify Ollama is running on `http://127.0.0.1:11434`.
@@ -152,4 +154,26 @@ uv run ragbait-node unpair
 - `POST /api/v1/community/jobs/submit`: Submit inference request (requires `consent_accepted: true`).
 - `GET /api/v1/community/jobs/{job_id}`: Inspect authoritative job status and token telemetry.
 - `POST /api/v1/community/jobs/{job_id}/cancel`: Cancel queued or running job.
-- `GET /api/v1/community/jobs/{job_id}/stream`: Server-Sent Events (SSE) token chunk stream.
+- `GET /api/v1/community/jobs/{job_id}/stream`: Server-Sent Events (SSE) token chunk stream (authenticated, requester-only).
+
+---
+
+## 5. Redis Deployment & Prompt Privacy Policies
+
+RagBait community streaming operates with explicit prompt privacy policies:
+
+### Option A: Volatile In-Memory Queues (Recommended for Strict Student Privacy)
+- **Configuration:** Dedicated Redis instance configured with `appendonly no` and `save ""` (pure in-memory).
+- **Privacy Property:** Prompts and completed tokens **never** touch persistent disk storage. Memory is wiped on container termination.
+- **Reliability:** If Redis restarts, all active in-flight stream queues are lost. PostgreSQL reconciles lost jobs as `OUTCOME_UNKNOWN` or `EXPIRED`, and the requester must resubmit.
+
+### Option B: Persistent Queues (Durability over Strict Ephemerality)
+- **Configuration:** Redis runs with AOF enabled (`appendonly yes`) on persistent storage volumes.
+- **Privacy Property:** Prompts and completions are written to disk. Mitigations require:
+  1. Full disk volume encryption (LUKS / encrypted EBS) at rest.
+  2. Strict OS file permissions (`0600`) on `/data`.
+  3. Aggressive AOF rewrite schedules (`auto-aof-rewrite-percentage 50`).
+  4. Explicit exclusion of Redis data volumes from unencrypted backups.
+- **Reliability:** In-flight queues survive Redis restarts, but prompt bytes exist on physical storage until compacted.
+
+> Default production recommendation is **Option A** for ephemeral prompt transmission.

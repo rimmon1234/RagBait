@@ -217,7 +217,7 @@ class NodeClient:
             logger.info(f"Ignoring duplicate job dispatch for {job_id}")
             return
 
-        # 2. Cryptographic signature verification
+        # 2. Cryptographic signature and model verification
         is_valid = crypto.verify_server_job_authorization(
             auth=msg.authorization,
             payload=payload,
@@ -231,13 +231,31 @@ class NodeClient:
             )
             return
 
+        # 3. SEC-04: Validate model against local allowlist
+        if self.config.allowed_models and model_name not in self.config.allowed_models:
+            logger.warning(
+                f"🚨 REJECTED job {job_id}: Model '{model_name}' is not in local allowed models allowlist {self.config.allowed_models}!"
+            )
+            return
+
+        # 4. Check that model is installed in local Ollama
+        installed_models = await ollama.list_ollama_models()
+        installed_names = [m.get("name") for m in installed_models if "name" in m]
+        if model_name not in installed_names and not any(
+            m.startswith(f"{model_name}:") or model_name.startswith(f"{m}:") for m in installed_names
+        ):
+            logger.warning(
+                f"🚨 REJECTED job {job_id}: Model '{model_name}' is not installed in local Ollama instance!"
+            )
+            return
+
         logger.info(f"Executing authorized job {job_id} on model '{model_name}'...")
 
-        # 3. Record acceptance in local state & notify server
+        # 5. Record acceptance in local state & notify server
         self.storage.record_job(job_id, model_name, "accepted")
         await ws.send(WSJobAcceptedMessage(job_id=job_id).model_dump_json())
 
-        # 4. Stream tokens from local Ollama
+        # 6. Stream tokens from local Ollama
         task = asyncio.create_task(
             self._run_inference_stream(ws, job_id, model_name, messages, options)
         )

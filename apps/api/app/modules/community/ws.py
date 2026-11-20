@@ -28,6 +28,9 @@ from app.modules.community.schemas import (
 logger = logging.getLogger("ragbait.community.ws")
 ws_router = APIRouter()
 
+# In-memory tracking for session fencing: node_id -> (session_id, websocket, [tasks])
+ACTIVE_CONNECTIONS: dict[UUID, tuple[str, WebSocket, list[asyncio.Task]]] = {}
+
 
 @ws_router.websocket("/ws")
 async def community_node_websocket(websocket: WebSocket) -> None:
@@ -131,7 +134,19 @@ async def community_node_websocket(websocket: WebSocket) -> None:
         await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
         return
 
-    # 5. Auth Success
+    # 5. Session Fencing: Invalidate prior session if connected
+    if node_id in ACTIVE_CONNECTIONS:
+        old_sess, old_ws, old_tasks = ACTIVE_CONNECTIONS[node_id]
+        logger.info(f"Terminating superseded session {old_sess} for node {node_id}")
+        try:
+            await old_ws.close(code=4001, reason="Session superseded")
+        except Exception:
+            pass
+        for t in old_tasks:
+            t.cancel()
+
+    # Update database session tracking
+    await repository.update_node_active_session(node_id, session_id)
     await repository.update_node_status(node_id, "active")
     await repository.update_node_heartbeat(node_id)
     await websocket.send_text(
@@ -143,8 +158,15 @@ async def community_node_websocket(websocket: WebSocket) -> None:
 
     # 6. Active connection loop
     consumer_id = f"cons-{session_id}"
-    dispatch_task = asyncio.create_task(_dispatch_loop(websocket, node_id, consumer_id))
-    receive_task = asyncio.create_task(_receive_loop(websocket, node_id))
+    dispatched_map: dict[str, str] = {}  # job_id -> entry_id
+    dispatch_task = asyncio.create_task(
+        _dispatch_loop(websocket, node_id, consumer_id, session_id, dispatched_map)
+    )
+    receive_task = asyncio.create_task(
+        _receive_loop(websocket, node_id, session_id, dispatched_map)
+    )
+
+    ACTIVE_CONNECTIONS[node_id] = (session_id, websocket, [dispatch_task, receive_task])
 
     try:
         done, pending = await asyncio.wait(
@@ -158,34 +180,121 @@ async def community_node_websocket(websocket: WebSocket) -> None:
     finally:
         dispatch_task.cancel()
         receive_task.cancel()
-        await repository.update_node_status(node_id, "offline")
+        if ACTIVE_CONNECTIONS.get(node_id, (None,))[0] == session_id:
+            ACTIVE_CONNECTIONS.pop(node_id, None)
+            await repository.update_node_status(node_id, "offline")
 
 
-async def _dispatch_loop(websocket: WebSocket, node_id: UUID, consumer_id: str) -> None:
-    """Continuously poll node's Redis Stream and dispatch jobs over WebSocket."""
+async def _dispatch_loop(
+    websocket: WebSocket,
+    node_id: UUID,
+    consumer_id: str,
+    session_id: str,
+    dispatched_map: dict[str, str],
+) -> None:
+    """Continuously poll node's Redis Stream, recover pending PEL entries, and dispatch jobs over WebSocket."""
+    last_autoclaim_time = 0.0
     while True:
         try:
+            if ACTIVE_CONNECTIONS.get(node_id, (None,))[0] != session_id:
+                break
+
+            now = time.time()
+            # Periodically (every 10s) recover pending jobs from PEL via XAUTOCLAIM
+            if now - last_autoclaim_time > 10.0:
+                last_autoclaim_time = now
+                claimed_entries = await streams.autoclaim_pending_jobs(
+                    node_id=node_id,
+                    consumer_id=consumer_id,
+                    min_idle_seconds=settings.COMMUNITY_PENDING_CLAIM_IDLE_SECONDS,
+                    count=10,
+                )
+                for entry in claimed_entries:
+                    job_id_str = entry["job_id"]
+                    entry_id = entry["entry_id"]
+                    try:
+                        job_uuid = UUID(job_id_str)
+                    except ValueError:
+                        await streams.ack_and_delete_job_dispatch(node_id, entry_id)
+                        continue
+
+                    db_job = await repository.get_job_by_id(job_uuid)
+                    if not db_job or db_job["status"] in (
+                        "COMPLETED",
+                        "FAILED",
+                        "CANCELLED",
+                        "EXPIRED",
+                        "OUTCOME_UNKNOWN",
+                    ):
+                        await streams.ack_and_delete_job_dispatch(node_id, entry_id)
+                        continue
+
+                    if db_job["hard_deadline_at"] <= datetime.now(UTC):
+                        await repository.update_job_status(
+                            job_uuid, "EXPIRED", failure_code="HARD_DEADLINE_EXPIRED"
+                        )
+                        await streams.release_node_concurrency(node_id, job_uuid)
+                        await streams.ack_and_delete_job_dispatch(node_id, entry_id)
+                        continue
+
+                    if db_job["status"] in ("AGENT_ACCEPTED", "RUNNING"):
+                        # Already accepted in a previous session; do not duplicate execution
+                        await streams.ack_and_delete_job_dispatch(node_id, entry_id)
+                        continue
+
+                    # Status is QUEUED or SENT -> re-dispatch
+                    auth_data = json.loads(entry["authorization"])
+                    payload_data = json.loads(entry["payload"])
+                    dispatch_frame = WSJobDispatchMessage(
+                        job_id=job_id_str,
+                        authorization=SignedJobAuthorization(**auth_data),
+                        payload=payload_data,
+                    )
+                    dispatched_map[job_id_str] = entry_id
+                    await websocket.send_text(dispatch_frame.model_dump_json())
+                    await repository.update_job_status(job_uuid, "SENT")
+
+            # Read unread entries
             entries = await streams.read_pending_jobs(node_id, consumer_id=consumer_id, count=1)
             for entry in entries:
-                job_id = entry["job_id"]
+                job_id_str = entry["job_id"]
+                entry_id = entry["entry_id"]
+                try:
+                    job_uuid = UUID(job_id_str)
+                except ValueError:
+                    await streams.ack_and_delete_job_dispatch(node_id, entry_id)
+                    continue
+
+                db_job = await repository.get_job_by_id(job_uuid)
+                if not db_job or db_job["status"] in (
+                    "COMPLETED",
+                    "FAILED",
+                    "CANCELLED",
+                    "EXPIRED",
+                    "OUTCOME_UNKNOWN",
+                ):
+                    await streams.ack_and_delete_job_dispatch(node_id, entry_id)
+                    continue
+
+                if db_job["hard_deadline_at"] <= datetime.now(UTC):
+                    await repository.update_job_status(
+                        job_uuid, "EXPIRED", failure_code="HARD_DEADLINE_EXPIRED"
+                    )
+                    await streams.release_node_concurrency(node_id, job_uuid)
+                    await streams.ack_and_delete_job_dispatch(node_id, entry_id)
+                    continue
+
                 auth_data = json.loads(entry["authorization"])
                 payload_data = json.loads(entry["payload"])
 
-                # Check if job was cancelled while in queue
-                db_job = await repository.get_job_by_id(UUID(job_id))
-                if not db_job or db_job["status"] == "CANCELLED":
-                    await streams.ack_job_dispatch(node_id, entry["entry_id"])
-                    continue
-
                 dispatch_frame = WSJobDispatchMessage(
-                    job_id=job_id,
+                    job_id=job_id_str,
                     authorization=SignedJobAuthorization(**auth_data),
                     payload=payload_data,
                 )
+                dispatched_map[job_id_str] = entry_id
                 await websocket.send_text(dispatch_frame.model_dump_json())
-
-                # Update status to SENT
-                await repository.update_job_status(UUID(job_id), "SENT")
+                await repository.update_job_status(job_uuid, "SENT")
 
             await asyncio.sleep(0.5)
         except asyncio.CancelledError:
@@ -195,7 +304,12 @@ async def _dispatch_loop(websocket: WebSocket, node_id: UUID, consumer_id: str) 
             await asyncio.sleep(1.0)
 
 
-async def _receive_loop(websocket: WebSocket, node_id: UUID) -> None:
+async def _receive_loop(
+    websocket: WebSocket,
+    node_id: UUID,
+    session_id: str,
+    dispatched_map: dict[str, str],
+) -> None:
     """Handle incoming protocol frames from the agent."""
     while True:
         try:
@@ -204,6 +318,11 @@ async def _receive_loop(websocket: WebSocket, node_id: UUID) -> None:
             frame_type = data.get("type")
 
             if frame_type == "heartbeat":
+                if ACTIVE_CONNECTIONS.get(node_id, (None,))[0] != session_id:
+                    logger.warning(
+                        f"Frame received from superseded session {session_id} for node {node_id}. Terminating."
+                    )
+                    break
                 hb = WSHeartbeatMessage(**data)
                 await repository.update_node_heartbeat(node_id)
                 if hb.installed_models:
@@ -213,33 +332,54 @@ async def _receive_loop(websocket: WebSocket, node_id: UUID) -> None:
                 )
 
             elif frame_type == "job_accepted":
+                if ACTIVE_CONNECTIONS.get(node_id, (None,))[0] != session_id:
+                    logger.warning(
+                        f"Frame received from superseded session {session_id} for node {node_id}. Terminating."
+                    )
+                    break
                 acc = WSJobAcceptedMessage(**data)
                 job_id = UUID(acc.job_id)
                 lease_exp = datetime.now(UTC) + timedelta(
                     seconds=settings.COMMUNITY_JOB_LEASE_SECONDS
                 )
-                await repository.update_job_status(
+                updated = await repository.update_job_status(
                     job_id=job_id,
-                    status="RUNNING",
+                    status="AGENT_ACCEPTED",
                     accepted_at=datetime.now(UTC),
                     lease_expires_at=lease_exp,
                 )
+                if updated:
+                    # Renew concurrency lease score in ZSET
+                    await streams.renew_node_concurrency(node_id, job_id, lease_exp.timestamp())
+                    # Acknowledge and delete entry from Redis Stream
+                    entry_id = dispatched_map.pop(acc.job_id, None)
+                    if entry_id:
+                        await streams.ack_and_delete_job_dispatch(node_id, entry_id)
 
             elif frame_type == "job_chunk":
+                if ACTIVE_CONNECTIONS.get(node_id, (None,))[0] != session_id:
+                    logger.warning(
+                        f"Frame received from superseded session {session_id} for node {node_id}. Terminating."
+                    )
+                    break
                 chunk = WSJobChunkMessage(**data)
                 job_id = UUID(chunk.job_id)
 
-                # Check if cancelled
-                db_job = await repository.get_job_by_id(job_id)
-                if db_job and db_job["status"] == "CANCELLED":
-                    # Drop chunks from cancelled job
-                    continue
-
-                # Renew lease
+                # Renew lease in DB with CAS
                 lease_exp = datetime.now(UTC) + timedelta(
                     seconds=settings.COMMUNITY_JOB_LEASE_SECONDS
                 )
-                await repository.update_job_status(job_id, "RUNNING", lease_expires_at=lease_exp)
+                updated = await repository.update_job_status(
+                    job_id=job_id,
+                    status="RUNNING",
+                    lease_expires_at=lease_exp,
+                )
+                if not updated:
+                    # CAS failed: job is in a terminal state (e.g. CANCELLED by user)
+                    continue
+
+                # Renew lease in ZSET
+                await streams.renew_node_concurrency(node_id, job_id, lease_exp.timestamp())
 
                 # Append to Redis Stream
                 await streams.append_job_chunk(
@@ -250,12 +390,17 @@ async def _receive_loop(websocket: WebSocket, node_id: UUID) -> None:
                 )
 
             elif frame_type == "job_completed":
+                if ACTIVE_CONNECTIONS.get(node_id, (None,))[0] != session_id:
+                    logger.warning(
+                        f"Frame received from superseded session {session_id} for node {node_id}. Terminating."
+                    )
+                    break
                 comp = WSJobCompletedMessage(**data)
                 job_id = UUID(comp.job_id)
                 now = datetime.now(UTC)
 
                 # Atomically update DB to COMPLETED
-                await repository.update_job_status(
+                updated = await repository.update_job_status(
                     job_id=job_id,
                     status="COMPLETED",
                     completed_at=now,
@@ -265,22 +410,23 @@ async def _receive_loop(websocket: WebSocket, node_id: UUID) -> None:
                     tokens_per_second=comp.tokens_per_second,
                 )
 
-                # Release concurrency slot
-                await streams.release_node_concurrency(node_id)
+                # Always release concurrency slot for this job
+                await streams.release_node_concurrency(node_id, job_id)
 
-                # Append terminal chunk
-                await streams.append_job_chunk(
-                    job_id=job_id,
-                    seq_id=999999,
-                    delta="",
-                    done=True,
-                    stats={
-                        "input_tokens": comp.reported_input_tokens,
-                        "output_tokens": comp.reported_output_tokens,
-                        "duration_ms": comp.duration_ms,
-                        "tokens_per_second": comp.tokens_per_second,
-                    },
-                )
+                if updated:
+                    # Append terminal chunk
+                    await streams.append_job_chunk(
+                        job_id=job_id,
+                        seq_id=999999,
+                        delta="",
+                        done=True,
+                        stats={
+                            "input_tokens": comp.reported_input_tokens,
+                            "output_tokens": comp.reported_output_tokens,
+                            "duration_ms": comp.duration_ms,
+                            "tokens_per_second": comp.tokens_per_second,
+                        },
+                    )
 
         except (WebSocketDisconnect, asyncio.CancelledError):
             break

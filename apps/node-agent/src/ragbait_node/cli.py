@@ -43,9 +43,19 @@ def main() -> None:
         default="",
         help="Optional friendly name for this node (default: hostname)",
     )
+    pair_parser.add_argument(
+        "--models",
+        default="",
+        help="Optional comma-separated list of local models to allow (e.g. llama3:8b,mistral:7b)",
+    )
 
     # 2. run
-    _ = subparsers.add_parser("run", help="Start the node agent in the foreground")
+    run_parser = subparsers.add_parser("run", help="Start the node agent in the foreground")
+    run_parser.add_argument(
+        "--models",
+        default="",
+        help="Optional comma-separated list of local models to allow (overrides saved config)",
+    )
 
     # 3. status
     _ = subparsers.add_parser("status", help="Show current node pairing and Ollama status")
@@ -56,22 +66,26 @@ def main() -> None:
     args = parser.parse_args()
 
     if args.command == "pair":
-        asyncio.run(handle_pair(args.code, args.server, args.name))
+        asyncio.run(handle_pair(args.code, args.server, args.name, args.models))
     elif args.command == "run":
-        asyncio.run(handle_run())
+        asyncio.run(handle_run(args.models))
     elif args.command == "status":
         asyncio.run(handle_status())
     elif args.command == "unpair":
         handle_unpair()
 
 
-async def handle_pair(code: str, server_url: str, custom_name: str) -> None:
+async def handle_pair(
+    code: str, server_url: str, custom_name: str, models_str: str = ""
+) -> None:
     """Execute device pairing flow."""
     server_url = server_url.rstrip("/")
     config = NodeConfig.load()
     config.server_url = server_url
     ws_protocol = "wss" if server_url.startswith("https") else "ws"
     config.ws_url = f"{ws_protocol}://{server_url.split('://')[1]}/api/v1/community/ws"
+    if models_str:
+        config.allowed_models = [m.strip() for m in models_str.split(",") if m.strip()]
 
     print(f"[*] Initializing local cryptographic identity at {config.key_file}...")
     private_key = crypto.get_or_create_keypair(config.key_file)
@@ -128,13 +142,16 @@ async def handle_pair(code: str, server_url: str, custom_name: str) -> None:
     print("3. Start the agent by running:\n   ragbait-node run\n")
 
 
-async def handle_run() -> None:
+async def handle_run(models_str: str = "") -> None:
     """Start the node agent."""
     config = NodeConfig.load()
     if not config.is_paired():
         print("[!] This device is not paired with a RagBait account yet.")
         print("    Please run: ragbait-node pair --code <PAIRING-CODE>")
         sys.exit(1)
+
+    if models_str:
+        config.allowed_models = [m.strip() for m in models_str.split(",") if m.strip()]
 
     client = NodeClient(config)
     try:
@@ -158,6 +175,10 @@ async def handle_status() -> None:
         print(f"Server URL:         {config.server_url}")
         print(f"WebSocket URL:      {config.ws_url}")
         print(f"Server Key ID:      {config.server_key_id}")
+        if config.allowed_models:
+            print(f"Allowed Models:     {', '.join(config.allowed_models)}")
+        else:
+            print("Allowed Models:     (All installed models allowed)")
 
     alive, ver = await ollama.check_ollama_alive()
     print(f"Local Ollama:       {'Online (v' + ver + ')' if alive else 'Offline / Unreachable'}")

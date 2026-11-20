@@ -23,6 +23,7 @@ class NodeConfig:
         ws_url: str = DEFAULT_WS_URL,
         server_public_key: str = "",
         server_key_id: str = "k1",
+        allowed_models: list[str] | None = None,
         config_dir: Path = DEFAULT_CONFIG_DIR,
     ):
         self.node_id = node_id
@@ -31,6 +32,7 @@ class NodeConfig:
         self.ws_url = ws_url
         self.server_public_key = server_public_key
         self.server_key_id = server_key_id
+        self.allowed_models: list[str] = list(allowed_models) if allowed_models else []
         self.config_dir = config_dir
         self.config_file = config_dir / "config.json"
         self.key_file = config_dir / "node_key.pem"
@@ -53,6 +55,7 @@ class NodeConfig:
                 ws_url=data.get("ws_url", DEFAULT_WS_URL),
                 server_public_key=data.get("server_public_key", ""),
                 server_key_id=data.get("server_key_id", "k1"),
+                allowed_models=data.get("allowed_models", []),
                 config_dir=config_dir,
             )
         except Exception:
@@ -68,6 +71,7 @@ class NodeConfig:
             "ws_url": self.ws_url,
             "server_public_key": self.server_public_key,
             "server_key_id": self.server_key_id,
+            "allowed_models": self.allowed_models,
         }
         with open(self.config_file, "w", encoding="utf-8") as f:
             json.dump(data, f, indent=2)

@@ -104,7 +104,12 @@ def verify_server_job_authorization(
             logger.warning("Rejected job with mismatched payload digest")
             return False
 
-        # 4. Verify cryptographic signature
+        # 4. Verify model authorized matches model requested in payload (SEC-04)
+        if auth.get("model_name") != payload.get("model"):
+            logger.warning("Rejected job with mismatched model between authorization and payload")
+            return False
+
+        # 5. Verify cryptographic signature
         sig_hex = auth.get("signature", "")
         sig_bytes = bytes.fromhex(sig_hex)
         pub_bytes = bytes.fromhex(server_public_key_hex)

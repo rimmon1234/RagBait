@@ -24,11 +24,11 @@ This guide describes how to manually test and verify Shared Community Local Infe
 1. Sign in to `http://localhost:3000` as **User A** (`user_a@university.edu`).
 2. In the top navigation bar, click **Community Nodes** (`/community-nodes`).
 3. Click the **Pair New Node** button.
-   - An 8-character pairing code appears (e.g. `RB-A1B2C3`) with a 5-minute countdown timer.
+   - A 128-bit pairing code appears (e.g. `RB-A1B2C3D4-E5F60718-9A0B1C2D-3E4F5A6B`) with a 5-minute countdown timer.
 4. On User A's computer (or in a new terminal window), navigate to `apps/node-agent`:
    ```bash
    cd apps/node-agent
-   uv run ragbait-node pair --server http://127.0.0.1:8000 --code RB-A1B2C3
+   uv run ragbait-node pair --server http://127.0.0.1:8000 --code RB-A1B2C3D4-E5F60718-9A0B1C2D-3E4F5A6B
    ```
    *Expected Output:*
    ```

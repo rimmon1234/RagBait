@@ -88,3 +88,18 @@ def test_verify_server_job_authorization():
         crypto.verify_server_job_authorization(expired_auth, payload, server_pub_hex, node_id)
         is False
     )
+
+    # 5. Mismatched model between authorization and payload (SEC-04)
+    mismatched_payload = {"model": "llama3.2:1b", "messages": [{"role": "user", "content": "hi"}]}
+    mismatched_digest = crypto.compute_payload_digest(mismatched_payload)
+    mismatched_canonical = f"RAGBAIT-JOB-AUTH:v1:{job_id}:{node_id}:{model_name}:{mismatched_digest}:{max_output}:{deadline}:{nonce}".encode()
+    mismatched_sig = server_priv.sign(mismatched_canonical).hex()
+    mismatched_auth = dict(auth)
+    mismatched_auth["payload_digest"] = mismatched_digest
+    mismatched_auth["signature"] = mismatched_sig
+    assert (
+        crypto.verify_server_job_authorization(
+            mismatched_auth, mismatched_payload, server_pub_hex, node_id
+        )
+        is False
+    )
