@@ -38,6 +38,26 @@ interface Message {
   content: string;
 }
 
+function formatModelSize(bytes?: number): string {
+  if (!bytes || bytes <= 0) return "";
+  if (bytes < 1000 * 1000 * 1000) {
+    return `${(bytes / (1000 * 1000)).toFixed(0)} MB`;
+  }
+  return `${(bytes / (1000 * 1000 * 1000)).toFixed(1)} GB`;
+}
+
+function isHeavyModel(model?: OllamaTagModel): boolean {
+  if (!model) return false;
+  if (model.size && model.size >= 5 * 1024 * 1024 * 1024) {
+    return true;
+  }
+  const pSize = model.details?.parameter_size?.toLowerCase() || "";
+  if (pSize.includes("14b") || pSize.includes("13b") || pSize.includes("32b") || pSize.includes("70b")) {
+    return true;
+  }
+  return false;
+}
+
 export default function LocalInferencePage() {
   const router = useRouter();
   const [authLoading, setAuthLoading] = useState(true);
@@ -302,6 +322,9 @@ export default function LocalInferencePage() {
     setMessages([]);
     setUsageStats(null);
   };
+
+  const currentModelObj = models.find((m) => m.name === selectedModel);
+  const currentModelIsHeavy = isHeavyModel(currentModelObj);
 
   if (authLoading) {
     return (
@@ -591,11 +614,22 @@ Environment="OLLAMA_ORIGINS=http://localhost:3000,http://127.0.0.1:3000"`}
                   disabled={isStreaming}
                   className="rounded-lg border border-gray-300 bg-white px-3 py-1.5 text-sm font-medium text-gray-800 shadow-xs focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
                 >
-                  {models.map((m) => (
-                    <option key={m.name} value={m.name}>
-                      {m.name} {m.details?.parameter_size ? `(${m.details.parameter_size})` : ""}
-                    </option>
-                  ))}
+                  {models.map((m) => {
+                    const sizeStr = formatModelSize(m.size);
+                    const paramStr = m.details?.parameter_size || "";
+                    const heavy = isHeavyModel(m);
+                    const parts: string[] = [];
+                    if (sizeStr) parts.push(sizeStr);
+                    if (paramStr) parts.push(paramStr);
+                    if (heavy) parts.push("⚠️ Heavy");
+                    const metaSuffix = parts.length > 0 ? ` (${parts.join(" · ")})` : "";
+
+                    return (
+                      <option key={m.name} value={m.name}>
+                        {m.name}{metaSuffix}
+                      </option>
+                    );
+                  })}
                 </select>
               ) : (
                 <span className="text-xs text-amber-700 bg-amber-50 px-2 py-1 rounded border border-amber-200">
@@ -632,6 +666,19 @@ Environment="OLLAMA_ORIGINS=http://localhost:3000,http://127.0.0.1:3000"`}
               )}
             </div>
           </div>
+
+          {/* Large Model Notice Callout */}
+          {currentModelIsHeavy && (
+            <div className="border-b border-amber-200 bg-amber-50/80 px-4 py-2 text-xs text-amber-900 flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <AlertTriangle className="h-3.5 w-3.5 text-amber-600 shrink-0" />
+                <span>
+                  <strong>Large Model Notice ({currentModelObj?.size ? formatModelSize(currentModelObj.size) : "High RAM"}):</strong>{" "}
+                  This model requires substantial VRAM or free system RAM. If generation fails or crashes Ollama, switch to a lighter model (e.g. 3B or 0.6B).
+                </span>
+              </div>
+            </div>
+          )}
 
           {/* Collapsible Parameters Drawer */}
           {showConfig && (

@@ -1,5 +1,5 @@
 import { isSecureLoopbackContext, queryLoopbackPermission } from "./lna-permissions";
-import { classifyFetchError, OllamaError } from "./ollama-errors";
+import { classifyFetchError, OllamaError, translateOllamaErrorMessage } from "./ollama-errors";
 import { parseNDJSONStream } from "./ollama-stream";
 import type {
   LoopbackRequestInit,
@@ -218,9 +218,16 @@ export class OllamaClient {
       } catch {
         // Body was not JSON
       }
+      if (res.status === 404) {
+        throw new OllamaError("MODEL_NOT_FOUND", errMsg, res.status);
+      }
+
+      const translatedMsg = translateOllamaErrorMessage(errMsg, request.model);
+      const isHardwareLimit = translatedMsg !== errMsg;
+
       throw new OllamaError(
-        res.status === 404 ? "MODEL_NOT_FOUND" : "STREAM_ERROR",
-        errMsg,
+        isHardwareLimit ? "HARDWARE_LIMIT_EXCEEDED" : "STREAM_ERROR",
+        translatedMsg,
         res.status
       );
     }

@@ -229,5 +229,31 @@ describe("OllamaClient", () => {
         tokensPerSecond: 50,
       });
     });
+
+    it("translates raw llama-server/CUDA buffer overrun crash into HARDWARE_LIMIT_EXCEEDED", async () => {
+      const rawCrashMsg =
+        "llama-server process no longer running: exit status 0xc0000409: The system detected an overrun of a stack-based buffer in this application. CUDA error: shared object initialization failed";
+
+      vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
+        new Response(JSON.stringify({ error: rawCrashMsg }), { status: 500 })
+      );
+
+      try {
+        await client.chatStream(
+          {
+            model: "qwen2.5-coder:14b",
+            messages: [{ role: "user", content: "Hi" }],
+          },
+          {}
+        );
+        expect.unreachable("Should have thrown OllamaError");
+      } catch (err: any) {
+        expect(err).toBeInstanceOf(OllamaError);
+        expect(err.code).toBe("HARDWARE_LIMIT_EXCEEDED");
+        expect(err.message).toContain("Hardware / Memory Limit Exceeded");
+        expect(err.message).toContain("qwen2.5-coder:14b");
+        expect(err.message).not.toContain("stack-based buffer");
+      }
+    });
   });
 });

@@ -11,6 +11,7 @@ export type OllamaErrorCode =
   | "CORS_BLOCKED"
   | "MODEL_NOT_FOUND"
   | "STREAM_ERROR"
+  | "HARDWARE_LIMIT_EXCEEDED"
   | "ABORTED"
   | "PARSE_ERROR"
   | "UNKNOWN_ERROR";
@@ -27,6 +28,29 @@ export class OllamaError extends Error {
     this.status = status;
     this.details = details;
   }
+}
+
+/**
+ * Translates raw Ollama runner errors (e.g. C++ stack overflow / CUDA / OOM crashes)
+ * into reassuring, actionable guidance for students.
+ */
+export function translateOllamaErrorMessage(rawMessage: string, modelName?: string): string {
+  const lower = rawMessage.toLowerCase();
+  const isOomOrCrash =
+    lower.includes("llama-server process no longer running") ||
+    lower.includes("0xc0000409") ||
+    lower.includes("cuda error") ||
+    lower.includes("out of memory") ||
+    lower.includes("failed to allocate") ||
+    lower.includes("shared object initialization failed") ||
+    lower.includes("stack-based buffer");
+
+  if (isOomOrCrash) {
+    const target = modelName ? `'${modelName}'` : "this model";
+    return `Hardware / Memory Limit Exceeded: Ollama ran out of GPU memory (VRAM) or RAM while loading ${target}. This model is likely too large for your machine's available hardware. Please select a lighter model (such as a 3B or 0.6B model) or close heavy applications to free up system memory.`;
+  }
+
+  return rawMessage;
 }
 
 /**

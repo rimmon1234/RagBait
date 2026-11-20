@@ -304,4 +304,41 @@ describe("LocalInferencePage Component", () => {
     expect(screen.getByText("32.6")).toBeInTheDocument();
     expect(screen.getByText("30")).toBeInTheDocument();
   });
+
+  it("displays heavy model warning badge and banner for models requiring substantial memory", async () => {
+    const mockModels: OllamaTagModel[] = [
+      {
+        name: "qwen2.5-coder:14b",
+        model: "qwen2.5-coder:14b",
+        modified_at: "2026-01-01T00:00:00Z",
+        digest: "xyz",
+        size: 9_000_000_000,
+        details: { parameter_size: "14B" },
+      },
+    ];
+
+    vi.spyOn(ollamaClient, "checkConnection").mockResolvedValue({
+      state: "connected",
+      version: "0.40.16",
+    });
+    vi.spyOn(ollamaClient, "listModels").mockResolvedValue(mockModels);
+
+    render(<LocalInferencePage />);
+
+    // Wait for connection
+    await waitFor(() => {
+      expect(screen.getByText("Ollama Connected")).toBeInTheDocument();
+    });
+
+    // Check option badge
+    const select = screen.getByLabelText("Local Model:") as HTMLSelectElement;
+    expect(select.options[0].text).toContain("⚠️ Heavy");
+    expect(select.options[0].text).toContain("9.0 GB");
+
+    // Check Large Model Notice banner
+    expect(screen.getByText(/Large Model Notice/i)).toBeInTheDocument();
+    expect(
+      screen.getByText(/requires substantial VRAM or free system RAM/i)
+    ).toBeInTheDocument();
+  });
 });
