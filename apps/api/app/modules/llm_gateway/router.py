@@ -102,11 +102,20 @@ async def chat_completions(
     req: ChatCompletionRequest,
     current_user: Annotated[UserProfile, Depends(require_approved_user)],
 ) -> Response:
-    """Execute unified AI chat completion through provider adapters with streaming or non-streaming."""
-    result, is_streaming = await service.dispatch_chat_completion(
+    """Execute unified AI chat completion through intelligent inference routing with streaming or non-streaming."""
+    from app.modules.routing import route_and_dispatch
+
+    result, is_streaming, decision = await route_and_dispatch(
         user_id=current_user.id,
         req=req,
     )
+
+    headers = {
+        "X-RagBait-Routing-Mode": decision.routing_mode,
+        "X-RagBait-Selected-Source": f"{decision.selected_source}:{decision.provider_id}",
+        "X-RagBait-Selected-Model": decision.model_id,
+        "X-RagBait-Decision-Reason": decision.decision_reason,
+    }
 
     if is_streaming:
         assert isinstance(result, AsyncIterator)
@@ -117,6 +126,7 @@ async def chat_completions(
                 "Cache-Control": "no-cache",
                 "Connection": "keep-alive",
                 "X-Accel-Buffering": "no",
+                **headers,
             },
         )
 
@@ -125,6 +135,7 @@ async def chat_completions(
         content=result.model_dump_json(),
         media_type="application/json",
         status_code=status.HTTP_200_OK,
+        headers=headers,
     )
 
 

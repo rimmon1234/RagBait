@@ -8,6 +8,7 @@ import {
   AlertTriangle,
   ArrowRight,
   CheckCircle2,
+  Compass,
   Cpu,
   HelpCircle,
   Loader2,
@@ -19,6 +20,7 @@ import {
   Share2,
   ShieldAlert,
   ShieldCheck,
+  Sparkles,
   Square,
   Terminal,
   Trash2,
@@ -36,6 +38,11 @@ import {
   streamCommunityJob,
   submitCommunityJob,
 } from "@/lib/community-client";
+import {
+  previewRoute,
+  streamChatCompletion,
+  type RouteHeaders,
+} from "@/lib/routing-client";
 import type { CommunityAvailableModel } from "@/types/community";
 import type {
   LoopbackPermissionState,
@@ -97,8 +104,11 @@ export default function LocalInferencePage() {
   );
   const [temperature, setTemperature] = useState(0.7);
 
-  // Mode switcher: "private" | "community"
-  const [inferenceMode, setInferenceMode] = useState<"private" | "community">("private");
+  // Mode switcher: "private" | "community" | "auto" | "cloud_only"
+  const [inferenceMode, setInferenceMode] = useState<"private" | "community" | "auto" | "cloud_only">("private");
+  const [communityOptIn, setCommunityOptIn] = useState(false);
+  const [selectedCloudModel, setSelectedCloudModel] = useState<string>("");
+  const [lastRouteHeaders, setLastRouteHeaders] = useState<RouteHeaders | null>(null);
 
   // Community inference state
   const [communityModels, setCommunityModels] = useState<CommunityAvailableModel[]>([]);
@@ -384,13 +394,128 @@ export default function LocalInferencePage() {
     }
   };
 
+  const executeRoutedInference = async (promptText: string, mode: "auto" | "cloud_only") => {
+    if (!promptText.trim() || isStreaming) {
+      return;
+    }
+
+    const userMessage: Message = {
+      id: `user-${Date.now()}`,
+      role: "user",
+      content: promptText.trim(),
+    };
+
+    const assistantMessageId = `asst-${Date.now()}`;
+    const initialAssistantMessage: Message = {
+      id: assistantMessageId,
+      role: "assistant",
+      content: "",
+    };
+
+    const updatedMessages = [...messages, userMessage];
+    setMessages([...updatedMessages, initialAssistantMessage]);
+    setPromptInput("");
+    setIsStreaming(true);
+    setUsageStats(null);
+    setLastRouteHeaders(null);
+
+    const chatMessages: { role: string; content: string }[] = [];
+    if (systemPrompt.trim()) {
+      chatMessages.push({ role: "system", content: systemPrompt.trim() });
+    }
+    for (const msg of updatedMessages) {
+      chatMessages.push({ role: msg.role, content: msg.content });
+    }
+
+    const controller = new AbortController();
+    abortControllerRef.current = controller;
+
+    try {
+      await streamChatCompletion(
+        {
+          messages: chatMessages,
+          routing_mode: mode,
+          model: selectedCloudModel || undefined,
+          temperature,
+          community_opt_in: mode === "auto" ? communityOptIn : false,
+        },
+        {
+          onRouteHeaders: (headers) => {
+            setLastRouteHeaders(headers);
+          },
+          onDelta: (delta) => {
+            setMessages((prev) =>
+              prev.map((m) =>
+                m.id === assistantMessageId ? { ...m, content: m.content + delta } : m
+              )
+            );
+          },
+          onError: (err) => {
+            const errorMsg = err instanceof Error ? err.message : "Routing error";
+            setMessages((prev) =>
+              prev.map((m) =>
+                m.id === assistantMessageId
+                  ? { ...m, content: `⚠️ Error during routed inference: ${errorMsg}` }
+                  : m
+              )
+            );
+          },
+          onComplete: () => {
+            setIsStreaming(false);
+          },
+        },
+        { signal: controller.signal }
+      );
+    } catch (err) {
+      if (isAbortError(err) || controller.signal.aborted) {
+        setMessages((prev) =>
+          prev.map((m) =>
+            m.id === assistantMessageId
+              ? {
+                  ...m,
+                  content: m.content + (m.content ? "\n\n*(Generation stopped by user)*" : "*(Generation stopped)*"),
+                }
+              : m
+          )
+        );
+      } else {
+        const errorMsg = err instanceof Error ? err.message : "Failed to execute routed inference";
+        setMessages((prev) =>
+          prev.map((m) =>
+            m.id === assistantMessageId
+              ? { ...m, content: `⚠️ Error: ${errorMsg}` }
+              : m
+          )
+        );
+      }
+    } finally {
+      setIsStreaming(false);
+      abortControllerRef.current = null;
+    }
+  };
+
+  const handleCommunityOptInChange = (checked: boolean) => {
+    if (checked && !communityConsentAccepted) {
+      setShowConsentModal(true);
+      return;
+    }
+    setCommunityOptIn(checked);
+  };
+
   const handleConsentConfirm = () => {
     setCommunityConsentAccepted(true);
     setShowConsentModal(false);
+    if (inferenceMode === "auto") {
+      setCommunityOptIn(true);
+    }
     if (pendingPrompt) {
       const p = pendingPrompt;
       setPendingPrompt(null);
-      executeCommunityInference(p);
+      if (inferenceMode === "community") {
+        executeCommunityInference(p);
+      } else if (inferenceMode === "auto") {
+        executeRoutedInference(p, "auto");
+      }
     }
   };
 
@@ -398,6 +523,11 @@ export default function LocalInferencePage() {
   const handleSend = async () => {
     const trimmed = promptInput.trim();
     if (!trimmed || isStreaming) return;
+
+    if (inferenceMode === "auto" || inferenceMode === "cloud_only") {
+      await executeRoutedInference(trimmed, inferenceMode);
+      return;
+    }
 
     if (inferenceMode === "community") {
       if (!selectedCommunityModel) return;
@@ -534,24 +664,44 @@ export default function LocalInferencePage() {
         <div>
           <div className="flex items-center gap-3">
             <h1 className="text-2xl font-bold text-gray-900">
-              {inferenceMode === "private" ? "Private Local Inference" : "Community Local Inference"}
+              {inferenceMode === "private"
+                ? "Private Local Inference"
+                : inferenceMode === "community"
+                ? "Community Local Inference"
+                : inferenceMode === "auto"
+                ? "Intelligent Inference Router"
+                : "Cloud LLM Gateway"}
             </h1>
             {inferenceMode === "private" ? (
               <span className="inline-flex items-center gap-1 rounded-full bg-emerald-50 px-2.5 py-0.5 text-xs font-semibold text-emerald-700 border border-emerald-200">
                 <ShieldCheck className="h-3.5 w-3.5 text-emerald-600" />
                 100% Private Loopback
               </span>
-            ) : (
+            ) : inferenceMode === "community" ? (
               <span className="inline-flex items-center gap-1 rounded-full bg-blue-50 px-2.5 py-0.5 text-xs font-semibold text-blue-700 border border-blue-200">
                 <Network className="h-3.5 w-3.5 text-blue-600" />
                 Shared Community Node
+              </span>
+            ) : inferenceMode === "auto" ? (
+              <span className="inline-flex items-center gap-1 rounded-full bg-indigo-50 px-2.5 py-0.5 text-xs font-semibold text-indigo-700 border border-indigo-200">
+                <Sparkles className="h-3.5 w-3.5 text-indigo-600" />
+                Intelligent Router (Auto)
+              </span>
+            ) : (
+              <span className="inline-flex items-center gap-1 rounded-full bg-purple-50 px-2.5 py-0.5 text-xs font-semibold text-purple-700 border border-purple-200">
+                <Compass className="h-3.5 w-3.5 text-purple-600" />
+                Cloud Only
               </span>
             )}
           </div>
           <p className="mt-1 text-sm text-gray-500">
             {inferenceMode === "private"
               ? "Execute open-source models on your local hardware via Ollama. Zero server routing, zero latency cost, and zero prompt data leaves your device."
-              : "Submit inference requests to approved peer machines running Ollama. Prompts are ephemeral and never stored in server databases."}
+              : inferenceMode === "community"
+              ? "Submit inference requests to approved peer machines running Ollama. Prompts are ephemeral and never stored in server databases."
+              : inferenceMode === "auto"
+              ? "Unified intelligent routing layer dynamically selecting optimal free, cloud, or community compute with deterministic privacy and quota enforcement."
+              : "Direct inference through authenticated cloud providers with quota enforcement and budget limits."}
           </p>
         </div>
 
@@ -574,7 +724,7 @@ export default function LocalInferencePage() {
                 Refresh
               </button>
             </>
-          ) : (
+          ) : inferenceMode === "community" ? (
             <>
               <Link
                 href="/community-nodes"
@@ -593,18 +743,26 @@ export default function LocalInferencePage() {
                 Refresh Models
               </button>
             </>
+          ) : (
+            <Link
+              href="/credentials"
+              className="inline-flex items-center gap-1.5 rounded-lg border border-gray-300 bg-white px-3 py-1.5 text-sm font-medium text-gray-700 shadow-sm hover:bg-gray-50"
+            >
+              Manage Cloud Keys
+              <ArrowRight className="h-3.5 w-3.5 text-gray-400" />
+            </Link>
           )}
         </div>
       </div>
 
       {/* Mode Switcher Tabs */}
-      <div className="mb-6 flex items-center gap-2 border-b border-gray-200">
+      <div className="mb-6 flex items-center gap-2 border-b border-gray-200 overflow-x-auto">
         <button
           onClick={() => {
             setInferenceMode("private");
             handleClear();
           }}
-          className={`flex items-center gap-2 border-b-2 px-4 py-2.5 text-sm font-medium transition-colors ${
+          className={`flex items-center gap-2 border-b-2 px-4 py-2.5 text-sm font-medium transition-colors whitespace-nowrap ${
             inferenceMode === "private"
               ? "border-blue-600 text-blue-600 font-semibold"
               : "border-transparent text-gray-500 hover:text-gray-700"
@@ -618,7 +776,7 @@ export default function LocalInferencePage() {
             setInferenceMode("community");
             handleClear();
           }}
-          className={`flex items-center gap-2 border-b-2 px-4 py-2.5 text-sm font-medium transition-colors ${
+          className={`flex items-center gap-2 border-b-2 px-4 py-2.5 text-sm font-medium transition-colors whitespace-nowrap ${
             inferenceMode === "community"
               ? "border-blue-600 text-blue-600 font-semibold"
               : "border-transparent text-gray-500 hover:text-gray-700"
@@ -626,6 +784,34 @@ export default function LocalInferencePage() {
         >
           <Network className="h-4 w-4" />
           Community Network (Peer Nodes)
+        </button>
+        <button
+          onClick={() => {
+            setInferenceMode("auto");
+            handleClear();
+          }}
+          className={`flex items-center gap-2 border-b-2 px-4 py-2.5 text-sm font-medium transition-colors whitespace-nowrap ${
+            inferenceMode === "auto"
+              ? "border-blue-600 text-blue-600 font-semibold"
+              : "border-transparent text-gray-500 hover:text-gray-700"
+          }`}
+        >
+          <Sparkles className="h-4 w-4" />
+          Auto (Intelligent Routing)
+        </button>
+        <button
+          onClick={() => {
+            setInferenceMode("cloud_only");
+            handleClear();
+          }}
+          className={`flex items-center gap-2 border-b-2 px-4 py-2.5 text-sm font-medium transition-colors whitespace-nowrap ${
+            inferenceMode === "cloud_only"
+              ? "border-blue-600 text-blue-600 font-semibold"
+              : "border-transparent text-gray-500 hover:text-gray-700"
+          }`}
+        >
+          <Compass className="h-4 w-4" />
+          Cloud Only
         </button>
       </div>
 
@@ -651,6 +837,44 @@ export default function LocalInferencePage() {
             >
               Share Your GPU <ArrowRight className="h-3 w-3" />
             </Link>
+          </div>
+        </div>
+      )}
+
+      {/* Auto Routing Status Banner */}
+      {inferenceMode === "auto" && (
+        <div className="mb-6 rounded-lg border border-indigo-200 bg-indigo-50/70 p-4 text-sm text-indigo-900">
+          <div className="flex items-start justify-between gap-4">
+            <div className="flex items-start gap-3">
+              <Sparkles className="h-5 w-5 text-indigo-600 shrink-0 mt-0.5" />
+              <div>
+                <p className="font-semibold text-indigo-900">
+                  Intelligent Multi-Provider Routing Active
+                </p>
+                <p className="mt-1 text-xs text-indigo-800 leading-relaxed">
+                  Requests automatically evaluate eligible cloud and free-tier models with fallback protection. Community peer compute is only used when the opt-in checkbox below is enabled.
+                </p>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Cloud Only Status Banner */}
+      {inferenceMode === "cloud_only" && (
+        <div className="mb-6 rounded-lg border border-purple-200 bg-purple-50/70 p-4 text-sm text-purple-900">
+          <div className="flex items-start justify-between gap-4">
+            <div className="flex items-start gap-3">
+              <Compass className="h-5 w-5 text-purple-600 shrink-0 mt-0.5" />
+              <div>
+                <p className="font-semibold text-purple-900">
+                  Cloud Dedicated Inference Mode
+                </p>
+                <p className="mt-1 text-xs text-purple-800 leading-relaxed">
+                  Requests strictly target approved cloud providers (Gemini, Claude, OpenRouter). Requests will never be routed to community peer nodes under any circumstances.
+                </p>
+              </div>
+            </div>
           </div>
         </div>
       )}
@@ -890,15 +1114,55 @@ Environment="OLLAMA_ORIGINS=http://localhost:3000,http://127.0.0.1:3000"`}
         <div className="lg:col-span-3 flex flex-col rounded-xl border border-gray-200 bg-white shadow-sm overflow-hidden">
           {/* Controls Bar */}
           <div className="flex flex-wrap items-center justify-between border-b border-gray-200 bg-gray-50/80 px-4 py-3 gap-3">
-            <div className="flex items-center gap-3">
+            <div className="flex items-center gap-3 flex-wrap">
               <label
-                htmlFor={inferenceMode === "community" ? "community-model-select" : "model-select"}
+                htmlFor={
+                  inferenceMode === "auto" || inferenceMode === "cloud_only"
+                    ? "routed-model-select"
+                    : inferenceMode === "community"
+                    ? "community-model-select"
+                    : "model-select"
+                }
                 className="text-xs font-semibold uppercase tracking-wider text-gray-500"
               >
-                {inferenceMode === "community" ? "Community Model:" : "Local Model:"}
+                {inferenceMode === "auto" || inferenceMode === "cloud_only"
+                  ? "Target Model:"
+                  : inferenceMode === "community"
+                  ? "Community Model:"
+                  : "Local Model:"}
               </label>
 
-              {inferenceMode === "community" ? (
+              {inferenceMode === "auto" || inferenceMode === "cloud_only" ? (
+                <>
+                  <select
+                    id="routed-model-select"
+                    value={selectedCloudModel}
+                    onChange={(e) => setSelectedCloudModel(e.target.value)}
+                    disabled={isStreaming}
+                    className="rounded-lg border border-gray-300 bg-white px-3 py-1.5 text-sm font-medium text-gray-800 shadow-xs focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                  >
+                    <option value="">Auto (Server Selected Default)</option>
+                    <option value="gemini-2.5-flash">Gemini 2.5 Flash</option>
+                    <option value="gemini-2.5-pro">Gemini 2.5 Pro</option>
+                    <option value="claude-3-5-sonnet">Claude 3.5 Sonnet</option>
+                    <option value="openrouter/free">OpenRouter Free Tier</option>
+                  </select>
+
+                  {inferenceMode === "auto" && (
+                    <label className="flex items-center gap-2 text-xs font-medium text-gray-700 cursor-pointer ml-2">
+                      <input
+                        type="checkbox"
+                        id="community-opt-in-checkbox"
+                        checked={communityOptIn}
+                        onChange={(e) => handleCommunityOptInChange(e.target.checked)}
+                        disabled={isStreaming}
+                        className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                      />
+                      <span>Consider Community Nodes (Peer Compute)</span>
+                    </label>
+                  )}
+                </>
+              ) : inferenceMode === "community" ? (
                 communityModels.length > 0 ? (
                   <select
                     id="community-model-select"
@@ -1055,9 +1319,11 @@ Environment="OLLAMA_ORIGINS=http://localhost:3000,http://127.0.0.1:3000"`}
                   <div className="text-[11px] font-semibold text-gray-400 mb-1 px-1 uppercase tracking-wider">
                     {msg.role === "user"
                       ? "You"
-                      : inferenceMode === "community"
-                        ? selectedCommunityModel || "Community Assistant"
-                        : selectedModel || "Assistant"}
+                      : inferenceMode === "auto" || inferenceMode === "cloud_only"
+                        ? lastRouteHeaders?.selectedModel || selectedCloudModel || "Router Assistant"
+                        : inferenceMode === "community"
+                          ? selectedCommunityModel || "Community Assistant"
+                          : selectedModel || "Assistant"}
                   </div>
 
                   <div
@@ -1092,12 +1358,18 @@ Environment="OLLAMA_ORIGINS=http://localhost:3000,http://127.0.0.1:3000"`}
                 }}
                 disabled={
                   isStreaming ||
-                  (inferenceMode === "community"
+                  (inferenceMode === "auto" || inferenceMode === "cloud_only"
+                    ? false
+                    : inferenceMode === "community"
                     ? communityModels.length === 0
                     : connectionState !== "connected" || models.length === 0)
                 }
                 placeholder={
-                  inferenceMode === "community"
+                  inferenceMode === "auto"
+                    ? `Ask intelligent router (auto source)... (Enter to send, Shift+Enter for newline)`
+                    : inferenceMode === "cloud_only"
+                    ? `Ask cloud LLM gateway... (Enter to send, Shift+Enter for newline)`
+                    : inferenceMode === "community"
                     ? communityModels.length > 0
                       ? `Ask community node running ${selectedCommunityModel}... (Enter to send, Shift+Enter for newline)`
                       : "No community models currently available..."
@@ -1124,7 +1396,9 @@ Environment="OLLAMA_ORIGINS=http://localhost:3000,http://127.0.0.1:3000"`}
                     onClick={handleSend}
                     disabled={
                       !promptInput.trim() ||
-                      (inferenceMode === "community"
+                      (inferenceMode === "auto" || inferenceMode === "cloud_only"
+                        ? false
+                        : inferenceMode === "community"
                         ? communityModels.length === 0 || !selectedCommunityModel
                         : connectionState !== "connected" || models.length === 0)
                     }
@@ -1146,16 +1420,42 @@ Environment="OLLAMA_ORIGINS=http://localhost:3000,http://127.0.0.1:3000"`}
             <div className="flex items-center gap-2 pb-3 border-b border-gray-100">
               <Zap className="h-4 w-4 text-amber-500" />
               <h3 className="text-sm font-semibold text-gray-900">
-                {inferenceMode === "community" ? "Community Node Telemetry" : "Device Telemetry"}
+                {inferenceMode === "auto" || inferenceMode === "cloud_only"
+                  ? "Intelligent Routing Telemetry"
+                  : inferenceMode === "community"
+                  ? "Community Node Telemetry"
+                  : "Device Telemetry"}
               </h3>
             </div>
 
             <div className="mt-3">
               <span className="inline-block rounded bg-emerald-50 px-2 py-0.5 text-[11px] font-semibold text-emerald-700 border border-emerald-200 mb-3">
-                {inferenceMode === "community"
+                {inferenceMode === "auto"
+                  ? "Autonomous Multi-Provider Dispatch"
+                  : inferenceMode === "cloud_only"
+                  ? "Direct Cloud LLM Dispatch"
+                  : inferenceMode === "community"
                   ? "Device-Reported / Community Node"
                   : "Non-Billable / Device Native"}
               </span>
+
+              {lastRouteHeaders && (
+                <div className="mb-3 rounded-lg bg-gray-50 p-2.5 text-xs space-y-1.5 border border-gray-100">
+                  <div className="flex justify-between">
+                    <span className="text-gray-500 font-medium">Source:</span>
+                    <span className="font-semibold text-gray-900 capitalize">{lastRouteHeaders.selectedSource || "cloud"}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-gray-500 font-medium">Model:</span>
+                    <span className="font-mono text-blue-700">{lastRouteHeaders.selectedModel || "default"}</span>
+                  </div>
+                  {lastRouteHeaders.decisionReason && (
+                    <div className="pt-1 border-t border-gray-200 text-[11px] text-gray-600">
+                      <span className="font-medium text-gray-700">Reason:</span> {lastRouteHeaders.decisionReason}
+                    </div>
+                  )}
+                </div>
+              )}
 
               {usageStats ? (
                 <dl className="grid grid-cols-2 gap-3 text-xs">
@@ -1209,7 +1509,45 @@ Environment="OLLAMA_ORIGINS=http://localhost:3000,http://127.0.0.1:3000"`}
               <h3 className="text-sm font-semibold text-gray-900">Privacy Guarantees</h3>
             </div>
 
-            {inferenceMode === "community" ? (
+            {inferenceMode === "auto" ? (
+              <ul className="mt-3 space-y-2 text-gray-600 leading-relaxed">
+                <li className="flex items-start gap-1.5">
+                  <CheckCircle2 className="h-3.5 w-3.5 text-emerald-600 shrink-0 mt-0.5" />
+                  <span>Cloud-first routing with strict privacy boundary enforcement.</span>
+                </li>
+                <li className="flex items-start gap-1.5">
+                  <CheckCircle2 className="h-3.5 w-3.5 text-emerald-600 shrink-0 mt-0.5" />
+                  <span>Community peer nodes evaluated ONLY if peer compute opt-in is enabled.</span>
+                </li>
+                <li className="flex items-start gap-1.5">
+                  <CheckCircle2 className="h-3.5 w-3.5 text-emerald-600 shrink-0 mt-0.5" />
+                  <span>All provider API keys encrypted in Credential Vault.</span>
+                </li>
+                <li className="flex items-start gap-1.5">
+                  <CheckCircle2 className="h-3.5 w-3.5 text-emerald-600 shrink-0 mt-0.5" />
+                  <span>Idempotency-safe dispatch prevents duplicate billing or reservations.</span>
+                </li>
+              </ul>
+            ) : inferenceMode === "cloud_only" ? (
+              <ul className="mt-3 space-y-2 text-gray-600 leading-relaxed">
+                <li className="flex items-start gap-1.5">
+                  <CheckCircle2 className="h-3.5 w-3.5 text-emerald-600 shrink-0 mt-0.5" />
+                  <span>Strictly zero routing to community peer nodes under any circumstances.</span>
+                </li>
+                <li className="flex items-start gap-1.5">
+                  <CheckCircle2 className="h-3.5 w-3.5 text-emerald-600 shrink-0 mt-0.5" />
+                  <span>Full admission control and user spending budget enforcement.</span>
+                </li>
+                <li className="flex items-start gap-1.5">
+                  <CheckCircle2 className="h-3.5 w-3.5 text-emerald-600 shrink-0 mt-0.5" />
+                  <span>Direct streaming via authenticated cloud provider endpoints.</span>
+                </li>
+                <li className="flex items-start gap-1.5">
+                  <CheckCircle2 className="h-3.5 w-3.5 text-emerald-600 shrink-0 mt-0.5" />
+                  <span>Transparent cost settlement and usage accounting.</span>
+                </li>
+              </ul>
+            ) : inferenceMode === "community" ? (
               <ul className="mt-3 space-y-2 text-gray-600 leading-relaxed">
                 <li className="flex items-start gap-1.5">
                   <CheckCircle2 className="h-3.5 w-3.5 text-emerald-600 shrink-0 mt-0.5" />

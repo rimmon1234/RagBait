@@ -238,3 +238,28 @@ export interface UsageSummaryResponse {
   unknown_outcome_count: number;
   recent_reservations: ReservationView[];
 }
+
+// =============================================================================
+// Milestone M2.9: Intelligent Routing
+// =============================================================================
+export type RoutingMode = "auto" | "cloud_only" | "community_only" | "provider_specific";
+
+export interface RoutePreviewCandidate {
+  source_type: "cloud" | "community";
+  provider_id: string;
+  model_id: string;
+  display_name: string;
+  family: string;
+  free_tier_eligible: boolean;
+  pricing_input_cents_per_million?: number | null;
+  pricing_output_cents_per_million?: number | null;
+}
+
+export interface RoutePreviewResponse {
+  routing_mode: RoutingMode;
+  selected_candidate?: RoutePreviewCandidate | null;
+  candidates_considered: number;
+  candidates_eligible: number;
+  decision_reason: string;
+  rejected_reasons_summary: Record<string, number>;
+}

@@ -4,7 +4,7 @@ from datetime import datetime
 from typing import Any, Literal
 from uuid import UUID
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 # Types & Literals
 ProviderRuntimeType = Literal["cloud_api", "local_runtime"]
@@ -18,6 +18,7 @@ QuotaConfidence = Literal["high", "medium", "low"]
 QuotaProvenance = Literal[
     "account_confirmed", "provider_published", "observed", "estimated", "unknown"
 ]
+RoutingMode = Literal["auto", "cloud_only", "community_only", "provider_specific"]
 
 
 # Provider Schemas
@@ -189,18 +190,67 @@ class GenerationParams(BaseModel):
 
 
 class ChatCompletionRequest(BaseModel):
-    """Unified request to dispatch text inference through the LLM gateway."""
+    """Unified request to dispatch text inference through the LLM gateway with intelligent routing."""
 
-    provider_id: str = Field(..., min_length=2, max_length=64)
-    model_id: str = Field(..., min_length=2, max_length=128)
+    routing_mode: RoutingMode = Field(
+        default="provider_specific",
+        description="Routing policy mode: 'auto', 'cloud_only', 'community_only', or 'provider_specific'",
+    )
+    provider_id: str | None = Field(
+        default=None,
+        min_length=2,
+        max_length=64,
+        description="Target provider ID. Required when routing_mode is 'provider_specific'.",
+    )
+    model_id: str | None = Field(
+        default=None,
+        min_length=2,
+        max_length=128,
+        description="Target model identifier. If omitted in 'auto' or 'cloud_only', server selects default.",
+    )
+    model: str | None = Field(
+        default=None,
+        description="Backward-compatible alias for model_id.",
+    )
     credential_id: UUID | None = Field(
         default=None,
         description="Optional explicit credential ID. If omitted, user's active credential for this provider is used.",
+    )
+    community_opt_in: bool = Field(
+        default=False,
+        description="Explicit requester opt-in to consider peer community nodes for this request.",
+    )
+    community_consent_version: str | None = Field(
+        default=None,
+        description="Consent disclosure policy version (must match server version if community_opt_in is true).",
     )
     messages: list[ChatMessage] = Field(..., min_length=1, max_length=100)
     params: GenerationParams = Field(default_factory=GenerationParams)
     stream: bool = Field(default=True, description="Whether to stream response via SSE")
     idempotency_key: str = Field(..., min_length=4, max_length=128)
+
+    @model_validator(mode="before")
+    @classmethod
+    def reconcile_routing_fields(cls, data: Any) -> Any:
+        if isinstance(data, dict):
+            # Reconcile model and model_id
+            if not data.get("model_id") and data.get("model"):
+                data["model_id"] = data["model"]
+            elif not data.get("model") and data.get("model_id"):
+                data["model"] = data["model_id"]
+
+            # Default routing mode determination
+            if not data.get("routing_mode"):
+                if data.get("provider_id"):
+                    data["routing_mode"] = "provider_specific"
+                else:
+                    data["routing_mode"] = "auto"
+
+            # Validate provider_specific requires provider_id
+            if data.get("routing_mode") == "provider_specific" and not data.get("provider_id"):
+                raise ValueError("provider_id is required when routing_mode is 'provider_specific'")
+
+        return data
 
 
 class ChatCompletionResponse(BaseModel):
