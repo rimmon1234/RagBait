@@ -14,7 +14,7 @@ async def claim_next_job(
     worker_id: str,
     lease_ttl_seconds: int = 120,
 ) -> dict[str, Any] | None:
-    """Atomically claim the next eligible extraction job using FOR UPDATE SKIP LOCKED.
+    """Atomically claim the next eligible extraction job using consistent document-first locking.
 
     Eligible jobs are:
     1. status = 'queued' AND scheduled_at <= NOW()
@@ -22,66 +22,70 @@ async def claim_next_job(
     2. Document is uploaded (upload_status = 'uploaded') and not archived.
     3. attempts < max_attempts.
 
-    Updates job to 'processing', sets lease_token and locked_until, increments attempts,
-    and updates document extraction_status to 'processing'.
+    Lock order guarantees:
+    - Locks public.kb_documents (d) first, then public.kb_extraction_jobs (j) via FOR UPDATE OF d, j SKIP LOCKED.
+    - Atomically updates document extraction_status to 'processing' and job to 'processing' in a single query.
+    - Strictly avoids lock-order inversions with document deletion, heartbeat, and completion transactions.
     """
-    async with conn.transaction():
-        row = await conn.fetchrow(
-            """
-            WITH eligible_job AS (
-                SELECT
-                    j.id AS eligible_job_id,
-                    j.document_id,
-                    d.storage_path,
-                    d.mime_type,
-                    d.file_size_bytes,
-                    d.sha256_checksum,
-                    d.title
-                FROM public.kb_extraction_jobs j
-                JOIN public.kb_documents d ON d.id = j.document_id
-                WHERE (
-                    (j.status = 'queued' AND j.scheduled_at <= timezone('utc'::text, now()))
-                    OR (j.status = 'processing' AND j.locked_until < timezone('utc'::text, now()))
-                )
-                AND d.upload_status = 'uploaded'
-                AND d.is_archived = false
-                AND j.attempts < j.max_attempts
-                ORDER BY j.scheduled_at ASC
-                LIMIT 1
-                FOR UPDATE OF j SKIP LOCKED
+    row = await conn.fetchrow(
+        """
+        WITH eligible_doc AS (
+            SELECT
+                d.id AS document_id,
+                d.storage_path,
+                d.mime_type,
+                d.file_size_bytes,
+                d.sha256_checksum,
+                d.title,
+                d.extraction_version
+            FROM public.kb_documents d
+            JOIN public.kb_extraction_jobs j ON j.document_id = d.id
+            WHERE (
+                (j.status = 'queued' AND j.scheduled_at <= timezone('utc'::text, now()))
+                OR (j.status = 'processing' AND j.locked_until < timezone('utc'::text, now()))
             )
-            UPDATE public.kb_extraction_jobs j
-            SET status = 'processing',
-                worker_id = $1,
-                lease_token = gen_random_uuid(),
-                locked_until = timezone('utc'::text, now()) + ($2 || ' seconds')::interval,
-                attempts = j.attempts + 1,
-                updated_at = timezone('utc'::text, now())
-            FROM eligible_job ej
-            WHERE j.id = ej.eligible_job_id
-            RETURNING j.id AS job_id, j.document_id, j.worker_id, j.lease_token, j.attempts,
-                      j.max_attempts, j.locked_until, ej.storage_path, ej.mime_type,
-                      ej.file_size_bytes, ej.sha256_checksum, ej.title;
-            """,
-            worker_id,
-            str(lease_ttl_seconds),
-        )
-
-        if not row:
-            return None
-
-        # Update parent document status to 'processing'
-        await conn.execute(
-            """
-            UPDATE public.kb_documents
+            AND d.upload_status = 'uploaded'
+            AND d.is_archived = false
+            AND j.attempts < j.max_attempts
+            ORDER BY j.scheduled_at ASC
+            LIMIT 1
+            FOR UPDATE OF d, j SKIP LOCKED
+        ),
+        updated_doc AS (
+            UPDATE public.kb_documents d
             SET extraction_status = 'processing',
                 updated_at = timezone('utc'::text, now())
-            WHERE id = $1;
-            """,
-            row["document_id"],
+            FROM eligible_doc ed
+            WHERE d.id = ed.document_id
+            RETURNING d.id
         )
+        UPDATE public.kb_extraction_jobs j
+        SET status = 'processing',
+            worker_id = $1,
+            lease_token = gen_random_uuid(),
+            locked_until = timezone('utc'::text, now()) + ($2 || ' seconds')::interval,
+            attempts = j.attempts + 1,
+            updated_at = timezone('utc'::text, now())
+        FROM eligible_doc ed
+        JOIN updated_doc ud ON ud.id = ed.document_id
+        WHERE j.document_id = ed.document_id
+          AND (
+              (j.status = 'queued' AND j.scheduled_at <= timezone('utc'::text, now()))
+              OR (j.status = 'processing' AND j.locked_until < timezone('utc'::text, now()))
+          )
+          AND j.attempts < j.max_attempts
+        RETURNING j.id AS job_id, j.document_id, j.worker_id, j.lease_token, j.attempts,
+                  j.max_attempts, j.locked_until, ed.storage_path, ed.mime_type,
+                  ed.file_size_bytes, ed.sha256_checksum, ed.title, ed.extraction_version;
+        """,
+        worker_id,
+        str(lease_ttl_seconds),
+    )
 
-        return dict(row)
+    if not row:
+        return None
+
+    return dict(row)
 
 
 async def renew_job_lease(
@@ -142,7 +146,7 @@ async def complete_job_success(
         # 1. Lock document first to maintain strict lock ordering with deletion
         doc = await conn.fetchrow(
             """
-            SELECT id, upload_status, is_archived
+            SELECT id, upload_status, is_archived, extraction_version
             FROM public.kb_documents
             WHERE id = $1
             FOR UPDATE;
@@ -180,7 +184,9 @@ async def complete_job_success(
             document_id,
         )
 
-        # 4. Batch insert extracted pages
+        doc_version = doc["extraction_version"] or 1
+
+        # 4. Batch insert extracted pages with correct extraction_version provenance
         if pages:
             records = [
                 (
@@ -190,6 +196,7 @@ async def complete_job_success(
                     p["character_count"],
                     p["word_count"],
                     p["has_text"],
+                    doc_version,
                 )
                 for p in pages
             ]
@@ -201,8 +208,9 @@ async def complete_job_success(
                     raw_text,
                     character_count,
                     word_count,
-                    has_text
-                ) VALUES ($1, $2, $3, $4, $5, $6);
+                    has_text,
+                    extraction_version
+                ) VALUES ($1, $2, $3, $4, $5, $6, $7);
                 """,
                 records,
             )

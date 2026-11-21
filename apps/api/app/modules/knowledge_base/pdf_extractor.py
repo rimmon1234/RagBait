@@ -7,7 +7,7 @@ from pypdf import PdfReader
 from pypdf.errors import FileNotDecryptedError, PyPdfError, WrongPasswordError
 
 from app.modules.knowledge_base.extractor_exceptions import (
-    CorruptFileError,
+    CorruptedFileError,
     EncryptedPdfError,
     PageLimitExceededError,
     PayloadTooLargeError,
@@ -32,16 +32,16 @@ def extract_pdf_pages(
     """
     path_obj = Path(file_path)
     if not path_obj.exists() or not path_obj.is_file():
-        raise CorruptFileError(f"Target file does not exist: {file_path}")
+        raise CorruptedFileError(f"Target file does not exist: {file_path}")
 
     try:
         reader = PdfReader(str(path_obj))
     except (WrongPasswordError, FileNotDecryptedError) as e:
         raise EncryptedPdfError(f"PDF is encrypted: {e}") from e
     except (PyPdfError, ValueError, OSError) as e:
-        raise CorruptFileError(f"Failed to read PDF file structure: {e}") from e
+        raise CorruptedFileError(f"Failed to read PDF file structure: {e}") from e
     except Exception as e:
-        raise CorruptFileError(f"Unexpected error reading PDF: {e}") from e
+        raise CorruptedFileError(f"Unexpected error reading PDF: {e}") from e
 
     # Check encryption flag
     if reader.is_encrypted:
@@ -49,7 +49,7 @@ def extract_pdf_pages(
 
     num_pages = len(reader.pages)
     if num_pages == 0:
-        raise CorruptFileError("PDF file contains zero pages.")
+        raise CorruptedFileError("PDF file contains zero pages.")
 
     if num_pages > max_pages:
         raise PageLimitExceededError(

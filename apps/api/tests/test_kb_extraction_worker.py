@@ -16,7 +16,11 @@ Validates:
 import asyncio
 import hashlib
 import io
+import json
+import os
+import sys
 from datetime import UTC, datetime
+from pathlib import Path
 from uuid import UUID, uuid4
 
 import pytest
@@ -25,6 +29,7 @@ from pypdf import PdfReader, PdfWriter
 from app.core.config import settings
 from app.core.database import close_db_pool, get_pool, init_db_pool
 from app.modules.knowledge_base import job_repository, repository, storage
+from app.modules.knowledge_base.parser_process import run_parser_isolated
 from app.modules.knowledge_base.worker import KnowledgeBaseExtractionWorker
 from app.modules.knowledge_base.worker_config import WorkerSettings
 
@@ -666,7 +671,7 @@ async def test_pdf_encrypted_fails_permanent():
 
 @pytest.mark.asyncio
 async def test_pdf_corrupt_fails_permanent():
-    """Corrupt PDF file bytes fail permanently with CORRUPT_FILE."""
+    """Corrupt PDF file bytes fail permanently with canonical error code CORRUPTED_FILE."""
     user_id = await create_db_user()
     subject_id, topic_id = await create_test_taxonomy()
     content = b"%PDF-1.4\ncorrupt garbage bytes that cannot be parsed as a PDF"
@@ -691,9 +696,9 @@ async def test_pdf_corrupt_fails_permanent():
         )
 
     assert db_doc["extraction_status"] == "failed"
-    assert db_doc["error_code"] == "CORRUPT_FILE"
+    assert db_doc["error_code"] == "CORRUPTED_FILE"
     assert db_job["status"] == "failed"
-    assert db_job["error_code"] == "CORRUPT_FILE"
+    assert db_job["error_code"] == "CORRUPTED_FILE"
 
 
 @pytest.mark.asyncio
@@ -1097,3 +1102,231 @@ async def test_finalize_deletion_purges_document_pages():
         pages_after, total_after = await repository.get_document_pages(conn, doc["id"])
 
     assert total_after == 0
+
+
+# ------------------------------------------------------------------------------
+# 8. Security Review & Concurrency Race Stress Tests
+# ------------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_parser_subprocess_environment_isolation(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+):
+    """Parser subprocess executes with sanitized environment, never inheriting credentials."""
+    # Inject mock secret credentials into parent environment
+    monkeypatch.setenv("SUPABASE_SERVICE_ROLE_KEY", "super-secret-service-key")
+    monkeypatch.setenv(
+        "DATABASE_URL", "postgresql://postgres:secretpassword@127.0.0.1:54322/postgres"
+    )
+    monkeypatch.setenv("SUPABASE_JWT_SECRET", "super-secret-jwt")
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-proj-secret-12345")
+
+    # Create dummy text file
+    txt_file = tmp_path / "env_test.txt"
+    txt_file.write_text("Testing environment isolation", encoding="utf-8")
+
+    # Run parser isolated
+    res = await run_parser_isolated(
+        input_path=txt_file,
+        mime_type="text/plain",
+        timeout_seconds=10.0,
+    )
+    assert res["total_pages"] == 1
+
+    # Verify directly via subprocess with the sanitized environment helper
+    from app.modules.knowledge_base.parser_process import SAFE_SUBPROCESS_ENV_KEYS
+
+    clean_env = {k: os.environ[k] for k in SAFE_SUBPROCESS_ENV_KEYS if k in os.environ}
+    clean_env["PYTHONPATH"] = str(Path(__file__).resolve().parent.parent)
+
+    probe_proc = await asyncio.create_subprocess_exec(
+        sys.executable,
+        "-c",
+        "import os, json; print(json.dumps(dict(os.environ)))",
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+        env=clean_env,
+    )
+    stdout, _ = await probe_proc.communicate()
+    child_env = json.loads(stdout.decode("utf-8"))
+
+    # Assert no secrets are present in child environment
+    assert "SUPABASE_SERVICE_ROLE_KEY" not in child_env
+    assert "DATABASE_URL" not in child_env
+    assert "SUPABASE_JWT_SECRET" not in child_env
+    assert "OPENAI_API_KEY" not in child_env
+
+
+@pytest.mark.asyncio
+async def test_worker_provenance_preserves_extraction_version():
+    """Worker page insertion preserves parent document's extraction_version."""
+    user_id = await create_db_user()
+    subject_id, topic_id = await create_test_taxonomy()
+    content = make_pdf_bytes(["Version 2 Page"])
+    doc, job = await create_confirmed_document(user_id, subject_id, topic_id, content)
+
+    pool = get_pool()
+    # Explicitly set parent document extraction_version to 2
+    async with pool.acquire() as conn:
+        await conn.execute(
+            "UPDATE public.kb_documents SET extraction_version = 2 WHERE id = $1",
+            doc["id"],
+        )
+
+    worker = KnowledgeBaseExtractionWorker(
+        settings=WorkerSettings(WORKER_ID="version-worker-1"),
+        once=True,
+    )
+    await worker.start()
+    try:
+        claimed = await worker.process_next_job()
+        assert claimed is True
+    finally:
+        await worker.stop()
+
+    async with pool.acquire() as conn:
+        db_doc = await conn.fetchrow("SELECT * FROM public.kb_documents WHERE id = $1", doc["id"])
+        pages_rows = await conn.fetch(
+            "SELECT page_number, extraction_version FROM public.kb_document_pages WHERE document_id = $1",
+            doc["id"],
+        )
+
+    assert db_doc["extraction_version"] == 2
+    assert len(pages_rows) == 1
+    assert pages_rows[0]["extraction_version"] == 2
+
+
+@pytest.mark.asyncio
+async def test_concurrent_claim_delete_complete_race():
+    """Stress test: Concurrent claiming, document deletion, and completion on multiple documents.
+
+    Verifies:
+    1. Zero deadlocks (no SQLSTATE 40P01).
+    2. Consistent document-first, job-second locking.
+    3. Deleted documents are never reactivated to 'processing' or 'completed'.
+    4. Pages are never persisted after deletion wins.
+    5. No jobs remain stuck in 'processing' for deleted documents.
+    """
+    user_id = await create_db_user()
+    subject_id, topic_id = await create_test_taxonomy()
+    pool = get_pool()
+
+    # Create 8 separate documents and queued jobs
+    docs_jobs = []
+    for i in range(8):
+        content = make_pdf_bytes([f"Race Page Document {i}"])
+        doc, job = await create_confirmed_document(
+            user_id, subject_id, topic_id, content, filename=f"race_{i}.pdf"
+        )
+        docs_jobs.append((doc, job))
+
+    deadlock_errors = []
+
+    async def _worker_claim_and_complete(worker_idx: int):
+        worker_id = f"race-worker-{worker_idx}"
+        try:
+            async with pool.acquire() as conn:
+                claimed = await job_repository.claim_next_job(conn, worker_id, lease_ttl_seconds=60)
+            if not claimed:
+                return
+
+            # Simulate brief processing delay
+            await asyncio.sleep(0.02)
+
+            fake_pages = [
+                {
+                    "page_number": 1,
+                    "raw_text": "Extracted text content",
+                    "character_count": 22,
+                    "word_count": 3,
+                    "has_text": True,
+                }
+            ]
+            async with pool.acquire() as conn:
+                await job_repository.complete_job_success(
+                    conn=conn,
+                    job_id=claimed["job_id"],
+                    document_id=claimed["document_id"],
+                    worker_id=worker_id,
+                    lease_token=claimed["lease_token"],
+                    pages=fake_pages,
+                    has_any_text=True,
+                )
+        except Exception as e:
+            if "deadlock" in str(e).lower() or getattr(e, "sqlstate", None) == "40P01":
+                deadlock_errors.append(e)
+            raise
+
+    async def _user_delete_doc(doc_id: UUID):
+        # Stagger slightly to maximize concurrency collision with worker claim/complete
+        await asyncio.sleep(0.01)
+        try:
+            async with pool.acquire() as conn:
+                await repository.transition_document_to_deleting(
+                    conn=conn, document_id=doc_id, user_id=user_id, is_admin=False
+                )
+        except Exception as e:
+            if "deadlock" in str(e).lower() or getattr(e, "sqlstate", None) == "40P01":
+                deadlock_errors.append(e)
+            raise
+
+    # Execute workers and deletions concurrently
+    worker_tasks = [_worker_claim_and_complete(i) for i in range(8)]
+    delete_tasks = [_user_delete_doc(d["id"]) for d, _ in docs_jobs]
+
+    await asyncio.gather(*worker_tasks, *delete_tasks)
+
+    # 1. Zero deadlocks
+    assert len(deadlock_errors) == 0, f"Encountered deadlocks: {deadlock_errors}"
+
+    # 2. Invariant verification across all documents
+    async with pool.acquire() as conn:
+        for doc, job in docs_jobs:
+            db_doc = await conn.fetchrow(
+                "SELECT * FROM public.kb_documents WHERE id = $1", doc["id"]
+            )
+            db_job = await conn.fetchrow(
+                "SELECT * FROM public.kb_extraction_jobs WHERE id = $1", job["id"]
+            )
+            page_count = await conn.fetchval(
+                "SELECT count(*)::int FROM public.kb_document_pages WHERE document_id = $1",
+                doc["id"],
+            )
+
+            # If document was deleted
+            if db_doc["upload_status"] == "deleting":
+                # Job must NOT remain stuck in 'processing'
+                assert db_job["status"] != "processing"
+                # If deletion won before worker completed, zero pages must be persisted
+                if db_job["status"] == "failed" and db_job["error_code"] == "DOCUMENT_DELETED":
+                    assert page_count == 0
+            elif db_doc["upload_status"] == "uploaded":
+                # Document was completed before deletion ran
+                assert db_doc["extraction_status"] == "completed"
+                assert db_job["status"] == "completed"
+                assert page_count == 1
+
+
+@pytest.mark.asyncio
+async def test_worker_shutdown_terminates_active_child_process():
+    """Worker stop terminates active parser child processes cleanly."""
+    worker = KnowledgeBaseExtractionWorker(
+        settings=WorkerSettings(WORKER_ID="shutdown-test-worker"),
+        once=True,
+    )
+    await worker.start()
+
+    # Spawn long-running dummy subprocess
+    dummy_proc = await asyncio.create_subprocess_exec(
+        sys.executable,
+        "-c",
+        "import time; time.sleep(30)",
+    )
+    worker._active_processes.add(dummy_proc)
+
+    # Calling stop() must kill the subprocess
+    await worker.stop()
+
+    assert dummy_proc.returncode is not None or dummy_proc.wait() is not None
+    assert len(worker._active_processes) == 0

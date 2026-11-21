@@ -19,11 +19,15 @@ class TransientExtractionError(ExtractionError):
 
 
 # Permanent error specializations
-class CorruptFileError(PermanentExtractionError):
+class CorruptedFileError(PermanentExtractionError):
     """Raised when the document file is malformed or unreadable by the parser."""
 
-    def __init__(self, message: str = "Document is corrupt or unreadable.") -> None:
-        super().__init__(message, code="CORRUPT_FILE")
+    def __init__(self, message: str = "Document is corrupted or unreadable.") -> None:
+        super().__init__(message, code="CORRUPTED_FILE")
+
+
+# Backward compatibility alias
+CorruptFileError = CorruptedFileError
 
 
 class EncryptedPdfError(PermanentExtractionError):

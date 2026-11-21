@@ -12,7 +12,7 @@ from typing import Any
 
 from app.modules.knowledge_base.extractor_exceptions import (
     ChecksumMismatchError,
-    CorruptFileError,
+    CorruptedFileError,
     EncryptedPdfError,
     ExtractionError,
     ExtractionTimeoutError,
@@ -29,8 +29,29 @@ from app.modules.knowledge_base.txt_extractor import extract_txt_pages
 
 logger = logging.getLogger("ragbait.kb.parser_process")
 
+# Explicit environment allowlist: excludes all database, Redis, Supabase, and API credentials
+SAFE_SUBPROCESS_ENV_KEYS: frozenset[str] = frozenset(
+    {
+        # Windows essential runtime keys
+        "PATH",
+        "PATHEXT",
+        "SYSTEMROOT",
+        "SYSTEMDRIVE",
+        "WINDIR",
+        "COMSPEC",
+        "TEMP",
+        "TMP",
+        # POSIX essential runtime keys
+        "LANG",
+        "LC_ALL",
+        "TMPDIR",
+        "LD_LIBRARY_PATH",
+    }
+)
+
 ERROR_CODE_MAP: dict[str, type[ExtractionError]] = {
-    "CORRUPT_FILE": CorruptFileError,
+    "CORRUPTED_FILE": CorruptedFileError,
+    "CORRUPT_FILE": CorruptedFileError,  # Backward compatibility alias
     "ENCRYPTED_PDF": EncryptedPdfError,
     "PAGE_LIMIT_EXCEEDED": PageLimitExceededError,
     "PAYLOAD_TOO_LARGE": PayloadTooLargeError,
@@ -96,7 +117,7 @@ def main() -> None:
     except Exception as e:
         payload = {
             "status": "error",
-            "error_code": "CORRUPT_FILE",
+            "error_code": "CORRUPTED_FILE",
             "error_message": f"Unexpected parser crash: {e}",
             "is_permanent": True,
         }
@@ -116,27 +137,35 @@ async def run_parser_isolated(
     timeout_seconds: float = 120.0,
     max_pages: int = 2000,
     max_bytes: int = 26_214_400,
+    output_file: Path | None = None,
+    active_procs: set[asyncio.subprocess.Process] | None = None,
 ) -> dict[str, Any]:
-    """Execute document parsing inside an isolated OS process with hard timeout.
+    """Execute document parsing inside an isolated OS process with hard timeout and sanitized environment.
 
-    If the timeout expires, the child process is terminated immediately with SIGKILL / TerminateProcess.
-    This guarantees immunity against infinite loops, catastrophic regex backtracking,
-    or memory-exhaustion hangs in C/Rust libraries.
+    Guarantees:
+    - Child process runs with an explicit minimal environment allowlist, stripping all database,
+      Supabase, Redis, and secret keys.
+    - If the timeout expires, the child process is terminated immediately with SIGKILL / TerminateProcess.
+    - Active process reference is registered in active_procs (if provided) for safe worker shutdown.
+    - Ensures parser output is written to a designated output file.
     """
-    with tempfile.NamedTemporaryFile(
-        mode="w", suffix=".json", delete=False, prefix="kb_parser_out_"
-    ) as tmp_out:
-        output_file = Path(tmp_out.name)
+    created_tmp = False
+    if output_file is None:
+        with tempfile.NamedTemporaryFile(
+            mode="w", suffix=".json", delete=False, prefix="kb_parser_out_"
+        ) as tmp_out:
+            output_file = Path(tmp_out.name)
+            created_tmp = True
+
+    proc: asyncio.subprocess.Process | None = None
 
     try:
-        # Determine PYTHONPATH so child process imports application modules reliably
-        env = dict(os.environ)
-        # Ensure apps/api directory is on PYTHONPATH
+        # Build sanitized environment excluding all sensitive credentials
         api_root = str(Path(__file__).resolve().parent.parent.parent.parent)
-        current_pythonpath = env.get("PYTHONPATH", "")
-        env["PYTHONPATH"] = (
-            f"{api_root}{os.pathsep}{current_pythonpath}" if current_pythonpath else api_root
-        )
+        clean_env = {k: os.environ[k] for k in SAFE_SUBPROCESS_ENV_KEYS if k in os.environ}
+        clean_env["PYTHONPATH"] = api_root
+        clean_env["PYTHONUNBUFFERED"] = "1"
+        clean_env["PYTHONDONTWRITEBYTECODE"] = "1"
 
         proc = await asyncio.create_subprocess_exec(
             sys.executable,
@@ -154,8 +183,11 @@ async def run_parser_isolated(
             str(max_bytes),
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
-            env=env,
+            env=clean_env,
         )
+
+        if active_procs is not None:
+            active_procs.add(proc)
 
         try:
             stdout_bytes, stderr_bytes = await asyncio.wait_for(
@@ -173,7 +205,7 @@ async def run_parser_isolated(
 
         if not output_file.exists() or output_file.stat().st_size == 0:
             stderr_msg = stderr_bytes.decode(errors="ignore").strip()
-            raise CorruptFileError(
+            raise CorruptedFileError(
                 f"Parser process exited abnormally (code {proc.returncode}): {stderr_msg}"
             )
 
@@ -181,7 +213,7 @@ async def run_parser_isolated(
             content = output_file.read_text(encoding="utf-8")
             data = json.loads(content)
         except Exception as e:
-            raise CorruptFileError(f"Failed to read parser output payload: {e}") from e
+            raise CorruptedFileError(f"Failed to read parser output payload: {e}") from e
 
         if data.get("status") == "success":
             return data["result"]  # type: ignore[no-any-return]
@@ -200,11 +232,14 @@ async def run_parser_isolated(
             raise TransientExtractionError(err_msg, code=err_code)
 
     finally:
-        try:
-            if output_file.exists():
-                output_file.unlink()
-        except OSError:
-            pass
+        if proc is not None and active_procs is not None:
+            active_procs.discard(proc)
+        if created_tmp:
+            try:
+                if output_file.exists():
+                    output_file.unlink()
+            except OSError:
+                pass
 
 
 if __name__ == "__main__":

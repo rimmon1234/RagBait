@@ -4,7 +4,7 @@ from pathlib import Path
 from typing import Any
 
 from app.modules.knowledge_base.extractor_exceptions import (
-    CorruptFileError,
+    CorruptedFileError,
     MalformedTextError,
     PayloadTooLargeError,
 )
@@ -27,12 +27,12 @@ def extract_txt_pages(
     """
     path_obj = Path(file_path)
     if not path_obj.exists() or not path_obj.is_file():
-        raise CorruptFileError(f"Target file does not exist: {file_path}")
+        raise CorruptedFileError(f"Target file does not exist: {file_path}")
 
     try:
         raw_bytes = path_obj.read_bytes()
     except OSError as e:
-        raise CorruptFileError(f"Failed to read file from disk: {e}") from e
+        raise CorruptedFileError(f"Failed to read file from disk: {e}") from e
 
     # Check for binary null bytes
     if b"\x00" in raw_bytes:

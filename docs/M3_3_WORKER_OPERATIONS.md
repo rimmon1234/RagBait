@@ -85,7 +85,7 @@ When a permanent failure is detected, the extraction job and document immediatel
 
 | Error Code | Trigger Condition |
 |------------|-------------------|
-| `CORRUPT_FILE` | PDF structure corrupted or unreadable by parser |
+| `CORRUPTED_FILE` | PDF structure corrupted or unreadable by parser |
 | `ENCRYPTED_PDF` | PDF is encrypted or password-protected |
 | `PAGE_LIMIT_EXCEEDED` | PDF physical pages exceed configured limit (default: 2000) |
 | `PAYLOAD_TOO_LARGE` | Cumulative extracted text exceeds payload limit (default: 25 MiB) |

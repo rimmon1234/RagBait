@@ -4,6 +4,8 @@ import argparse
 import asyncio
 import hashlib
 import logging
+import os
+import shutil
 import signal
 import sys
 import tempfile
@@ -16,7 +18,7 @@ import asyncpg  # type: ignore[import-untyped]
 from app.core.errors import NotFoundError
 from app.modules.knowledge_base.extractor_exceptions import (
     ChecksumMismatchError,
-    CorruptFileError,
+    CorruptedFileError,
     FileSizeMismatchError,
     PermanentExtractionError,
     StorageStreamError,
@@ -54,6 +56,7 @@ class KnowledgeBaseExtractionWorker:
         self.pool: asyncpg.Pool | None = None
         self.is_running = False
         self._shutdown_event = asyncio.Event()
+        self._active_processes: set[asyncio.subprocess.Process] = set()
 
     async def start(self) -> None:
         """Initialize database pool and worker state."""
@@ -71,10 +74,19 @@ class KnowledgeBaseExtractionWorker:
         self.is_running = True
 
     async def stop(self) -> None:
-        """Signal shutdown and close resources cleanly."""
+        """Signal shutdown and close resources cleanly, terminating active child processes."""
         logger.info(f"Stopping KB extraction worker '{self.worker_id}'...")
         self.is_running = False
         self._shutdown_event.set()
+
+        # Terminate any active parser child processes immediately
+        for proc in list(self._active_processes):
+            try:
+                proc.kill()
+            except ProcessLookupError:
+                pass
+        self._active_processes.clear()
+
         if self.pool is not None:
             await self.pool.close()
             self.pool = None
@@ -196,12 +208,16 @@ class KnowledgeBaseExtractionWorker:
             self._heartbeat_loop(job_id, lease_token, heartbeat_stop)
         )
 
-        # Temporary file for bounded streaming download
+        # Create isolated per-job temporary directory with restricted permissions
         suffix = ".pdf" if mime_type == "application/pdf" else ".txt"
-        with tempfile.NamedTemporaryFile(
-            mode="wb", suffix=suffix, delete=False, prefix="kb_worker_doc_"
-        ) as tmp_file:
-            tmp_path = Path(tmp_file.name)
+        job_temp_dir = Path(tempfile.mkdtemp(prefix=f"kb_job_{job_id.hex[:8]}_"))
+        try:
+            os.chmod(job_temp_dir, 0o700)
+        except OSError:
+            pass
+
+        tmp_path = job_temp_dir / f"source{suffix}"
+        output_path = job_temp_dir / "parser_output.json"
 
         try:
             # 1. Stream download with bounded memory and incremental SHA-256 verification
@@ -215,11 +231,17 @@ class KnowledgeBaseExtractionWorker:
                     with open(tmp_path, "wb") as f:
                         async for chunk in stream:
                             total_bytes += len(chunk)
+                            if total_bytes > 52_428_800:
+                                raise FileSizeMismatchError(
+                                    "File size exceeds 50 MiB system ceiling."
+                                )
                             hasher.update(chunk)
                             f.write(chunk)
             except NotFoundError as e:
-                raise CorruptFileError(f"Storage object not found: {e.message}") from e
+                raise CorruptedFileError(f"Storage object not found: {e.message}") from e
             except Exception as e:
+                if isinstance(e, PermanentExtractionError):
+                    raise
                 raise StorageStreamError(f"Failed to stream object from storage: {e}") from e
 
             # 2. Verify file size and checksum
@@ -233,13 +255,15 @@ class KnowledgeBaseExtractionWorker:
                     f"File size mismatch: expected {expected_size} bytes, got {total_bytes} bytes"
                 )
 
-            # 3. Execute extraction inside isolated process with hard timeout
+            # 3. Execute extraction inside isolated process with hard timeout and sanitized environment
             result = await run_parser_isolated(
                 input_path=tmp_path,
                 mime_type=mime_type,
                 timeout_seconds=float(self.settings.MAX_EXTRACTION_DURATION_SECONDS),
                 max_pages=self.settings.MAX_PDF_PAGES,
                 max_bytes=self.settings.MAX_EXTRACTED_TEXT_BYTES,
+                output_file=output_path,
+                active_procs=self._active_processes,
             )
 
             # 4. Atomic completion & page persistence
@@ -324,12 +348,8 @@ class KnowledgeBaseExtractionWorker:
             except asyncio.CancelledError:
                 pass
 
-            # Clean temporary file
-            try:
-                if tmp_path.exists():
-                    tmp_path.unlink()
-            except OSError:
-                pass
+            # Recursively purge private temporary directory and files
+            shutil.rmtree(job_temp_dir, ignore_errors=True)
 
 
 def main() -> None:
