@@ -305,7 +305,9 @@ export function LocalInferenceWorkspace({
       chatMessages.push({ role: "system", content: systemPrompt.trim() });
     }
     for (const msg of updatedMessages) {
-      chatMessages.push({ role: msg.role, content: msg.content });
+      if (msg.content && msg.content.trim()) {
+        chatMessages.push({ role: msg.role, content: msg.content.trim() });
+      }
     }
 
     const controller = new AbortController();

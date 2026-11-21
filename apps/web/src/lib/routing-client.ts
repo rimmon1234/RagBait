@@ -66,16 +66,36 @@ export async function streamChatCompletion(
     headers.set("Authorization", `Bearer ${session.access_token}`);
   }
 
+  const idempotencyKey = `idem-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
+  const genParams: Record<string, unknown> = {};
+  if (params.temperature !== undefined) {
+    genParams.temperature = params.temperature;
+  }
+
+  // Filter out any messages with empty or whitespace-only content
+  const cleanMessages = (params.messages || []).filter(
+    (m) => m && m.content && m.content.trim().length > 0
+  );
+
+  const requestBody: Record<string, unknown> = {
+    idempotency_key: idempotencyKey,
+    credential_scope: params.credential_scope || "eligible_pool",
+    routing_mode: params.routing_mode || "auto",
+    messages: cleanMessages,
+    params: genParams,
+    stream: true,
+  };
+  if (params.model) {
+    requestBody.model = params.model;
+    requestBody.model_id = params.model;
+  }
+
   let response: Response;
   try {
     response = await fetch(url, {
       method: "POST",
       headers,
-      body: JSON.stringify({
-        credential_scope: "eligible_pool",
-        ...params,
-        stream: true,
-      }),
+      body: JSON.stringify(requestBody),
       signal: options?.signal,
     });
   } catch (err) {
@@ -97,7 +117,17 @@ export async function streamChatCompletion(
     let errorDetail = `Request failed with status ${response.status}`;
     try {
       const errJson = await response.json();
-      if (errJson.detail) {
+      if (errJson.error?.message) {
+        errorDetail = errJson.error.message;
+        if (errJson.error.details && Array.isArray(errJson.error.details)) {
+          const detailMsgs = errJson.error.details
+            .map((d: any) => `${d.loc ? d.loc.join(".") + ": " : ""}${d.msg || JSON.stringify(d)}`)
+            .join("; ");
+          if (detailMsgs) {
+            errorDetail += ` (${detailMsgs})`;
+          }
+        }
+      } else if (errJson.detail) {
         errorDetail = typeof errJson.detail === "string" ? errJson.detail : JSON.stringify(errJson.detail);
       }
     } catch {
