@@ -163,14 +163,16 @@ export default function CredentialsPage() {
 
       setValidationFeedback((prev) => ({ ...prev, [cred.id]: res }));
       // Update local item validation status
+      const isValid = res.is_valid ?? (res.outcome === "valid");
       setCredentials((prev) =>
         prev.map((c) =>
           c.id === cred.id
             ? {
                 ...c,
-                validation_status: res.is_valid ? "valid" : "invalid",
-                last_validated_at: res.probed_at,
-                validation_error_code: res.error_code,
+                validation_status: isValid ? "valid" : "invalid",
+                last_validated_at: res.probed_at || res.validated_at || new Date().toISOString(),
+                validation_error_code: res.error_code || res.safe_code,
+                billing_tier: res.billing_tier || c.billing_tier,
               }
             : c
         )
@@ -467,8 +469,8 @@ export default function CredentialsPage() {
                         <div className="flex flex-col gap-1 items-start">
                           {getValidationBadge(cred.validation_status)}
                           {feedback && (
-                            <span className="text-[11px] text-gray-500 max-w-xs truncate" title={feedback.diagnostic_message}>
-                              {feedback.diagnostic_message}
+                            <span className="text-[11px] text-gray-500 max-w-xs truncate" title={feedback.diagnostic_message || feedback.message}>
+                              {feedback.diagnostic_message || feedback.message}
                             </span>
                           )}
                           {!feedback && cred.last_validated_at && (

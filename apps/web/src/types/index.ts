@@ -196,11 +196,16 @@ export interface CredentialUpdateInput {
 
 export interface ValidationResult {
   is_valid: boolean;
-  outcome: "valid" | "invalid_key" | "quota_exhausted" | "rate_limited" | "network_error" | "unsupported_provider";
+  outcome: string;
   http_status?: number | null;
   error_code?: string | null;
-  diagnostic_message: string;
-  probed_at: string;
+  safe_code?: string;
+  message?: string;
+  diagnostic_message?: string;
+  billing_tier?: BillingTier;
+  billing_verification_error?: string | null;
+  probed_at?: string;
+  validated_at?: string;
 }
 
 export interface ReservationView {

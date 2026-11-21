@@ -122,7 +122,7 @@ async def list_providers(only_enabled: bool = False) -> list[LLMProviderResponse
     pool = get_pool()
     query = """
         SELECT id, name, runtime_type, description, is_enabled,
-               requires_account_scope, account_tier, billing_status,
+               requires_account_scope, allows_community_sharing, account_tier, billing_status,
                created_at, updated_at
         FROM public.llm_providers
     """
@@ -143,7 +143,7 @@ async def get_provider(provider_id: str) -> LLMProviderResponse:
         row = await conn.fetchrow(
             """
             SELECT id, name, runtime_type, description, is_enabled,
-                   requires_account_scope, account_tier, billing_status,
+                   requires_account_scope, allows_community_sharing, account_tier, billing_status,
                    created_at, updated_at
             FROM public.llm_providers
             WHERE id = $1
@@ -196,7 +196,7 @@ async def update_provider(
             SET {set_clause}, updated_at = now()
             WHERE id = $1
             RETURNING id, name, runtime_type, description, is_enabled,
-                      requires_account_scope, account_tier, billing_status,
+                      requires_account_scope, allows_community_sharing, account_tier, billing_status,
                       created_at, updated_at
             """,
             *params,

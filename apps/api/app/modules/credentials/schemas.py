@@ -251,6 +251,8 @@ class ValidationResultResponse(BaseModel):
     billing_tier: BillingTier = "unknown"
     billing_verification_error: str | None = None
     validated_at: datetime
+    is_valid: bool = False
+    diagnostic_message: str = ""
 
 
 class ChatEntitlementResponse(BaseModel):
