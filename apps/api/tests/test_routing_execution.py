@@ -483,10 +483,10 @@ async def test_pre_dispatch_fallback_on_candidate_specific_error():
     async def mock_reserve(admission_req):
         nonlocal call_count
         call_count += 1
-        if admission_req.provider_id == "gemini":
-            # Gemini provider is in candidate-specific cooldown
+        if admission_req.provider_id != "groq":
+            # Non-Groq providers are in candidate-specific cooldown
             raise AdmissionRejectionError(
-                reason="Gemini provider is temporarily cooling down",
+                reason=f"{admission_req.provider_id} provider is temporarily cooling down",
                 category="provider_cooldown",
             )
         # Next eligible provider (Groq) succeeds
