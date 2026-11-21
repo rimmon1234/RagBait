@@ -385,7 +385,14 @@ async def transition_document_to_deleting(
 
 
 async def finalize_document_deletion(conn: asyncpg.Connection, document_id: UUID) -> None:
-    """Finalize document deletion by archiving record."""
+    """Finalize document deletion by purging extracted pages and archiving record."""
+    await conn.execute(
+        """
+        DELETE FROM public.kb_document_pages
+        WHERE document_id = $1;
+        """,
+        document_id,
+    )
     await conn.execute(
         """
         UPDATE public.kb_documents
