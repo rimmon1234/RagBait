@@ -114,6 +114,10 @@ export async function streamChatCompletion(
   callbacks.onRouteHeaders?.(routeHeaders);
 
   if (!response.ok) {
+    if (response.status === 401 && typeof window !== "undefined") {
+      window.location.href = "/login";
+      return;
+    }
     let errorDetail = `Request failed with status ${response.status}`;
     try {
       const errJson = await response.json();
@@ -168,9 +172,18 @@ export async function streamChatCompletion(
 
           try {
             const parsed = JSON.parse(dataStr);
-            const delta = parsed.choices?.[0]?.delta?.content;
+            const delta =
+              parsed.delta ??
+              parsed.choices?.[0]?.delta?.content ??
+              parsed.content ??
+              parsed.text;
             if (delta) {
               callbacks.onDelta(delta);
+            }
+            if (parsed.error_code || (parsed.message && !delta && parsed.error_code)) {
+              callbacks.onError?.(
+                new Error(parsed.message || parsed.error_code || "Generation failed")
+              );
             }
           } catch {
             // Ignore partial non-JSON line
