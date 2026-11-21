@@ -152,8 +152,8 @@ async def create_db_user(
     if with_entitlement:
         cred = await store_credential(
             owner_id=user_id,
-            provider_id="groq",
-            raw_key=f"gsk-qualifying-{uuid4().hex}",
+            provider_id="openrouter",
+            raw_key=f"sk-or-qualifying-{uuid4().hex}",
             nickname="Contributed Shared Key",
             sharing_scope="community_shared",
             shared_consent=True,
@@ -505,10 +505,10 @@ async def test_pre_dispatch_fallback_on_candidate_specific_error():
     async def mock_reserve(admission_req):
         nonlocal call_count
         call_count += 1
-        if admission_req.provider_id == "gemini":
-            # Gemini provider is in candidate-specific cooldown
+        if admission_req.provider_id in ("gemini", "openrouter"):
+            # First choice providers are cooling down
             raise AdmissionRejectionError(
-                reason="Gemini provider is temporarily cooling down",
+                reason="Provider is temporarily cooling down",
                 category="provider_cooldown",
             )
         # Next eligible provider (Groq) succeeds

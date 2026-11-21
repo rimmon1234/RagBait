@@ -271,9 +271,9 @@ async def test_valid_shared_free_tier_credential_entitled(client: httpx.AsyncCli
 
     stored = await store_credential(
         owner_id=user_id,
-        provider_id="groq",
-        raw_key=f"gsk-test-{uuid4().hex}",
-        nickname="Active Shared Groq Key",
+        provider_id="openrouter",
+        raw_key=f"sk-or-v1-test-{uuid4().hex}",
+        nickname="Active Shared OpenRouter Key",
         sharing_scope="community_shared",
         shared_consent=True,
         status="active",
@@ -308,7 +308,7 @@ async def test_valid_shared_free_tier_credential_entitled(client: httpx.AsyncCli
 
     # Chat execution succeeds
     with patch(
-        "app.modules.llm_gateway.providers.groq.GroqAdapter.stream",
+        "app.modules.llm_gateway.providers.openrouter.OpenRouterAdapter.stream",
         side_effect=_mock_stream_generator,
     ):
         chat_resp = await client.post(
@@ -316,7 +316,7 @@ async def test_valid_shared_free_tier_credential_entitled(client: httpx.AsyncCli
             json={
                 "messages": [{"role": "user", "content": "Hello"}],
                 "routing_mode": "auto",
-                "model_id": "openai/gpt-oss-120b",
+                "model_id": "openrouter/meta-llama/llama-3.3-70b-instruct:free",
                 "idempotency_key": f"test-idem-ok-{uuid4().hex[:8]}",
             },
             headers=headers,
@@ -351,8 +351,8 @@ async def test_revocation_immediately_blocks_chat(client: httpx.AsyncClient):
 
     stored = await store_credential(
         owner_id=user_id,
-        provider_id="groq",
-        raw_key=f"gsk-test-{uuid4().hex}",
+        provider_id="openrouter",
+        raw_key=f"sk-or-test-{uuid4().hex}",
         nickname="Key To Delete",
         sharing_scope="community_shared",
         shared_consent=True,
@@ -402,8 +402,8 @@ async def test_temporary_quota_exhaustion_preserves_chat_entitlement():
 
     stored = await store_credential(
         owner_id=user_id,
-        provider_id="groq",
-        raw_key=f"gsk-test-{uuid4().hex}",
+        provider_id="openrouter",
+        raw_key=f"sk-or-test-{uuid4().hex}",
         nickname="Exhausted Key",
         sharing_scope="community_shared",
         shared_consent=True,
@@ -434,8 +434,8 @@ async def test_credential_scope_owner_only_excludes_shared_keys():
     # foreign_user contributes a shared key
     foreign_key = await store_credential(
         owner_id=foreign_user,
-        provider_id="groq",
-        raw_key=f"gsk-foreign-{uuid4().hex}",
+        provider_id="openrouter",
+        raw_key=f"sk-or-foreign-{uuid4().hex}",
         nickname="Foreign Shared Key",
         sharing_scope="community_shared",
         shared_consent=True,
@@ -453,7 +453,7 @@ async def test_credential_scope_owner_only_excludes_shared_keys():
     # 1. With eligible_pool, foreign shared key IS discovered
     pool_candidates = await discover_cloud_candidates(
         user_id=owner_user,
-        requested_provider_id="groq",
+        requested_provider_id="openrouter",
         credential_scope="eligible_pool",
     )
     shared_found = any(c.is_shared_credential for c in pool_candidates)
@@ -462,7 +462,7 @@ async def test_credential_scope_owner_only_excludes_shared_keys():
     # 2. With owner_only, foreign shared key is NEVER discovered
     owner_candidates = await discover_cloud_candidates(
         user_id=owner_user,
-        requested_provider_id="groq",
+        requested_provider_id="openrouter",
         credential_scope="owner_only",
     )
     assert all(not c.is_shared_credential for c in owner_candidates)

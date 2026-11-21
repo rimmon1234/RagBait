@@ -103,7 +103,7 @@ async def create_user_credential(
     sharing_scope = payload.sharing_scope
     shared_consent = payload.shared_consent
 
-    if sharing_scope == "community_shared":
+    if sharing_scope == "community_shared" or shared_consent:
         if not provider.get("allows_community_sharing", False):
             raise ConflictError(
                 f"Provider '{payload.provider_id}' is not approved for community sharing"
@@ -114,9 +114,15 @@ async def create_user_credential(
             )
         consent_timestamp = datetime.now(UTC)
         consent_version = "v1"
+        sharing_scope = "community_shared"
+        shared_consent = True
     else:
         sharing_scope = "owner_only"
         shared_consent = False
+
+    # Server enforces platform-controlled default quotas (users cannot override platform limits)
+    platform_daily_limit = 500
+    platform_monthly_limit = 15000
 
     # Store in vault repository
     stored = await store_credential(
@@ -128,8 +134,8 @@ async def create_user_credential(
         shared_consent=shared_consent,
         sharing_consent_timestamp=consent_timestamp,
         consent_version=consent_version,
-        daily_request_limit=payload.daily_request_limit,
-        monthly_request_limit=payload.monthly_request_limit,
+        daily_request_limit=platform_daily_limit,
+        monthly_request_limit=platform_monthly_limit,
         daily_spending_limit_cents=payload.daily_spending_limit_cents,
         monthly_spending_limit_cents=payload.monthly_spending_limit_cents,
         status="disabled",  # Credentials start disabled until validated
@@ -195,11 +201,11 @@ async def update_user_credential(
     if payload.nickname is not None:
         updates["nickname"] = payload.nickname.strip()
 
-    if payload.daily_request_limit is not None:
-        updates["daily_request_limit"] = payload.daily_request_limit
-
-    if payload.monthly_request_limit is not None:
-        updates["monthly_request_limit"] = payload.monthly_request_limit
+    if payload.daily_request_limit is not None or payload.monthly_request_limit is not None:
+        raise ConflictError(
+            "Platform-controlled quotas cannot be modified by user requests",
+            code="QUOTA_MODIFICATION_FORBIDDEN",
+        )
 
     if payload.daily_spending_limit_cents is not None:
         updates["daily_spending_limit_cents"] = payload.daily_spending_limit_cents
@@ -224,6 +230,10 @@ async def update_user_credential(
                 raise ConflictError(
                     f"Provider '{existing.provider_id}' is not approved for community sharing"
                 )
+            if existing.billing_tier != "verified_free_only":
+                raise ConflictError(
+                    "Only verified free-tier credentials can be shared with the community. Current billing tier is not verified."
+                )
             if not target_consent:
                 raise ValidationError("Explicit consent is required to enable community sharing")
             updates["sharing_scope"] = "community_shared"
@@ -242,9 +252,16 @@ async def update_user_credential(
         updates=updates,
     )
 
+    # Log audit event for updates
+    audit_action = "credential.updated"
+    if updates.get("sharing_scope") == "owner_only" and existing.sharing_scope == "community_shared":
+        audit_action = "credential.consent_withdrawn"
+    elif updates.get("sharing_scope") == "community_shared" and existing.sharing_scope == "owner_only":
+        audit_action = "credential.consent_granted"
+
     await log_credential_audit(
         actor_id=owner_id,
-        action="credential.updated",
+        action=audit_action,
         credential_id=credential_id,
         provider_id=existing.provider_id,
         outcome="success",

@@ -298,9 +298,9 @@ async def test_community_sharing_consent_rules(client: httpx.AsyncClient):
     res_no_consent = await client.post(
         "/api/v1/me/api-keys",
         json={
-            "provider_id": "groq",
+            "provider_id": "openrouter",
             "nickname": "Shared No Consent",
-            "api_key": "gsk_key_without_consent_123",
+            "api_key": "sk-or-v1-key_without_consent_123",
             "sharing_scope": "community_shared",
             "shared_consent": False,
         },
@@ -325,13 +325,13 @@ async def test_community_sharing_consent_rules(client: httpx.AsyncClient):
         "not approved for community sharing" in res_unapproved_provider.json()["error"]["message"]
     )
 
-    # 3. Community sharing on approved provider (Groq) with consent succeeds
+    # 3. Community sharing on approved provider (OpenRouter) with consent succeeds
     res_approved = await client.post(
         "/api/v1/me/api-keys",
         json={
-            "provider_id": "groq",
-            "nickname": "Valid Shared Groq",
-            "api_key": "gsk_key_with_explicit_consent_987",
+            "provider_id": "openrouter",
+            "nickname": "Valid Shared OpenRouter",
+            "api_key": "sk-or-v1-key_with_explicit_consent_987",
             "sharing_scope": "community_shared",
             "shared_consent": True,
         },

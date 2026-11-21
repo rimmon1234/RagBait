@@ -108,8 +108,8 @@ async def create_db_user(
     if with_entitlement:
         cred = await store_credential(
             owner_id=user_id,
-            provider_id="groq",
-            raw_key=f"gsk-qualifying-{uuid4().hex}",
+            provider_id="openrouter",
+            raw_key=f"sk-or-qualifying-{uuid4().hex}",
             nickname="Contributed Shared Key",
             sharing_scope="community_shared",
             shared_consent=True,

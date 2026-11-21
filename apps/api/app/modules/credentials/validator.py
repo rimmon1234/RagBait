@@ -174,8 +174,8 @@ async def probe_openai_compatible(
 
 
 async def probe_openrouter(raw_key: str) -> ValidationResult:
-    """Validate OpenRouter API key via official GET /api/v1/auth/key inspection endpoint."""
-    url = "https://openrouter.ai/api/v1/auth/key"
+    """Validate OpenRouter API key via official GET /api/v1/key inspection endpoint."""
+    url = "https://openrouter.ai/api/v1/key"
     headers = {"Authorization": f"Bearer {raw_key}"}
 
     try:
