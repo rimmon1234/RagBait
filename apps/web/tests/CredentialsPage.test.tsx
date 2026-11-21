@@ -82,7 +82,7 @@ describe("CredentialsPage", () => {
   it("renders empty state when no credentials exist and filters out local runtime (Ollama)", async () => {
     vi.mocked(api.fetchWithAuth).mockImplementation(async (url: string) => {
       if (url.includes("/api/v1/me/api-keys")) {
-        return { credentials: [], total: 0 };
+        return { items: [], credentials: [], total: 0 };
       }
       if (url.includes("/api/v1/llm/providers")) {
         return mockProviders;
@@ -110,7 +110,7 @@ describe("CredentialsPage", () => {
   it("renders credentials list with masked key and platform quotas (never plaintext)", async () => {
     vi.mocked(api.fetchWithAuth).mockImplementation(async (url: string) => {
       if (url.includes("/api/v1/me/api-keys")) {
-        return { credentials: mockCredentials, total: 1 };
+        return { items: mockCredentials, credentials: mockCredentials, total: 1 };
       }
       if (url.includes("/api/v1/llm/providers")) {
         return mockProviders;
@@ -138,7 +138,7 @@ describe("CredentialsPage", () => {
   it("opens add modal with simplified inputs and allows opting into community sharing for approved providers", async () => {
     vi.mocked(api.fetchWithAuth).mockImplementation(async (url: string) => {
       if (url.includes("/api/v1/me/api-keys")) {
-        return { credentials: [], total: 0 };
+        return { items: [], credentials: [], total: 0 };
       }
       if (url.includes("/api/v1/llm/providers")) {
         return mockProviders;
@@ -214,7 +214,7 @@ describe("CredentialsPage", () => {
         };
       }
       if (url.includes("/api/v1/me/api-keys")) {
-        return { credentials: mockCredentials, total: 1 };
+        return { items: mockCredentials, credentials: mockCredentials, total: 1 };
       }
       if (url.includes("/api/v1/llm/providers")) {
         return mockProviders;
@@ -258,7 +258,7 @@ describe("CredentialsPage", () => {
         return valRes;
       }
       if (url.includes("/api/v1/me/api-keys")) {
-        return { credentials: mockCredentials, total: 1 };
+        return { items: mockCredentials, credentials: mockCredentials, total: 1 };
       }
       if (url.includes("/api/v1/llm/providers")) {
         return mockProviders;
@@ -292,7 +292,7 @@ describe("CredentialsPage", () => {
         return {};
       }
       if (url.includes("/api/v1/me/api-keys")) {
-        return { credentials: mockCredentials, total: 1 };
+        return { items: mockCredentials, credentials: mockCredentials, total: 1 };
       }
       if (url.includes("/api/v1/llm/providers")) {
         return mockProviders;

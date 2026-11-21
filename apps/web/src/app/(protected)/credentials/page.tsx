@@ -77,7 +77,9 @@ export default function CredentialsPage() {
       ]);
 
       if (credsRes.status === "fulfilled") {
-        setCredentials(credsRes.value.credentials);
+        const raw = credsRes.value;
+        const list = raw?.items || raw?.credentials || [];
+        setCredentials(Array.isArray(list) ? list : []);
       } else {
         throw credsRes.reason;
       }
@@ -397,7 +399,7 @@ export default function CredentialsPage() {
           <div className="flex h-48 items-center justify-center">
             <Loader2 className="h-8 w-8 animate-spin text-blue-600" />
           </div>
-        ) : credentials.length === 0 ? (
+        ) : (credentials?.length ?? 0) === 0 ? (
           <div className="px-6 py-12 text-center">
             <Key className="mx-auto h-12 w-12 text-gray-300" />
             <h3 className="mt-2 text-base font-medium text-gray-900">No credentials configured</h3>
@@ -429,7 +431,7 @@ export default function CredentialsPage() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-200 bg-white">
-                {credentials.map((cred) => {
+                {(credentials || []).map((cred) => {
                   const isValidating = validatingIds[cred.id] || false;
                   const isToggling = togglingIds[cred.id] || false;
                   const isTogglingScope = scopeTogglingIds[cred.id] || false;

@@ -167,7 +167,8 @@ export interface ApiKeyCredential {
 }
 
 export interface CredentialListResponse {
-  credentials: ApiKeyCredential[];
+  items: ApiKeyCredential[];
+  credentials?: ApiKeyCredential[];
   total: number;
 }
 
