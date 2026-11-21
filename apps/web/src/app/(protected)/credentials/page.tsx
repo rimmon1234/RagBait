@@ -100,11 +100,13 @@ export default function CredentialsPage() {
 
   // Filter out local runtimes (e.g. Ollama) so they never appear in API credentials
   const cloudProviders = providers.filter((p) => p.runtime_type !== "local_runtime");
+  const sharingEligibleProviders = cloudProviders.filter((p) => p.allows_community_sharing);
+  const ownerOnlyProviders = cloudProviders.filter((p) => !p.allows_community_sharing);
   const selectedProviderMeta = providers.find((p) => p.id === addProviderId);
   const providerAllowsSharing = selectedProviderMeta?.allows_community_sharing ?? false;
 
   const handleOpenAddModal = () => {
-    const defaultProvider = cloudProviders[0]?.id || "openrouter";
+    const defaultProvider = sharingEligibleProviders[0]?.id || cloudProviders[0]?.id || "openrouter";
     setAddProviderId(defaultProvider);
     setAddNickname("");
     setAddApiKey("");
@@ -496,7 +498,7 @@ export default function CredentialsPage() {
                           ) : (
                             <>
                               <span className="inline-flex items-center gap-1 text-xs font-medium text-gray-700 bg-gray-100 px-2 py-0.5 rounded">
-                                <Lock className="h-3 w-3" /> Owner Only
+                                <Lock className="h-3 w-3" /> Owner-Only (Private)
                               </span>
                               {allowsSharing && isVerifiedFree ? (
                                 <button
@@ -509,7 +511,9 @@ export default function CredentialsPage() {
                                   Share with Community
                                 </button>
                               ) : (
-                                <span className="text-[10px] text-gray-400">Private only</span>
+                                <span className="text-[10px] text-gray-400">
+                                  {allowsSharing ? "Validate key to enable sharing" : "Private only (not shareable)"}
+                                </span>
                               )}
                             </>
                           )}
@@ -609,6 +613,10 @@ export default function CredentialsPage() {
             </div>
 
             <form onSubmit={handleCreateCredential} className="px-6 py-4 space-y-4">
+              <div className="rounded-lg bg-blue-50 border border-blue-200 p-3 text-xs text-blue-900 leading-relaxed">
+                <span className="font-semibold text-blue-950">AI Chat Requirement:</span> To unlock AI Chat, contribute an eligible free-tier key (such as <strong>OpenRouter</strong>) and check <em>&quot;Share spare capacity with RagBait Community Pool&quot;</em> below. Private keys (Owner-Only) remain strictly confidential to your account and <strong>will not count as a community contribution</strong>.
+              </div>
+
               {formError && (
                 <div className="rounded-lg bg-red-50 p-3 text-xs text-red-700 flex items-center gap-2">
                   <AlertCircle className="h-4 w-4 shrink-0 text-red-500" />
@@ -632,19 +640,38 @@ export default function CredentialsPage() {
                   className="mt-1 block w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none"
                 >
                   {cloudProviders.length > 0 ? (
-                    cloudProviders.map((p) => (
-                      <option key={p.id} value={p.id}>
-                        {p.name} ({p.id}) {p.allows_community_sharing ? "— Community Sharing Eligible" : "— Owner-Only (Private)"}
-                      </option>
-                    ))
+                    <>
+                      {sharingEligibleProviders.length > 0 && (
+                        <optgroup label="Community Shared Pool Eligible (Unlocks AI Chat)">
+                          {sharingEligibleProviders.map((p) => (
+                            <option key={p.id} value={p.id}>
+                              {p.name} ({p.id}) — Free-Tier Shared Pool Eligible
+                            </option>
+                          ))}
+                        </optgroup>
+                      )}
+                      {ownerOnlyProviders.length > 0 && (
+                        <optgroup label="Owner-Only / Private (Does NOT Unlock AI Chat)">
+                          {ownerOnlyProviders.map((p) => (
+                            <option key={p.id} value={p.id}>
+                              {p.name} ({p.id}) — Owner-Only (Private)
+                            </option>
+                          ))}
+                        </optgroup>
+                      )}
+                    </>
                   ) : (
                     <>
-                      <option value="openrouter">OpenRouter — Community Sharing Eligible</option>
-                      <option value="groq">Groq (Llama, Mixtral) — Owner-Only (Private)</option>
-                      <option value="gemini">Google Gemini — Owner-Only (Private)</option>
-                      <option value="cerebras">Cerebras — Owner-Only (Private)</option>
-                      <option value="openai">OpenAI — Owner-Only (Private)</option>
-                      <option value="xai">xAI — Owner-Only (Private)</option>
+                      <optgroup label="Community Shared Pool Eligible (Unlocks AI Chat)">
+                        <option value="openrouter">OpenRouter — Community Sharing Eligible</option>
+                      </optgroup>
+                      <optgroup label="Owner-Only / Private (Does NOT Unlock AI Chat)">
+                        <option value="groq">Groq (Llama, Mixtral) — Owner-Only (Private)</option>
+                        <option value="gemini">Google Gemini — Owner-Only (Private)</option>
+                        <option value="cerebras">Cerebras — Owner-Only (Private)</option>
+                        <option value="openai">OpenAI — Owner-Only (Private)</option>
+                        <option value="xai">xAI — Owner-Only (Private)</option>
+                      </optgroup>
                     </>
                   )}
                 </select>
@@ -706,8 +733,13 @@ export default function CredentialsPage() {
                           <Users className="h-3.5 w-3.5 text-purple-600" /> Share spare capacity with RagBait Community Pool (Free-tier only)
                         </div>
                         <div className="text-[11px] text-purple-700 leading-relaxed mt-1">
-                          When enabled, and once verified by the platform as a non-billable free-tier key, anonymous study requests from approved peers may route through this key. Quota is protected by platform limits (500 RPD baseline). You can revoke consent at any time.
+                          <strong>Check this box to unlock AI Chat:</strong> When enabled, and once verified by the platform as a non-billable free-tier key, anonymous study requests from approved peers may route through this key. Quota is protected by platform limits (500 RPD baseline). You can revoke consent at any time.
                         </div>
+                        {!addSharedConsent && (
+                          <div className="mt-2 text-[11px] font-medium text-amber-800 bg-amber-50 border border-amber-200 rounded p-2">
+                            ⚠️ <strong>Key will be Private:</strong> Leaving this unchecked saves the key as <em>Owner-Only (Private)</em>. Private keys do <u>not</u> satisfy the mandatory community contribution and will <u>not</u> unlock AI Chat.
+                          </div>
+                        )}
                       </div>
                     </label>
                   </div>
@@ -715,9 +747,9 @@ export default function CredentialsPage() {
                   <div className="rounded-lg border border-gray-200 bg-gray-50 p-3 flex items-start gap-2.5">
                     <Lock className="h-4 w-4 text-gray-500 shrink-0 mt-0.5" />
                     <div>
-                      <div className="text-xs font-semibold text-gray-800">Owner-Only Provider</div>
-                      <div className="text-[11px] text-gray-500 leading-relaxed">
-                        This provider operates in Owner-Only mode under platform policy. Your key will be saved privately and will never be shared with other users.
+                      <div className="text-xs font-semibold text-gray-800">Owner-Only Provider (Private)</div>
+                      <div className="text-[11px] text-gray-500 leading-relaxed mt-0.5">
+                        This provider operates in Owner-Only mode because automated non-billable tier verification is not supported. Your key will be saved privately and will <strong>not count toward the AI Chat community contribution requirement</strong>.
                       </div>
                     </div>
                   </div>

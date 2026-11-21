@@ -551,7 +551,7 @@ export function LocalInferenceWorkspace({
                 <AlertCircle className="h-4 w-4 text-blue-700 shrink-0" />
                 <span>
                   {entitlement.reason_code === "NO_CREDENTIAL_CONTRIBUTED" &&
-                    "No qualifying key contributed yet. Please add a supported free-tier API key (e.g. Gemini or Groq)."}
+                    "No qualifying key contributed yet. Please add a verified free-tier API key (e.g. OpenRouter free key) and enable community sharing to unlock AI Chat."}
                   {entitlement.reason_code === "VALIDATION_REQUIRED" &&
                     "Key validation required. Please run the validation probe in Key Management."}
                   {entitlement.reason_code === "SHARING_CONSENT_REQUIRED" &&
