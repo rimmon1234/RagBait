@@ -15,6 +15,7 @@ EffectiveState = Literal[
     "suspended",
     "contribution_required",
     "admin",
+    "active",
 ]
 
 
@@ -26,6 +27,7 @@ class AccessStateResponse(BaseModel):
     role: UserRole
     approval_status: ApprovalStatus
     has_pending_request: bool
+    chat_entitled: bool = False
 
 
 class AccessRequestResponse(BaseModel):

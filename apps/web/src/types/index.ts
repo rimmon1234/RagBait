@@ -7,7 +7,8 @@ export type EffectiveState =
   | "rejected"
   | "suspended"
   | "contribution_required"
-  | "admin";
+  | "admin"
+  | "active";
 
 export interface UserProfile {
   id: string;
@@ -25,6 +26,13 @@ export interface AccessStateResponse {
   role: UserRole;
   approval_status: ApprovalStatus;
   has_pending_request: boolean;
+  chat_entitled?: boolean;
+}
+
+export interface ChatEntitlementResponse {
+  eligible: boolean;
+  reason_code: string;
+  eligible_credential_count: number;
 }
 
 export interface OverviewResponse {
@@ -128,6 +136,7 @@ export type ValidationStatus =
   | "rate_limited"
   | "error";
 export type CredentialSharingScope = "owner_only" | "community_shared";
+export type BillingTier = "verified_free_only" | "paid" | "unknown";
 
 export interface ApiKeyCredential {
   id: string;
@@ -146,6 +155,9 @@ export interface ApiKeyCredential {
   account_scope_verified?: boolean;
   account_scope_source?: string | null;
   account_scope_verified_at?: string | null;
+  billing_tier?: BillingTier;
+  billing_verified_at?: string | null;
+  billing_verification_error?: string | null;
   daily_request_limit: number;
   monthly_request_limit: number;
   daily_spending_limit_cents?: number | null;
@@ -155,7 +167,8 @@ export interface ApiKeyCredential {
 }
 
 export interface CredentialListResponse {
-  credentials: ApiKeyCredential[];
+  items: ApiKeyCredential[];
+  credentials?: ApiKeyCredential[];
   total: number;
 }
 
@@ -183,11 +196,16 @@ export interface CredentialUpdateInput {
 
 export interface ValidationResult {
   is_valid: boolean;
-  outcome: "valid" | "invalid_key" | "quota_exhausted" | "rate_limited" | "network_error" | "unsupported_provider";
+  outcome: string;
   http_status?: number | null;
   error_code?: string | null;
-  diagnostic_message: string;
-  probed_at: string;
+  safe_code?: string;
+  message?: string;
+  diagnostic_message?: string;
+  billing_tier?: BillingTier;
+  billing_verification_error?: string | null;
+  probed_at?: string;
+  validated_at?: string;
 }
 
 export interface ReservationView {

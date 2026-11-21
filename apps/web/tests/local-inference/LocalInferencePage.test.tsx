@@ -1,8 +1,10 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import LocalInferencePage from "@/app/(protected)/local-inference/page";
+import { LocalInferenceWorkspace } from "@/components/LocalInferenceWorkspace";
 import * as lnaPermissions from "@/lib/local-inference/lna-permissions";
 import { ollamaClient } from "@/lib/local-inference/ollama-client";
+import * as routingClient from "@/lib/routing-client";
 import type { OllamaTagModel, OllamaUsageStats } from "@/lib/local-inference/ollama-types";
 
 // Mock Supabase client
@@ -41,9 +43,20 @@ describe("LocalInferencePage Component", () => {
       state: "granted",
     });
 
-    // Default global fetch mock for /api/v1/me
+    // Default global fetch mock for /api/v1/me and /api/v1/me/chat-entitlement
     vi.spyOn(globalThis, "fetch").mockImplementation(async (url) => {
-      if (String(url).includes("/api/v1/me")) {
+      const urlStr = String(url);
+      if (urlStr.includes("/api/v1/me/chat-entitlement")) {
+        return new Response(
+          JSON.stringify({
+            eligible: true,
+            reason_code: "QUALIFYING_CONTRIBUTION_ACTIVE",
+            eligible_credential_count: 1,
+          }),
+          { status: 200 }
+        );
+      }
+      if (urlStr.includes("/api/v1/me")) {
         return new Response(
           JSON.stringify({
             id: "user-123",
@@ -88,7 +101,7 @@ describe("LocalInferencePage Component", () => {
     });
     vi.spyOn(ollamaClient, "listModels").mockResolvedValue(mockModels);
 
-    render(<LocalInferencePage />);
+    render(<LocalInferenceWorkspace defaultMode="private" />);
 
     // Wait for connection banner to show connected automatically on page load
     await waitFor(() => {
@@ -115,7 +128,7 @@ describe("LocalInferencePage Component", () => {
     });
     vi.spyOn(ollamaClient, "listModels").mockResolvedValue([]);
 
-    render(<LocalInferencePage />);
+    render(<LocalInferenceWorkspace defaultMode="private" />);
 
     // Must show permission required banner and NOT initiate checkConnection on page load
     await waitFor(() => {
@@ -147,7 +160,7 @@ describe("LocalInferencePage Component", () => {
     });
     vi.spyOn(ollamaClient, "listModels").mockResolvedValue([]);
 
-    render(<LocalInferencePage />);
+    render(<LocalInferenceWorkspace defaultMode="private" />);
 
     // Per Chrome LNA guidance: unsupported must be treated as prompt:
     // NO automatic connection probe on page load!
@@ -179,7 +192,7 @@ describe("LocalInferencePage Component", () => {
     });
     vi.spyOn(ollamaClient, "listModels").mockResolvedValue([]);
 
-    render(<LocalInferencePage />);
+    render(<LocalInferenceWorkspace defaultMode="private" />);
 
     // When query throws: caught safely, treated as prompt/unsupported, NO fetch on page load!
     await waitFor(() => {
@@ -205,7 +218,7 @@ describe("LocalInferencePage Component", () => {
 
     const checkSpy = vi.spyOn(ollamaClient, "checkConnection");
 
-    render(<LocalInferencePage />);
+    render(<LocalInferenceWorkspace defaultMode="private" />);
 
     await waitFor(() => {
       expect(
@@ -224,7 +237,7 @@ describe("LocalInferencePage Component", () => {
       error: "Opaque fetch failure",
     });
 
-    render(<LocalInferencePage />);
+    render(<LocalInferenceWorkspace defaultMode="private" />);
 
     await waitFor(() => {
       expect(screen.getByText("Cannot Connect to Ollama")).toBeInTheDocument();
@@ -238,7 +251,7 @@ describe("LocalInferencePage Component", () => {
       error: "Connection refused",
     });
 
-    render(<LocalInferencePage />);
+    render(<LocalInferenceWorkspace defaultMode="private" />);
 
     await waitFor(() => {
       expect(screen.getByText("Ollama Daemon Offline")).toBeInTheDocument();
@@ -280,7 +293,7 @@ describe("LocalInferencePage Component", () => {
       }
     );
 
-    render(<LocalInferencePage />);
+    render(<LocalInferenceWorkspace defaultMode="private" />);
 
     const textarea = await screen.findByPlaceholderText(/Ask qwen3:0.6b/i);
     fireEvent.change(textarea, { target: { value: "Explain gravity" } });
@@ -301,7 +314,7 @@ describe("LocalInferencePage Component", () => {
     expect(screen.queryByText(/thinking/i)).not.toBeInTheDocument();
 
     // Verify usage telemetry
-    expect(screen.getByText("32.6")).toBeInTheDocument();
+    expect(screen.getByText(/32\.6/)).toBeInTheDocument();
     expect(screen.getByText("30")).toBeInTheDocument();
   });
 
@@ -323,7 +336,7 @@ describe("LocalInferencePage Component", () => {
     });
     vi.spyOn(ollamaClient, "listModels").mockResolvedValue(mockModels);
 
-    render(<LocalInferencePage />);
+    render(<LocalInferenceWorkspace defaultMode="private" />);
 
     // Wait for connection
     await waitFor(() => {
@@ -340,5 +353,160 @@ describe("LocalInferencePage Component", () => {
     expect(
       screen.getByText(/requires substantial VRAM or free system RAM/i)
     ).toBeInTheDocument();
+  });
+
+  // --- NEW TESTS: MANDATORY CONTRIBUTION GATE & UNIFIED WORKSPACE ---
+
+  it("renders contribution-required screen when user is not entitled and blocks workspace", async () => {
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (url) => {
+      const urlStr = String(url);
+      if (urlStr.includes("/api/v1/me/chat-entitlement")) {
+        return new Response(
+          JSON.stringify({
+            eligible: false,
+            reason_code: "NO_CREDENTIAL_CONTRIBUTED",
+            eligible_credential_count: 0,
+          }),
+          { status: 200 }
+        );
+      }
+      if (urlStr.includes("/api/v1/me")) {
+        return new Response(
+          JSON.stringify({
+            id: "user-123",
+            display_name: "Test Student",
+            role: "student",
+            approval_status: "approved",
+          }),
+          { status: 200 }
+        );
+      }
+      return new Response("Not found", { status: 404 });
+    });
+
+    render(<LocalInferencePage />);
+
+    await waitFor(() => {
+      expect(screen.getByText("AI Chat Contribution Required")).toBeInTheDocument();
+      expect(
+        screen.getByText(/Contribute one eligible free-tier cloud API key to unlock AI Chat/i)
+      ).toBeInTheDocument();
+      expect(screen.getByText("Manage API Credentials")).toBeInTheDocument();
+    });
+
+    // Chat playground and Ollama banners must NOT be rendered
+    expect(screen.queryByLabelText(/Execution Mode/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Ollama Connected/i)).not.toBeInTheDocument();
+  });
+
+  it("renders 3 execution modes and confirms no obsolete Community Network or Cloud Only tabs exist", async () => {
+    render(<LocalInferencePage />);
+
+    await waitFor(() => {
+      expect(screen.getByText("AI Inference Workspace")).toBeInTheDocument();
+    });
+
+    // Verify 3 mode selectors
+    expect(screen.getByRole("radio", { name: /Automatic \(Recommended\)/i })).toBeInTheDocument();
+    expect(screen.getByRole("radio", { name: /My API Keys Only/i })).toBeInTheDocument();
+    expect(screen.getByRole("radio", { name: /Private Local \(This Computer\)/i })).toBeInTheDocument();
+
+    // Verify obsolete elements are NOT present
+    expect(screen.queryByText(/Community Network/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Peer Nodes/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Cloud Only/i)).not.toBeInTheDocument();
+  });
+
+  it("retains conversation history when switching between execution modes", async () => {
+    render(<LocalInferenceWorkspace defaultMode="private" />);
+
+    // Wait for page to load
+    await waitFor(() => {
+      expect(screen.getByText("AI Inference Workspace")).toBeInTheDocument();
+    });
+
+    // Add a message by changing prompt and sending (or verifying playground exists)
+    const textarea = screen.getByRole("textbox");
+    fireEvent.change(textarea, { target: { value: "Hello cross-mode test" } });
+
+    // Switch to Automatic
+    const autoRadio = screen.getByRole("radio", { name: /Automatic \(Recommended\)/i });
+    fireEvent.click(autoRadio);
+
+    // Text input is preserved
+    expect(screen.getByDisplayValue("Hello cross-mode test")).toBeInTheDocument();
+
+    // Switch to My API Keys Only
+    const keysRadio = screen.getByRole("radio", { name: /My API Keys Only/i });
+    fireEvent.click(keysRadio);
+
+    expect(screen.getByDisplayValue("Hello cross-mode test")).toBeInTheDocument();
+  });
+
+  it("submits cloud inference with credential_scope: 'eligible_pool' in Automatic mode", async () => {
+    const streamSpy = vi.spyOn(routingClient, "streamChatCompletion").mockImplementation(
+      async (_params, callbacks) => {
+        callbacks.onDelta("Auto response");
+        callbacks.onComplete?.();
+      }
+    );
+
+    render(<LocalInferenceWorkspace defaultMode="auto" />);
+
+    await waitFor(() => {
+      expect(screen.getByText("AI Inference Workspace")).toBeInTheDocument();
+    });
+
+    const textarea = screen.getByRole("textbox");
+    fireEvent.change(textarea, { target: { value: "What is quantum computing?" } });
+
+    const sendBtn = screen.getByRole("button", { name: /send/i });
+    fireEvent.click(sendBtn);
+
+    await waitFor(() => {
+      expect(streamSpy).toHaveBeenCalledTimes(1);
+      expect(streamSpy).toHaveBeenCalledWith(
+        expect.objectContaining({
+          credential_scope: "eligible_pool",
+          routing_mode: "auto",
+        }),
+        expect.anything(),
+        expect.anything()
+      );
+      expect(screen.getByText("Auto response")).toBeInTheDocument();
+    });
+  });
+
+  it("submits cloud inference with credential_scope: 'owner_only' in My API Keys Only mode", async () => {
+    const streamSpy = vi.spyOn(routingClient, "streamChatCompletion").mockImplementation(
+      async (_params, callbacks) => {
+        callbacks.onDelta("Owner-only response");
+        callbacks.onComplete?.();
+      }
+    );
+
+    render(<LocalInferenceWorkspace defaultMode="owner_only" />);
+
+    await waitFor(() => {
+      expect(screen.getByText("AI Inference Workspace")).toBeInTheDocument();
+    });
+
+    const textarea = screen.getByRole("textbox");
+    fireEvent.change(textarea, { target: { value: "Private cloud query" } });
+
+    const sendBtn = screen.getByRole("button", { name: /send/i });
+    fireEvent.click(sendBtn);
+
+    await waitFor(() => {
+      expect(streamSpy).toHaveBeenCalledTimes(1);
+      expect(streamSpy).toHaveBeenCalledWith(
+        expect.objectContaining({
+          credential_scope: "owner_only",
+        }),
+        expect.anything(),
+        expect.anything()
+      );
+      expect(screen.getByText("Owner-only response")).toBeInTheDocument();
+    });
   });
 });

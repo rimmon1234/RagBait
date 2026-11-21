@@ -7,7 +7,6 @@ import {
   AlertCircle,
   AlertTriangle,
   CheckCircle2,
-  DollarSign,
   Edit3,
   Eye,
   EyeOff,
@@ -41,16 +40,11 @@ export default function CredentialsPage() {
 
   // Add Modal State
   const [showAddModal, setShowAddModal] = useState(false);
-  const [addProviderId, setAddProviderId] = useState("groq");
+  const [addProviderId, setAddProviderId] = useState("openrouter");
   const [addNickname, setAddNickname] = useState("");
   const [addApiKey, setAddApiKey] = useState("");
   const [showAddApiKey, setShowAddApiKey] = useState(false);
-  const [addSharingScope, setAddSharingScope] = useState<CredentialSharingScope>("owner_only");
   const [addSharedConsent, setAddSharedConsent] = useState(false);
-  const [addDailyRequestLimit, setAddDailyRequestLimit] = useState(500);
-  const [addMonthlyRequestLimit, setAddMonthlyRequestLimit] = useState(15000);
-  const [addDailySpendingCents, setAddDailySpendingCents] = useState<string>("");
-  const [addMonthlySpendingCents, setAddMonthlySpendingCents] = useState<string>("");
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
 
@@ -59,10 +53,6 @@ export default function CredentialsPage() {
   const [editNickname, setEditNickname] = useState("");
   const [editSharingScope, setEditSharingScope] = useState<CredentialSharingScope>("owner_only");
   const [editSharedConsent, setEditSharedConsent] = useState(false);
-  const [editDailyRequestLimit, setEditDailyRequestLimit] = useState(500);
-  const [editMonthlyRequestLimit, setEditMonthlyRequestLimit] = useState(15000);
-  const [editDailySpendingCents, setEditDailySpendingCents] = useState<string>("");
-  const [editMonthlySpendingCents, setEditMonthlySpendingCents] = useState<string>("");
 
   // Delete Modal State
   const [deletingCred, setDeletingCred] = useState<ApiKeyCredential | null>(null);
@@ -74,6 +64,9 @@ export default function CredentialsPage() {
   // Status Toggle State (per credential ID)
   const [togglingIds, setTogglingIds] = useState<Record<string, boolean>>({});
 
+  // Quick Scope Toggle State (per credential ID)
+  const [scopeTogglingIds, setScopeTogglingIds] = useState<Record<string, boolean>>({});
+
   const loadData = async () => {
     setLoading(true);
     setError(null);
@@ -84,7 +77,9 @@ export default function CredentialsPage() {
       ]);
 
       if (credsRes.status === "fulfilled") {
-        setCredentials(credsRes.value.credentials);
+        const raw = credsRes.value;
+        const list = raw?.items || raw?.credentials || [];
+        setCredentials(Array.isArray(list) ? list : []);
       } else {
         throw credsRes.reason;
       }
@@ -103,20 +98,20 @@ export default function CredentialsPage() {
     loadData();
   }, []);
 
+  // Filter out local runtimes (e.g. Ollama) so they never appear in API credentials
+  const cloudProviders = providers.filter((p) => p.runtime_type !== "local_runtime");
+  const sharingEligibleProviders = cloudProviders.filter((p) => p.allows_community_sharing);
+  const ownerOnlyProviders = cloudProviders.filter((p) => !p.allows_community_sharing);
   const selectedProviderMeta = providers.find((p) => p.id === addProviderId);
   const providerAllowsSharing = selectedProviderMeta?.allows_community_sharing ?? false;
 
   const handleOpenAddModal = () => {
-    setAddProviderId(providers[0]?.id || "groq");
+    const defaultProvider = sharingEligibleProviders[0]?.id || cloudProviders[0]?.id || "openrouter";
+    setAddProviderId(defaultProvider);
     setAddNickname("");
     setAddApiKey("");
     setShowAddApiKey(false);
-    setAddSharingScope("owner_only");
     setAddSharedConsent(false);
-    setAddDailyRequestLimit(500);
-    setAddMonthlyRequestLimit(15000);
-    setAddDailySpendingCents("");
-    setAddMonthlySpendingCents("");
     setFormError(null);
     setShowAddModal(true);
   };
@@ -128,10 +123,8 @@ export default function CredentialsPage() {
       return;
     }
 
-    if (addSharingScope === "community_shared" && !addSharedConsent) {
-      setFormError("You must explicitly provide consent to share your credential with the community.");
-      return;
-    }
+    const finalScope: CredentialSharingScope = providerAllowsSharing && addSharedConsent ? "community_shared" : "owner_only";
+    const finalConsent: boolean = providerAllowsSharing && addSharedConsent;
 
     setIsSubmitting(true);
     setFormError(null);
@@ -140,12 +133,8 @@ export default function CredentialsPage() {
       provider_id: addProviderId,
       nickname: addNickname.trim(),
       api_key: addApiKey.trim(),
-      sharing_scope: addSharingScope,
-      shared_consent: addSharingScope === "community_shared" ? addSharedConsent : false,
-      daily_request_limit: addDailyRequestLimit,
-      monthly_request_limit: addMonthlyRequestLimit,
-      daily_spending_limit_cents: addDailySpendingCents ? parseInt(addDailySpendingCents, 10) : null,
-      monthly_spending_limit_cents: addMonthlySpendingCents ? parseInt(addMonthlySpendingCents, 10) : null,
+      sharing_scope: finalScope,
+      shared_consent: finalConsent,
     };
 
     try {
@@ -162,7 +151,6 @@ export default function CredentialsPage() {
       setFormError(err instanceof Error ? err.message : "Failed to store credential");
     } finally {
       setIsSubmitting(false);
-      // Ensure API key is cleared on failure as well if desired
     }
   };
 
@@ -175,14 +163,16 @@ export default function CredentialsPage() {
 
       setValidationFeedback((prev) => ({ ...prev, [cred.id]: res }));
       // Update local item validation status
+      const isValid = res.is_valid ?? (res.outcome === "valid");
       setCredentials((prev) =>
         prev.map((c) =>
           c.id === cred.id
             ? {
                 ...c,
-                validation_status: res.is_valid ? "valid" : "invalid",
-                last_validated_at: res.probed_at,
-                validation_error_code: res.error_code,
+                validation_status: isValid ? "valid" : "invalid",
+                last_validated_at: res.probed_at || res.validated_at || new Date().toISOString(),
+                validation_error_code: res.error_code || res.safe_code,
+                billing_tier: res.billing_tier || c.billing_tier,
               }
             : c
         )
@@ -216,23 +206,30 @@ export default function CredentialsPage() {
     }
   };
 
+  const handleToggleSharingScope = async (cred: ApiKeyCredential, targetScope: CredentialSharingScope) => {
+    setScopeTogglingIds((prev) => ({ ...prev, [cred.id]: true }));
+    try {
+      const payload: CredentialUpdateInput = {
+        sharing_scope: targetScope,
+        shared_consent: targetScope === "community_shared",
+      };
+      const updated = await fetchWithAuth<ApiKeyCredential>(`/api/v1/me/api-keys/${cred.id}`, {
+        method: "PATCH",
+        body: JSON.stringify(payload),
+      });
+      setCredentials((prev) => prev.map((c) => (c.id === cred.id ? updated : c)));
+    } catch (err: unknown) {
+      alert(err instanceof Error ? err.message : "Failed to update sharing scope");
+    } finally {
+      setScopeTogglingIds((prev) => ({ ...prev, [cred.id]: false }));
+    }
+  };
+
   const handleOpenEdit = (cred: ApiKeyCredential) => {
     setEditingCred(cred);
     setEditNickname(cred.nickname);
     setEditSharingScope(cred.sharing_scope);
     setEditSharedConsent(cred.shared_consent);
-    setEditDailyRequestLimit(cred.daily_request_limit);
-    setEditMonthlyRequestLimit(cred.monthly_request_limit);
-    setEditDailySpendingCents(
-      cred.daily_spending_limit_cents !== null && cred.daily_spending_limit_cents !== undefined
-        ? cred.daily_spending_limit_cents.toString()
-        : ""
-    );
-    setEditMonthlySpendingCents(
-      cred.monthly_spending_limit_cents !== null && cred.monthly_spending_limit_cents !== undefined
-        ? cred.monthly_spending_limit_cents.toString()
-        : ""
-    );
     setFormError(null);
   };
 
@@ -252,10 +249,6 @@ export default function CredentialsPage() {
       nickname: editNickname.trim(),
       sharing_scope: editSharingScope,
       shared_consent: editSharingScope === "community_shared" ? editSharedConsent : false,
-      daily_request_limit: editDailyRequestLimit,
-      monthly_request_limit: editMonthlyRequestLimit,
-      daily_spending_limit_cents: editDailySpendingCents ? parseInt(editDailySpendingCents, 10) : null,
-      monthly_spending_limit_cents: editMonthlySpendingCents ? parseInt(editMonthlySpendingCents, 10) : null,
     };
 
     try {
@@ -390,7 +383,7 @@ export default function CredentialsPage() {
             <p className="text-xs text-blue-700 leading-relaxed">
               Your API keys are never stored in plaintext and cannot be read by platform administrators or other users.
               Validation probes use lightweight non-generative endpoints (0 inference tokens consumed).
-              Daily and monthly request/spending limits configured below will be actively enforced by the shared LLM gateway in M2.4.
+              Standard platform quotas (500 RPD baseline, Redis admission engine) are automatically enforced.
             </p>
           </div>
         </div>
@@ -410,12 +403,12 @@ export default function CredentialsPage() {
           <div className="flex h-48 items-center justify-center">
             <Loader2 className="h-8 w-8 animate-spin text-blue-600" />
           </div>
-        ) : credentials.length === 0 ? (
+        ) : (credentials?.length ?? 0) === 0 ? (
           <div className="px-6 py-12 text-center">
             <Key className="mx-auto h-12 w-12 text-gray-300" />
             <h3 className="mt-2 text-base font-medium text-gray-900">No credentials configured</h3>
             <p className="mt-1 text-sm text-gray-500">
-              Add your first AI provider API credential (e.g. Groq, Gemini, OpenRouter) to enable study features.
+              Add your first AI provider API credential (e.g. OpenRouter, Groq, Gemini) to enable study features.
             </p>
             <div className="mt-6">
               <button
@@ -437,15 +430,19 @@ export default function CredentialsPage() {
                   <th scope="col" className="px-6 py-3.5">Status</th>
                   <th scope="col" className="px-6 py-3.5">Validation</th>
                   <th scope="col" className="px-6 py-3.5">Sharing Scope</th>
-                  <th scope="col" className="px-6 py-3.5">Configured Limits</th>
+                  <th scope="col" className="px-6 py-3.5">Platform Quotas & Protection</th>
                   <th scope="col" className="px-6 py-3.5 text-right">Actions</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-200 bg-white">
-                {credentials.map((cred) => {
+                {(credentials || []).map((cred) => {
                   const isValidating = validatingIds[cred.id] || false;
                   const isToggling = togglingIds[cred.id] || false;
+                  const isTogglingScope = scopeTogglingIds[cred.id] || false;
                   const feedback = validationFeedback[cred.id];
+                  const prov = providers.find((p) => p.id === cred.provider_id);
+                  const allowsSharing = prov?.allows_community_sharing ?? false;
+                  const isVerifiedFree = cred.billing_tier === "verified_free_only";
 
                   return (
                     <tr key={cred.id} className="hover:bg-gray-50 transition-colors">
@@ -472,8 +469,8 @@ export default function CredentialsPage() {
                         <div className="flex flex-col gap-1 items-start">
                           {getValidationBadge(cred.validation_status)}
                           {feedback && (
-                            <span className="text-[11px] text-gray-500 max-w-xs truncate" title={feedback.diagnostic_message}>
-                              {feedback.diagnostic_message}
+                            <span className="text-[11px] text-gray-500 max-w-xs truncate" title={feedback.diagnostic_message || feedback.message}>
+                              {feedback.diagnostic_message || feedback.message}
                             </span>
                           )}
                           {!feedback && cred.last_validated_at && (
@@ -484,24 +481,52 @@ export default function CredentialsPage() {
                         </div>
                       </td>
                       <td className="px-6 py-4">
-                        {cred.sharing_scope === "community_shared" ? (
-                          <span className="inline-flex items-center gap-1 text-xs font-medium text-purple-700 bg-purple-50 px-2 py-1 rounded border border-purple-200">
-                            <Users className="h-3 w-3" /> Community Shared
-                          </span>
-                        ) : (
-                          <span className="inline-flex items-center gap-1 text-xs font-medium text-gray-700 bg-gray-100 px-2 py-1 rounded">
-                            <Lock className="h-3 w-3" /> Owner Only
-                          </span>
-                        )}
+                        <div className="flex flex-col gap-1.5 items-start">
+                          {cred.sharing_scope === "community_shared" ? (
+                            <>
+                              <span className="inline-flex items-center gap-1 text-xs font-medium text-purple-700 bg-purple-50 px-2 py-0.5 rounded border border-purple-200">
+                                <Users className="h-3 w-3" /> Community Shared
+                              </span>
+                              <button
+                                type="button"
+                                onClick={() => handleToggleSharingScope(cred, "owner_only")}
+                                disabled={isTogglingScope}
+                                className="text-[11px] font-medium text-gray-600 hover:text-gray-900 underline flex items-center gap-1 disabled:opacity-50"
+                              >
+                                {isTogglingScope ? <Loader2 className="h-2.5 w-2.5 animate-spin" /> : <Lock className="h-2.5 w-2.5" />}
+                                Make Private
+                              </button>
+                            </>
+                          ) : (
+                            <>
+                              <span className="inline-flex items-center gap-1 text-xs font-medium text-gray-700 bg-gray-100 px-2 py-0.5 rounded">
+                                <Lock className="h-3 w-3" /> Owner-Only (Private)
+                              </span>
+                              {allowsSharing && isVerifiedFree ? (
+                                <button
+                                  type="button"
+                                  onClick={() => handleToggleSharingScope(cred, "community_shared")}
+                                  disabled={isTogglingScope}
+                                  className="text-[11px] font-medium text-purple-600 hover:text-purple-800 underline flex items-center gap-1 disabled:opacity-50"
+                                >
+                                  {isTogglingScope ? <Loader2 className="h-2.5 w-2.5 animate-spin" /> : <Users className="h-2.5 w-2.5" />}
+                                  Share with Community
+                                </button>
+                              ) : (
+                                <span className="text-[10px] text-gray-400">
+                                  {allowsSharing ? "Validate key to enable sharing" : "Private only (not shareable)"}
+                                </span>
+                              )}
+                            </>
+                          )}
+                        </div>
                       </td>
                       <td className="px-6 py-4 text-xs text-gray-600">
-                        <div>{cred.daily_request_limit} req/day</div>
-                        <div className="text-gray-400">{cred.monthly_request_limit} req/mo</div>
-                        {(cred.daily_spending_limit_cents !== null || cred.monthly_spending_limit_cents !== null) && (
-                          <div className="mt-1 text-[11px] text-emerald-600 font-medium">
-                            ${((cred.daily_spending_limit_cents || 0) / 100).toFixed(2)} / ${((cred.monthly_spending_limit_cents || 0) / 100).toFixed(2)}
-                          </div>
-                        )}
+                        <div className="font-medium text-gray-800">500 RPD Baseline</div>
+                        <div className="text-gray-400">15,000 req/mo</div>
+                        <div className="mt-0.5 text-[11px] text-blue-600 font-medium">
+                          Redis Admission Engine
+                        </div>
                       </td>
                       <td className="px-6 py-4 text-right">
                         <div className="flex items-center justify-end gap-2">
@@ -549,7 +574,7 @@ export default function CredentialsPage() {
                           {/* Edit Button */}
                           <button
                             onClick={() => handleOpenEdit(cred)}
-                            title="Edit metadata & limits"
+                            title="Edit metadata"
                             className="rounded p-1.5 text-gray-500 hover:bg-gray-100 hover:text-gray-700"
                           >
                             <Edit3 className="h-4 w-4" />
@@ -590,6 +615,10 @@ export default function CredentialsPage() {
             </div>
 
             <form onSubmit={handleCreateCredential} className="px-6 py-4 space-y-4">
+              <div className="rounded-lg bg-blue-50 border border-blue-200 p-3 text-xs text-blue-900 leading-relaxed">
+                <span className="font-semibold text-blue-950">AI Chat Requirement:</span> To unlock AI Chat, contribute an eligible free-tier key (such as <strong>OpenRouter</strong>) and check <em>&quot;Share spare capacity with RagBait Community Pool&quot;</em> below. Private keys (Owner-Only) remain strictly confidential to your account and <strong>will not count as a community contribution</strong>.
+              </div>
+
               {formError && (
                 <div className="rounded-lg bg-red-50 p-3 text-xs text-red-700 flex items-center gap-2">
                   <AlertCircle className="h-4 w-4 shrink-0 text-red-500" />
@@ -607,26 +636,44 @@ export default function CredentialsPage() {
                     setAddProviderId(nextId);
                     const p = providers.find((pr) => pr.id === nextId);
                     if (p && !p.allows_community_sharing) {
-                      setAddSharingScope("owner_only");
                       setAddSharedConsent(false);
                     }
                   }}
                   className="mt-1 block w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none"
                 >
-                  {providers.length > 0 ? (
-                    providers.map((p) => (
-                      <option key={p.id} value={p.id}>
-                        {p.name} ({p.id}) {p.allows_community_sharing ? "— Community Sharing Eligible" : "— Owner-Only"}
-                      </option>
-                    ))
+                  {cloudProviders.length > 0 ? (
+                    <>
+                      {sharingEligibleProviders.length > 0 && (
+                        <optgroup label="Community Shared Pool Eligible (Unlocks AI Chat)">
+                          {sharingEligibleProviders.map((p) => (
+                            <option key={p.id} value={p.id}>
+                              {p.name} ({p.id}) — Free-Tier Shared Pool Eligible
+                            </option>
+                          ))}
+                        </optgroup>
+                      )}
+                      {ownerOnlyProviders.length > 0 && (
+                        <optgroup label="Owner-Only / Private (Does NOT Unlock AI Chat)">
+                          {ownerOnlyProviders.map((p) => (
+                            <option key={p.id} value={p.id}>
+                              {p.name} ({p.id}) — Owner-Only (Private)
+                            </option>
+                          ))}
+                        </optgroup>
+                      )}
+                    </>
                   ) : (
                     <>
-                      <option value="groq">Groq (Llama, Mixtral) — Community Sharing Eligible</option>
-                      <option value="gemini">Google Gemini — Owner-Only</option>
-                      <option value="openrouter">OpenRouter — Community Sharing Eligible</option>
-                      <option value="cerebras">Cerebras — Community Sharing Eligible</option>
-                      <option value="openai">OpenAI — Owner-Only</option>
-                      <option value="xai">xAI — Owner-Only</option>
+                      <optgroup label="Community Shared Pool Eligible (Unlocks AI Chat)">
+                        <option value="openrouter">OpenRouter — Community Sharing Eligible</option>
+                      </optgroup>
+                      <optgroup label="Owner-Only / Private (Does NOT Unlock AI Chat)">
+                        <option value="groq">Groq (Llama, Mixtral) — Owner-Only (Private)</option>
+                        <option value="gemini">Google Gemini — Owner-Only (Private)</option>
+                        <option value="cerebras">Cerebras — Owner-Only (Private)</option>
+                        <option value="openai">OpenAI — Owner-Only (Private)</option>
+                        <option value="xai">xAI — Owner-Only (Private)</option>
+                      </optgroup>
                     </>
                   )}
                 </select>
@@ -638,7 +685,7 @@ export default function CredentialsPage() {
                 <input
                   type="text"
                   required
-                  placeholder="e.g. My Groq Free Key, Research Cerebras Key"
+                  placeholder="e.g. My OpenRouter Free Key, Research Cerebras Key"
                   value={addNickname}
                   onChange={(e) => setAddNickname(e.target.value)}
                   className="mt-1 block w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none"
@@ -662,7 +709,7 @@ export default function CredentialsPage() {
                   type={showAddApiKey ? "text" : "password"}
                   required
                   autoComplete="off"
-                  placeholder="gsk_..., AIzaSy..., sk-or-..., csk-..."
+                  placeholder="sk-or-..., gsk_..., AIzaSy..., csk-..."
                   value={addApiKey}
                   onChange={(e) => setAddApiKey(e.target.value)}
                   className="mt-1 block w-full rounded-lg border border-gray-300 px-3 py-2 font-mono text-sm focus:border-blue-500 focus:outline-none"
@@ -672,132 +719,43 @@ export default function CredentialsPage() {
                 </p>
               </div>
 
-              {/* Sharing Scope & Explicit Consent */}
-              <div className="rounded-lg border border-gray-200 bg-gray-50 p-4 space-y-3">
-                <label className="block text-xs font-semibold text-gray-700">Sharing Scope</label>
-                <div className="space-y-2">
-                  <label className="flex items-start gap-2.5 cursor-pointer">
-                    <input
-                      type="radio"
-                      name="sharing_scope"
-                      value="owner_only"
-                      checked={addSharingScope === "owner_only"}
-                      onChange={() => {
-                        setAddSharingScope("owner_only");
-                        setAddSharedConsent(false);
-                      }}
-                      className="mt-0.5 text-blue-600 focus:ring-blue-500"
-                    />
-                    <div>
-                      <div className="text-xs font-semibold text-gray-800 flex items-center gap-1.5">
-                        <Lock className="h-3.5 w-3.5 text-gray-600" /> Owner Only (Private)
-                      </div>
-                      <div className="text-[11px] text-gray-500">
-                        This credential can only be used by your account for interactive study sessions and RAG queries.
-                      </div>
-                    </div>
-                  </label>
-
-                  <label className={`flex items-start gap-2.5 ${providerAllowsSharing ? "cursor-pointer" : "opacity-60 cursor-not-allowed"}`}>
-                    <input
-                      type="radio"
-                      name="sharing_scope"
-                      value="community_shared"
-                      disabled={!providerAllowsSharing}
-                      checked={addSharingScope === "community_shared"}
-                      onChange={() => setAddSharingScope("community_shared")}
-                      className="mt-0.5 text-blue-600 focus:ring-blue-500"
-                    />
-                    <div>
-                      <div className="text-xs font-semibold text-gray-800 flex items-center gap-1.5">
-                        <Users className="h-3.5 w-3.5 text-purple-600" /> Community Shared Pool
-                      </div>
-                      <div className="text-[11px] text-gray-500">
-                        {providerAllowsSharing
-                          ? "Share spare rate limit capacity with other authenticated students on RagBait."
-                          : "This provider is not approved for community sharing under institutional policy. Owner-only use only."}
-                      </div>
-                    </div>
-                  </label>
-                </div>
-
-                {/* Explicit Consent Notice for Community Sharing */}
-                {addSharingScope === "community_shared" && (
-                  <div className="rounded-md border border-purple-200 bg-purple-50 p-3 mt-3">
-                    <label className="flex items-start gap-2 cursor-pointer">
+              {/* Community Sharing Option (Platform-Controlled Defaults) */}
+              <div>
+                {providerAllowsSharing ? (
+                  <div className="rounded-lg border border-purple-200 bg-purple-50 p-3 space-y-2">
+                    <label className="flex items-start gap-2.5 cursor-pointer">
                       <input
                         type="checkbox"
                         checked={addSharedConsent}
                         onChange={(e) => setAddSharedConsent(e.target.checked)}
                         className="mt-0.5 rounded text-purple-600 focus:ring-purple-500"
                       />
-                      <span className="text-xs font-medium text-purple-900 leading-tight">
-                        I explicitly authorize RagBait to route anonymous inference requests from approved
-                        community peers through this credential, adhering to my configured rate and spending limits.
-                      </span>
+                      <div>
+                        <div className="text-xs font-semibold text-purple-900 flex items-center gap-1.5">
+                          <Users className="h-3.5 w-3.5 text-purple-600" /> Share spare capacity with RagBait Community Pool (Free-tier only)
+                        </div>
+                        <div className="text-[11px] text-purple-700 leading-relaxed mt-1">
+                          <strong>Check this box to unlock AI Chat:</strong> When enabled, and once verified by the platform as a non-billable free-tier key, anonymous study requests from approved peers may route through this key. Quota is protected by platform limits (500 RPD baseline). You can revoke consent at any time.
+                        </div>
+                        {!addSharedConsent && (
+                          <div className="mt-2 text-[11px] font-medium text-amber-800 bg-amber-50 border border-amber-200 rounded p-2">
+                            ⚠️ <strong>Key will be Private:</strong> Leaving this unchecked saves the key as <em>Owner-Only (Private)</em>. Private keys do <u>not</u> satisfy the mandatory community contribution and will <u>not</u> unlock AI Chat.
+                          </div>
+                        )}
+                      </div>
                     </label>
                   </div>
+                ) : (
+                  <div className="rounded-lg border border-gray-200 bg-gray-50 p-3 flex items-start gap-2.5">
+                    <Lock className="h-4 w-4 text-gray-500 shrink-0 mt-0.5" />
+                    <div>
+                      <div className="text-xs font-semibold text-gray-800">Owner-Only Provider (Private)</div>
+                      <div className="text-[11px] text-gray-500 leading-relaxed mt-0.5">
+                        This provider operates in Owner-Only mode because automated non-billable tier verification is not supported. Your key will be saved privately and will <strong>not count toward the AI Chat community contribution requirement</strong>.
+                      </div>
+                    </div>
+                  </div>
                 )}
-              </div>
-
-              {/* Limits Configuration */}
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <label className="block text-xs font-semibold text-gray-700">Daily Request Limit</label>
-                  <input
-                    type="number"
-                    min="1"
-                    max="100000"
-                    value={addDailyRequestLimit}
-                    onChange={(e) => setAddDailyRequestLimit(parseInt(e.target.value, 10) || 1)}
-                    className="mt-1 block w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none"
-                  />
-                </div>
-                <div>
-                  <label className="block text-xs font-semibold text-gray-700">Monthly Request Limit</label>
-                  <input
-                    type="number"
-                    min="1"
-                    max="1000000"
-                    value={addMonthlyRequestLimit}
-                    onChange={(e) => setAddMonthlyRequestLimit(parseInt(e.target.value, 10) || 1)}
-                    className="mt-1 block w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none"
-                  />
-                </div>
-                <div>
-                  <label className="block text-xs font-semibold text-gray-700">
-                    Daily Spending Cap ($) <span className="font-normal text-gray-400">(Opt)</span>
-                  </label>
-                  <input
-                    type="number"
-                    step="0.01"
-                    min="0"
-                    placeholder="e.g. 1.00"
-                    value={addDailySpendingCents ? (parseInt(addDailySpendingCents, 10) / 100).toString() : ""}
-                    onChange={(e) => {
-                      const val = parseFloat(e.target.value);
-                      setAddDailySpendingCents(isNaN(val) ? "" : Math.round(val * 100).toString());
-                    }}
-                    className="mt-1 block w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none"
-                  />
-                </div>
-                <div>
-                  <label className="block text-xs font-semibold text-gray-700">
-                    Monthly Spending Cap ($) <span className="font-normal text-gray-400">(Opt)</span>
-                  </label>
-                  <input
-                    type="number"
-                    step="0.01"
-                    min="0"
-                    placeholder="e.g. 20.00"
-                    value={addMonthlySpendingCents ? (parseInt(addMonthlySpendingCents, 10) / 100).toString() : ""}
-                    onChange={(e) => {
-                      const val = parseFloat(e.target.value);
-                      setAddMonthlySpendingCents(isNaN(val) ? "" : Math.round(val * 100).toString());
-                    }}
-                    className="mt-1 block w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none"
-                  />
-                </div>
               </div>
 
               {/* Action Buttons */}
@@ -831,7 +789,7 @@ export default function CredentialsPage() {
           <div className="w-full max-w-lg rounded-xl bg-white shadow-xl max-h-[90vh] overflow-y-auto">
             <div className="border-b border-gray-200 px-6 py-4">
               <h3 className="text-lg font-bold text-gray-900 flex items-center gap-2">
-                <Edit3 className="h-5 w-5 text-blue-600" /> Edit Credential Metadata & Limits
+                <Edit3 className="h-5 w-5 text-blue-600" /> Edit Credential Metadata
               </h3>
               <p className="mt-1 text-xs text-gray-500">
                 Update parameters for {editingCred.nickname} ({editingCred.masked_key}). Plaintext secrets cannot be modified in place.
@@ -857,59 +815,68 @@ export default function CredentialsPage() {
                 />
               </div>
 
-              {/* Limits */}
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <label className="block text-xs font-semibold text-gray-700">Daily Request Limit</label>
-                  <input
-                    type="number"
-                    min="1"
-                    value={editDailyRequestLimit}
-                    onChange={(e) => setEditDailyRequestLimit(parseInt(e.target.value, 10) || 1)}
-                    className="mt-1 block w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none"
-                  />
-                </div>
-                <div>
-                  <label className="block text-xs font-semibold text-gray-700">Monthly Request Limit</label>
-                  <input
-                    type="number"
-                    min="1"
-                    value={editMonthlyRequestLimit}
-                    onChange={(e) => setEditMonthlyRequestLimit(parseInt(e.target.value, 10) || 1)}
-                    className="mt-1 block w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none"
-                  />
-                </div>
-                <div>
-                  <label className="block text-xs font-semibold text-gray-700">Daily Spending ($)</label>
-                  <input
-                    type="number"
-                    step="0.01"
-                    min="0"
-                    placeholder="None"
-                    value={editDailySpendingCents ? (parseInt(editDailySpendingCents, 10) / 100).toString() : ""}
-                    onChange={(e) => {
-                      const val = parseFloat(e.target.value);
-                      setEditDailySpendingCents(isNaN(val) ? "" : Math.round(val * 100).toString());
-                    }}
-                    className="mt-1 block w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none"
-                  />
-                </div>
-                <div>
-                  <label className="block text-xs font-semibold text-gray-700">Monthly Spending ($)</label>
-                  <input
-                    type="number"
-                    step="0.01"
-                    min="0"
-                    placeholder="None"
-                    value={editMonthlySpendingCents ? (parseInt(editMonthlySpendingCents, 10) / 100).toString() : ""}
-                    onChange={(e) => {
-                      const val = parseFloat(e.target.value);
-                      setEditMonthlySpendingCents(isNaN(val) ? "" : Math.round(val * 100).toString());
-                    }}
-                    className="mt-1 block w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none"
-                  />
-                </div>
-              </div>
+              {/* Privacy / Sharing Scope Controls */}
+              {(() => {
+                const prov = providers.find((p) => p.id === editingCred.provider_id);
+                const canShare = (prov?.allows_community_sharing ?? false) && editingCred.billing_tier === "verified_free_only";
+
+                return (
+                  <div className="rounded-lg border border-gray-200 bg-gray-50 p-4 space-y-3">
+                    <label className="block text-xs font-semibold text-gray-700">Sharing Scope</label>
+                    {canShare ? (
+                      <div className="space-y-2">
+                        <label className="flex items-start gap-2.5 cursor-pointer">
+                          <input
+                            type="radio"
+                            name="edit_sharing_scope"
+                            value="owner_only"
+                            checked={editSharingScope === "owner_only"}
+                            onChange={() => {
+                              setEditSharingScope("owner_only");
+                              setEditSharedConsent(false);
+                            }}
+                            className="mt-0.5 text-blue-600 focus:ring-blue-500"
+                          />
+                          <div>
+                            <div className="text-xs font-semibold text-gray-800 flex items-center gap-1.5">
+                              <Lock className="h-3.5 w-3.5 text-gray-600" /> Owner Only (Private)
+                            </div>
+                            <div className="text-[11px] text-gray-500">
+                              Credential remains strictly private to your account.
+                            </div>
+                          </div>
+                        </label>
+                        <label className="flex items-start gap-2.5 cursor-pointer">
+                          <input
+                            type="radio"
+                            name="edit_sharing_scope"
+                            value="community_shared"
+                            checked={editSharingScope === "community_shared"}
+                            onChange={() => {
+                              setEditSharingScope("community_shared");
+                              setEditSharedConsent(true);
+                            }}
+                            className="mt-0.5 text-blue-600 focus:ring-blue-500"
+                          />
+                          <div>
+                            <div className="text-xs font-semibold text-gray-800 flex items-center gap-1.5">
+                              <Users className="h-3.5 w-3.5 text-purple-600" /> Community Shared Pool
+                            </div>
+                            <div className="text-[11px] text-gray-500">
+                              Share spare capacity with other authenticated students.
+                            </div>
+                          </div>
+                        </label>
+                      </div>
+                    ) : (
+                      <div className="text-xs text-gray-500 flex items-center gap-1.5">
+                        <Lock className="h-4 w-4 text-gray-400" />
+                        <span>Owner Only (This provider or credential tier cannot be shared)</span>
+                      </div>
+                    )}
+                  </div>
+                );
+              })()}
 
               <div className="flex items-center justify-end gap-3 pt-3 border-t border-gray-200">
                 <button

@@ -1,23 +1,25 @@
 import { createClient } from "@/lib/supabase/client";
 import { fetchWithAuth } from "@/lib/api";
-import type { RoutePreviewResponse, RoutingMode } from "@/types";
+import type { ChatEntitlementResponse, RoutePreviewResponse, RoutingMode } from "@/types";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000";
+
+export type CredentialScope = "eligible_pool" | "owner_only";
 
 export interface RoutePreviewParams {
   messages: { role: string; content: string }[];
   routing_mode?: RoutingMode;
+  credential_scope?: CredentialScope;
   model?: string;
   provider_id?: string;
-  community_opt_in?: boolean;
 }
 
 export interface StreamChatCompletionParams {
   messages: { role: string; content: string }[];
   routing_mode?: RoutingMode;
+  credential_scope?: CredentialScope;
   model?: string;
   temperature?: number;
-  community_opt_in?: boolean;
 }
 
 export interface RouteHeaders {
@@ -25,6 +27,10 @@ export interface RouteHeaders {
   selectedSource?: string;
   selectedModel?: string;
   decisionReason?: string;
+}
+
+export async function getChatEntitlement(): Promise<ChatEntitlementResponse> {
+  return fetchWithAuth<ChatEntitlementResponse>("/api/v1/me/chat-entitlement");
 }
 
 export async function previewRoute(params: RoutePreviewParams): Promise<RoutePreviewResponse> {
@@ -60,15 +66,36 @@ export async function streamChatCompletion(
     headers.set("Authorization", `Bearer ${session.access_token}`);
   }
 
+  const idempotencyKey = `idem-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
+  const genParams: Record<string, unknown> = {};
+  if (params.temperature !== undefined) {
+    genParams.temperature = params.temperature;
+  }
+
+  // Filter out any messages with empty or whitespace-only content
+  const cleanMessages = (params.messages || []).filter(
+    (m) => m && m.content && m.content.trim().length > 0
+  );
+
+  const requestBody: Record<string, unknown> = {
+    idempotency_key: idempotencyKey,
+    credential_scope: params.credential_scope || "eligible_pool",
+    routing_mode: params.routing_mode || "auto",
+    messages: cleanMessages,
+    params: genParams,
+    stream: true,
+  };
+  if (params.model) {
+    requestBody.model = params.model;
+    requestBody.model_id = params.model;
+  }
+
   let response: Response;
   try {
     response = await fetch(url, {
       method: "POST",
       headers,
-      body: JSON.stringify({
-        ...params,
-        stream: true,
-      }),
+      body: JSON.stringify(requestBody),
       signal: options?.signal,
     });
   } catch (err) {
@@ -87,10 +114,24 @@ export async function streamChatCompletion(
   callbacks.onRouteHeaders?.(routeHeaders);
 
   if (!response.ok) {
+    if (response.status === 401 && typeof window !== "undefined") {
+      window.location.href = "/login";
+      return;
+    }
     let errorDetail = `Request failed with status ${response.status}`;
     try {
       const errJson = await response.json();
-      if (errJson.detail) {
+      if (errJson.error?.message) {
+        errorDetail = errJson.error.message;
+        if (errJson.error.details && Array.isArray(errJson.error.details)) {
+          const detailMsgs = errJson.error.details
+            .map((d: any) => `${d.loc ? d.loc.join(".") + ": " : ""}${d.msg || JSON.stringify(d)}`)
+            .join("; ");
+          if (detailMsgs) {
+            errorDetail += ` (${detailMsgs})`;
+          }
+        }
+      } else if (errJson.detail) {
         errorDetail = typeof errJson.detail === "string" ? errJson.detail : JSON.stringify(errJson.detail);
       }
     } catch {
@@ -131,9 +172,18 @@ export async function streamChatCompletion(
 
           try {
             const parsed = JSON.parse(dataStr);
-            const delta = parsed.choices?.[0]?.delta?.content;
+            const delta =
+              parsed.delta ??
+              parsed.choices?.[0]?.delta?.content ??
+              parsed.content ??
+              parsed.text;
             if (delta) {
               callbacks.onDelta(delta);
+            }
+            if (parsed.error_code || (parsed.message && !delta && parsed.error_code)) {
+              callbacks.onError?.(
+                new Error(parsed.message || parsed.error_code || "Generation failed")
+              );
             }
           } catch {
             // Ignore partial non-JSON line

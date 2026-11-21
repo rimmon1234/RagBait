@@ -35,6 +35,7 @@ from app.modules.credentials.repository import (
 )
 from app.modules.credentials.schemas import (
     ApiKeyMetadataRecord,
+    ChatEntitlementResponse,
     CredentialCreateRequest,
     CredentialListResponse,
     CredentialResponse,
@@ -59,6 +60,7 @@ from app.modules.credentials.vault import (
 
 __all__ = [
     "ApiKeyMetadataRecord",
+    "ChatEntitlementResponse",
     "CredentialCreateRequest",
     "CredentialListResponse",
     "CredentialResponse",

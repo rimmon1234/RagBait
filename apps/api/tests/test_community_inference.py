@@ -224,288 +224,112 @@ def test_crypto_challenge_and_job_auth():
 
 
 # ==============================================================================
-# 2. Pairing Code & Registration Tests
+# 2. Pairing Code & Registration Tests (Discontinued)
 # ==============================================================================
 @pytest.mark.asyncio
 async def test_pairing_code_and_node_registration(client: httpx.AsyncClient):
-    """Test pairing code creation and atomic consumption during node pairing."""
+    """Test that pairing code creation and pairing endpoints return HTTP 410 Gone."""
     contributor_id = await create_db_user()
     headers = setup_auth_context(contributor_id)
 
-    # 1. Generate pairing code
+    # 1. Generate pairing code returns HTTP 410
     resp = await client.post("/api/v1/community/nodes/pair-code", headers=headers)
-    assert resp.status_code == 200
-    data = resp.json()
-    pairing_code = data["pairing_code"]
-    assert pairing_code.startswith("RB-")
-    # 128 bits of entropy: 'RB-' + four 8-hex blocks with 3 hyphens = 38 chars
-    assert len(pairing_code) == 38
-    assert data["ttl_seconds"] == 300
+    assert resp.status_code == 410
+    assert "discontinued" in str(resp.json()).lower()
 
-    # 2. Attempt pairing with invalid code
-    node_priv = ed25519.Ed25519PrivateKey.generate()
-    node_pub_hex = node_priv.public_key().public_bytes(Encoding.Raw, PublicFormat.Raw).hex()
-
-    bad_pair_resp = await client.post(
-        "/api/v1/community/nodes/pair",
-        json={
-            "pairing_code": "INVALID9",
-            "public_key": node_pub_hex,
-            "display_name": "Test Desktop Node",
-            "agent_version": "0.1.0",
-            "operating_system": "Windows",
-        },
-    )
-    assert bad_pair_resp.status_code == 400
-
-    # 3. Pair successfully with valid code
+    # 2. Pair endpoint returns HTTP 410
     pair_resp = await client.post(
         "/api/v1/community/nodes/pair",
         json={
-            "pairing_code": pairing_code,
-            "public_key": node_pub_hex,
-            "display_name": "Test Desktop Node",
+            "pairing_code": "RB-TEST-DISCONTINUED",
+            "public_key": "0" * 64,
+            "display_name": "Test Node",
             "agent_version": "0.1.0",
             "operating_system": "Windows",
         },
     )
-    assert pair_resp.status_code == 201
-    paired_data = pair_resp.json()
-    assert "node_id" in paired_data
-    assert paired_data["display_name"] == "Test Desktop Node"
-    assert "server_public_key" in paired_data
-
-    # 4. Attempt to reuse already consumed pairing code
-    reuse_resp = await client.post(
-        "/api/v1/community/nodes/pair",
-        json={
-            "pairing_code": pairing_code,
-            "public_key": node_pub_hex,
-            "display_name": "Duplicate Node",
-            "agent_version": "0.1.0",
-            "operating_system": "Windows",
-        },
-    )
-    assert reuse_resp.status_code == 400
+    assert pair_resp.status_code == 410
+    assert "discontinued" in str(pair_resp.json()).lower()
 
 
 # ==============================================================================
-# 3. Contributor Node Management & Isolation Tests
+# 3. Contributor Node Management & Isolation Tests (Discontinued)
 # ==============================================================================
 @pytest.mark.asyncio
 async def test_node_management_and_isolation(client: httpx.AsyncClient):
-    """Test node list, update, pause, resume, and revoke with owner isolation."""
+    """Test node list returns empty array and mutations return HTTP 410 Gone."""
     contributor_1 = await create_db_user()
-    contributor_2 = await create_db_user()
-
     headers_1 = setup_auth_context(contributor_1)
+    fake_node_id = uuid4()
 
-    # Generate code and pair node for Contributor 1
-    code_resp = await client.post("/api/v1/community/nodes/pair-code", headers=headers_1)
-    code = code_resp.json()["pairing_code"]
-
-    node_priv = ed25519.Ed25519PrivateKey.generate()
-    node_pub_hex = node_priv.public_key().public_bytes(Encoding.Raw, PublicFormat.Raw).hex()
-
-    pair_resp = await client.post(
-        "/api/v1/community/nodes/pair",
-        json={
-            "pairing_code": code,
-            "public_key": node_pub_hex,
-            "display_name": "Lab PC 1",
-            "agent_version": "0.1.0",
-            "operating_system": "Linux",
-        },
-    )
-    node_id = pair_resp.json()["node_id"]
-
-    # Contributor 1 lists nodes
+    # Contributor lists nodes -> returns empty list
     list_resp = await client.get("/api/v1/community/nodes", headers=headers_1)
     assert list_resp.status_code == 200
-    nodes = list_resp.json()
-    assert len(nodes) == 1
-    assert nodes[0]["id"] == node_id
-    assert nodes[0]["display_name"] == "Lab PC 1"
+    assert list_resp.json() == []
 
-    # Contributor 1 updates node config
+    # Update node config -> returns 410 Gone
     patch_resp = await client.patch(
-        f"/api/v1/community/nodes/{node_id}",
+        f"/api/v1/community/nodes/{fake_node_id}",
         json={"display_name": "Updated Lab PC", "max_concurrent_jobs": 2},
         headers=headers_1,
     )
-    assert patch_resp.status_code == 200
-    assert patch_resp.json()["display_name"] == "Updated Lab PC"
-    assert patch_resp.json()["max_concurrent_jobs"] == 2
+    assert patch_resp.status_code == 410
 
-    # Contributor 2 attempts to view Contributor 1's node -> 403 Forbidden
-    headers_2 = setup_auth_context(contributor_2)
+    # Pause node -> returns 410 Gone
+    pause_resp = await client.post(f"/api/v1/community/nodes/{fake_node_id}/pause", headers=headers_1)
+    assert pause_resp.status_code == 410
 
-    unauthorized_get = await client.get(f"/api/v1/community/nodes/{node_id}", headers=headers_2)
-    assert unauthorized_get.status_code == 403
+    # Resume node -> returns 410 Gone
+    resume_resp = await client.post(f"/api/v1/community/nodes/{fake_node_id}/resume", headers=headers_1)
+    assert resume_resp.status_code == 410
 
-    # Contributor 2 attempts to pause Contributor 1's node -> 403 Forbidden
-    unauthorized_pause = await client.post(
-        f"/api/v1/community/nodes/{node_id}/pause", headers=headers_2
-    )
-    assert unauthorized_pause.status_code == 403
-
-    # Contributor 1 pauses and resumes node
-    headers_1 = setup_auth_context(contributor_1)
-    pause_resp = await client.post(f"/api/v1/community/nodes/{node_id}/pause", headers=headers_1)
-    assert pause_resp.status_code == 204
-
-    node_detail = await client.get(f"/api/v1/community/nodes/{node_id}", headers=headers_1)
-    assert node_detail.json()["status"] == "paused"
-
-    resume_resp = await client.post(f"/api/v1/community/nodes/{node_id}/resume", headers=headers_1)
-    assert resume_resp.status_code == 204
-
-    node_detail = await client.get(f"/api/v1/community/nodes/{node_id}", headers=headers_1)
-    assert node_detail.json()["status"] in ("online", "active")
-
-    # Contributor 1 revokes node
-    revoke_resp = await client.delete(f"/api/v1/community/nodes/{node_id}", headers=headers_1)
-    assert revoke_resp.status_code == 204
-
-    node_detail = await client.get(f"/api/v1/community/nodes/{node_id}", headers=headers_1)
-    assert node_detail.json()["status"] == "revoked"
+    # Revoke node -> returns 410 Gone
+    revoke_resp = await client.delete(f"/api/v1/community/nodes/{fake_node_id}", headers=headers_1)
+    assert revoke_resp.status_code == 410
 
 
 # ==============================================================================
-# 4. Model Allowlist & Dual-Consent Validation Tests
+# 4. Model Allowlist & Dual-Consent Validation Tests (Discontinued)
 # ==============================================================================
 @pytest.mark.asyncio
 async def test_dual_consent_and_job_submission(client: httpx.AsyncClient):
-    """Test model syncing, per-model allowlist toggles, and dual-consent enforcement."""
-    contributor = await create_db_user()
+    """Test that model list returns [] and job submissions return HTTP 410 Gone."""
     requester = await create_db_user()
-
-    headers_c = setup_auth_context(contributor)
-
-    # Register node
-    code_resp = await client.post("/api/v1/community/nodes/pair-code", headers=headers_c)
-    code = code_resp.json()["pairing_code"]
-
-    node_priv = ed25519.Ed25519PrivateKey.generate()
-    node_pub_hex = node_priv.public_key().public_bytes(Encoding.Raw, PublicFormat.Raw).hex()
-
-    pair_resp = await client.post(
-        "/api/v1/community/nodes/pair",
-        json={
-            "pairing_code": code,
-            "public_key": node_pub_hex,
-            "display_name": "Inference Station",
-            "agent_version": "0.1.0",
-            "operating_system": "Windows",
-        },
-    )
-    node_id_str = pair_resp.json()["node_id"]
-    node_id = UUID(node_id_str)
-
-    # Contributor enables node sharing
-    patch_share_resp = await client.patch(
-        f"/api/v1/community/nodes/{node_id}",
-        json={"sharing_enabled": True},
-        headers=headers_c,
-    )
-    assert patch_share_resp.status_code == 200
-
-    # Simulate node heartbeat so last_seen_at is active
-    await repository.update_node_heartbeat(node_id)
-
-    # Sync discovered models directly via repository (simulating agent WS sync)
-    models_to_sync = [
-        {"model_name": "llama3.2:3b", "parameter_size": "3B", "quantization_level": "Q4_K_M"},
-        {"model_name": "mistral:7b", "parameter_size": "7B", "quantization_level": "Q4_0"},
-    ]
-    await repository.sync_node_models(node_id, models_to_sync)
-
-    # Contributor shares ONLY llama3.2:3b, leaves mistral:7b unshared
-    put_models_resp = await client.put(
-        f"/api/v1/community/nodes/{node_id}/models",
-        json={
-            "models": [
-                {"model_name": "llama3.2:3b", "enabled": True},
-                {"model_name": "mistral:7b", "enabled": False},
-            ]
-        },
-        headers=headers_c,
-    )
-    assert put_models_resp.status_code == 200
-
-    # Requester checks available community models
     headers_r = setup_auth_context(requester)
 
+    # 1. Models list returns empty
     models_resp = await client.get("/api/v1/community/models", headers=headers_r)
     assert models_resp.status_code == 200
-    avail = models_resp.json()
-    model_names = [m["model_name"] for m in avail]
-    assert "llama3.2:3b" in model_names
-    assert "mistral:7b" not in model_names  # Unshared model must not appear
+    assert models_resp.json() == []
 
-    # Test 1: Requester attempts to submit without consent -> 400
-    no_consent_resp = await client.post(
-        "/api/v1/community/jobs/submit",
-        json={
-            "model_name": "llama3.2:3b",
-            "messages": [{"role": "user", "content": "Explain gravity."}],
-            "consent_accepted": False,
-        },
-        headers=headers_r,
-    )
-    assert no_consent_resp.status_code == 400
-    assert "consent" in no_consent_resp.json()["error"]["message"].lower()
-
-    # Test 2: Requester attempts to submit job for unshared model -> 409 Conflict
-    unshared_resp = await client.post(
-        "/api/v1/community/jobs/submit",
-        json={
-            "model_name": "mistral:7b",
-            "messages": [{"role": "user", "content": "Explain gravity."}],
-            "consent_accepted": True,
-        },
-        headers=headers_r,
-    )
-    assert unshared_resp.status_code == 409
-    assert "no online community node" in unshared_resp.json()["error"]["message"].lower()
-
-    # Test 3: Requester submits with valid dual-consent -> 202 Accepted
+    # 2. Job submit returns 410 Gone
     submit_resp = await client.post(
         "/api/v1/community/jobs/submit",
         json={
             "model_name": "llama3.2:3b",
             "messages": [{"role": "user", "content": "Explain gravity."}],
             "consent_accepted": True,
-            "params": {"max_tokens": 512},
         },
         headers=headers_r,
     )
-    assert submit_resp.status_code == 202
-    job_data = submit_resp.json()
-    job_id = job_data["job_id"]
-    assert job_data["status"].upper() == "QUEUED"
-    assert job_data["model_name"] == "llama3.2:3b"
+    assert submit_resp.status_code == 410
+    assert "discontinued" in str(submit_resp.json()).lower()
 
-    # Test 4: Requester inspects job status
-    status_resp = await client.get(f"/api/v1/community/jobs/{job_id}", headers=headers_r)
-    assert status_resp.status_code == 200
-    assert status_resp.json()["job_id"] == job_id
-    assert status_resp.json()["status"].upper() == "QUEUED"
+    # 3. Job status inspection returns 410 Gone
+    fake_job_id = uuid4()
+    status_resp = await client.get(f"/api/v1/community/jobs/{fake_job_id}", headers=headers_r)
+    assert status_resp.status_code == 410
 
-    # Test 5: Requester cancels the job
-    cancel_resp = await client.post(f"/api/v1/community/jobs/{job_id}/cancel", headers=headers_r)
-    assert cancel_resp.status_code == 204
-
-    # Verify status changed to cancelled
-    status_resp_after = await client.get(f"/api/v1/community/jobs/{job_id}", headers=headers_r)
-    assert status_resp_after.status_code == 200
-    assert status_resp_after.json()["status"].upper() == "CANCELLED"
+    # 4. Job cancel returns 410 Gone
+    cancel_resp = await client.post(f"/api/v1/community/jobs/{fake_job_id}/cancel", headers=headers_r)
+    assert cancel_resp.status_code == 410
 
 
 def test_signing_key_pair_validation():
     """Verify SEC-06: Server validates cryptographic match between signing and verifying keys."""
-    from app.core.config import Settings
     from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+
+    from app.core.config import Settings
 
     # 1. Matching pair passes
     priv_key = Ed25519PrivateKey.generate()
@@ -588,9 +412,10 @@ async def test_nonce_fail_closed_and_replay_prevention(monkeypatch):
 
 def test_trusted_proxy_client_ip_resolution():
     """Verify SEC-02: get_trusted_client_ip ignores untrusted X-Forwarded-For headers."""
+    from starlette.requests import Request
+
     from app.core.config import settings
     from app.core.dependencies import get_trusted_client_ip
-    from starlette.requests import Request
 
     # Case 1: No trusted proxies configured -> uses client.host directly
     req1 = Request({"type": "http", "client": ("198.51.100.10", 12345), "headers": [(b"x-forwarded-for", b"203.0.113.195")]})
@@ -621,73 +446,33 @@ def test_trusted_proxy_client_ip_resolution():
 
 @pytest.mark.asyncio
 async def test_sse_stream_authentication_and_authorization(client: httpx.AsyncClient):
-    """Verify SEC-01: SSE job stream requires authentication and strictly permits only requester."""
+    """Verify that SSE job stream returns HTTP 410 Gone."""
     requester_id = await create_db_user()
-    other_user_id = await create_db_user()
-    node_owner_id = await create_db_user()
-
-    # 1. Register a node for node_owner directly in repository
-    node_priv = ed25519.Ed25519PrivateKey.generate()
-    node_pub_hex = node_priv.public_key().public_bytes(Encoding.Raw, PublicFormat.Raw).hex()
-    node = await repository.create_node(
-        owner_id=node_owner_id,
-        display_name="Stream Test Node",
-        public_key=node_pub_hex,
-    )
-    node_id = node["id"]
-    await repository.update_node_status(node_id, "active")
-    await repository.update_node_config(node_id, node_owner_id, sharing_enabled=True)
-    await repository.update_node_heartbeat(node_id)
-    await repository.sync_node_models(node_id, [{"model_name": "qwen2.5:1.5b"}])
-    headers_owner = setup_auth_context(node_owner_id)
-
-    # Enable model
-    await client.put(
-        f"/api/v1/community/nodes/{node_id}/models",
-        json={"models": [{"model_name": "qwen2.5:1.5b", "enabled": True}]},
-        headers=headers_owner,
-    )
-
-    # 2. Requester submits a job
     headers_req = setup_auth_context(requester_id)
-    submit_resp = await client.post(
-        "/api/v1/community/jobs/submit",
-        json={
-            "model_name": "qwen2.5:1.5b",
-            "messages": [{"role": "user", "content": "Hello"}],
-            "consent_accepted": True,
-        },
-        headers=headers_req,
-    )
-    job_id = submit_resp.json()["job_id"]
+    fake_job_id = uuid4()
+    resp = await client.get(f"/api/v1/community/jobs/{fake_job_id}/stream", headers=headers_req)
+    assert resp.status_code == 410
+    assert "discontinued" in str(resp.json()).lower()
 
-    # 3. Anonymous request to SSE stream -> 401 Unauthorized
-    app.dependency_overrides.clear()
-    anon_resp = await client.get(f"/api/v1/community/jobs/{job_id}/stream")
-    assert anon_resp.status_code == 401
 
-    # 4. Third-party student request to SSE stream -> 403 Forbidden
-    headers_other = setup_auth_context(other_user_id)
-    other_resp = await client.get(f"/api/v1/community/jobs/{job_id}/stream", headers=headers_other)
-    assert other_resp.status_code == 403
+@pytest.mark.asyncio
+async def test_community_node_agent_ws_rejected():
+    """Verify WS endpoint sends discontinued message and closes with code 1008."""
+    import json
+    from unittest.mock import AsyncMock
 
-    # 5. Node owner request to SSE stream -> 403 Forbidden (node owner must NOT have access to requester stream)
-    owner_stream_resp = await client.get(f"/api/v1/community/jobs/{job_id}/stream", headers=headers_owner)
-    assert owner_stream_resp.status_code == 403
+    from fastapi import WebSocket, status
 
-    # 6. Non-existent job with requester auth -> 404 Not Found
-    non_existent = str(uuid4())
-    not_found_resp = await client.get(f"/api/v1/community/jobs/{non_existent}/stream", headers=headers_req)
-    assert not_found_resp.status_code == 404
+    from app.modules.community.ws import community_node_websocket
 
-    # 7. Authorized requester receives 200 StreamingResponse and chunks
-    headers_req = setup_auth_context(requester_id)
-    await streams.append_job_chunk(job_id=UUID(job_id), seq_id=1, delta="Done", done=True)
-    async with client.stream("GET", f"/api/v1/community/jobs/{job_id}/stream", headers=headers_req) as sse_stream:
-        assert sse_stream.status_code == 200
-        assert "text/event-stream" in sse_stream.headers.get("content-type", "")
-        lines = [line async for line in sse_stream.aiter_lines()]
-        assert any("Done" in l for l in lines)
+    mock_ws = AsyncMock(spec=WebSocket)
+    await community_node_websocket(mock_ws)
+
+    mock_ws.accept.assert_awaited_once()
+    mock_ws.send_text.assert_awaited_once()
+    sent_payload = json.loads(mock_ws.send_text.call_args[0][0])
+    assert sent_payload["code"] == "COMMUNITY_LOCAL_INFERENCE_DISCONTINUED"
+    mock_ws.close.assert_awaited_once_with(code=status.WS_1008_POLICY_VIOLATION)
 
 
 @pytest.mark.asyncio
@@ -1025,7 +810,7 @@ async def test_volatile_redis_restart_recovery():
 async def test_dedicated_community_redis_isolation():
     """Verify Blocker B: Dedicated volatile Redis is strictly isolated from shared persistent Redis."""
     from app.core.config import settings
-    from app.core.redis import get_community_redis, get_redis
+    from app.core.redis import get_community_redis
     from app.modules.community.schemas import SignedJobAuthorization
 
     # 1. Verify configuration separates the two endpoints

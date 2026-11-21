@@ -2,7 +2,7 @@
 
 from datetime import datetime
 from typing import Any, Literal
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from pydantic import BaseModel, Field, model_validator
 
@@ -196,6 +196,10 @@ class ChatCompletionRequest(BaseModel):
         default="provider_specific",
         description="Routing policy mode: 'auto', 'cloud_only', 'community_only', or 'provider_specific'",
     )
+    credential_scope: Literal["eligible_pool", "owner_only"] = Field(
+        default="eligible_pool",
+        description="Credential pool scope: 'eligible_pool' (recommended) or 'owner_only' (requester's keys only)",
+    )
     provider_id: str | None = Field(
         default=None,
         min_length=2,
@@ -227,17 +231,37 @@ class ChatCompletionRequest(BaseModel):
     messages: list[ChatMessage] = Field(..., min_length=1, max_length=100)
     params: GenerationParams = Field(default_factory=GenerationParams)
     stream: bool = Field(default=True, description="Whether to stream response via SSE")
-    idempotency_key: str = Field(..., min_length=4, max_length=128)
+    idempotency_key: str = Field(
+        default_factory=lambda: f"idem-{uuid4().hex}",
+        min_length=4,
+        max_length=128,
+        description="Idempotency key to prevent duplicate dispatch",
+    )
 
     @model_validator(mode="before")
     @classmethod
     def reconcile_routing_fields(cls, data: Any) -> Any:
         if isinstance(data, dict):
+            # Auto-generate idempotency_key if missing or empty
+            if not data.get("idempotency_key"):
+                data["idempotency_key"] = f"idem-{uuid4().hex}"
+
             # Reconcile model and model_id
             if not data.get("model_id") and data.get("model"):
                 data["model_id"] = data["model"]
             elif not data.get("model") and data.get("model_id"):
                 data["model"] = data["model_id"]
+
+            # Reconcile temperature / top-level hyperparameters into params
+            if "temperature" in data or "max_output_tokens" in data or "top_p" in data:
+                gen_params = dict(data.get("params") or {})
+                if "temperature" in data and "temperature" not in gen_params:
+                    gen_params["temperature"] = data.pop("temperature")
+                if "max_output_tokens" in data and "max_output_tokens" not in gen_params:
+                    gen_params["max_output_tokens"] = data.pop("max_output_tokens")
+                if "top_p" in data and "top_p" not in gen_params:
+                    gen_params["top_p"] = data.pop("top_p")
+                data["params"] = gen_params
 
             # Default routing mode determination
             if not data.get("routing_mode"):

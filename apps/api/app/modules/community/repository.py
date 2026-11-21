@@ -685,7 +685,7 @@ async def get_node_active_session(node_id: UUID) -> str | None:
             "SELECT active_session_id FROM public.community_nodes WHERE id = $1",
             node_id,
         )
-        return val
+        return str(val) if val is not None else None
 
 
 # ------------------------------------------------------------------------------

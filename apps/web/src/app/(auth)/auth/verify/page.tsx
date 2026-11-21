@@ -39,7 +39,8 @@ function VerifyContent() {
     if (data.session) {
       // Authoritatively trigger access request creation
       try {
-        await fetch("/api/v1/me/access", {
+        const apiBase = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000";
+        await fetch(`${apiBase.replace(/\/$/, "")}/api/v1/me/access`, {
           headers: {
             Authorization: `Bearer ${data.session.access_token}`,
           },
