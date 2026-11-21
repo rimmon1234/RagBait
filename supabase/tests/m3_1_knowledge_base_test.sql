@@ -1,9 +1,10 @@
 -- ==============================================================================
 -- RagBait Phase 3 — Milestone M3.1 pgTAP Database & Security Tests
+-- (Including Security Hardening Remediation)
 -- ==============================================================================
 
 BEGIN;
-SELECT plan(37);
+SELECT plan(44);
 
 -- ------------------------------------------------------------------------------
 -- 1. Table Existence (5 tables)
@@ -73,6 +74,35 @@ SELECT is(
 );
 
 -- ------------------------------------------------------------------------------
+-- 3b. Extraction Jobs Privilege Hardening (SEC-M3.1)
+-- ------------------------------------------------------------------------------
+SELECT is(
+  has_table_privilege('authenticated', 'public.kb_extraction_jobs', 'SELECT'),
+  false,
+  'authenticated role must NOT have direct SELECT on kb_extraction_jobs'
+);
+SELECT is(
+  has_table_privilege('anon', 'public.kb_extraction_jobs', 'SELECT'),
+  false,
+  'anon role must NOT have direct SELECT on kb_extraction_jobs'
+);
+SELECT is(
+  has_table_privilege('service_role', 'public.kb_extraction_jobs', 'SELECT'),
+  true,
+  'service_role MUST have SELECT on kb_extraction_jobs'
+);
+SELECT is(
+  has_table_privilege('service_role', 'public.kb_extraction_jobs', 'INSERT'),
+  true,
+  'service_role MUST have INSERT on kb_extraction_jobs'
+);
+SELECT is(
+  has_table_privilege('service_role', 'public.kb_extraction_jobs', 'UPDATE'),
+  true,
+  'service_role MUST have UPDATE on kb_extraction_jobs'
+);
+
+-- ------------------------------------------------------------------------------
 -- 4. Test Fixtures Setup (as postgres / service_role)
 -- ------------------------------------------------------------------------------
 CREATE TEMPORARY TABLE test_vars (
@@ -86,10 +116,14 @@ CREATE TEMPORARY TABLE test_vars (
   topic_2_id uuid,
   topic_inactive_id uuid,
   topic_sub2_id uuid,
-  doc_uploaded_id uuid,
-  doc_pending_id uuid,
-  doc_archived_id uuid,
-  doc_other_pending_id uuid,
+  doc_s1_uploaded_id uuid,
+  doc_s1_pending_id uuid,
+  doc_s1_failed_id uuid,
+  doc_s1_deleting_id uuid,
+  doc_s1_deleted_id uuid,
+  doc_s1_archived_id uuid,
+  doc_s2_pending_id uuid,
+  doc_s2_failed_id uuid,
   page_1_id uuid
 );
 GRANT SELECT ON test_vars TO authenticated;
@@ -106,10 +140,14 @@ DECLARE
   v_top2 uuid := gen_random_uuid();
   v_top_inact uuid := gen_random_uuid();
   v_top_sub2 uuid := gen_random_uuid();
-  v_doc_up uuid := gen_random_uuid();
-  v_doc_pend uuid := gen_random_uuid();
-  v_doc_arch uuid := gen_random_uuid();
-  v_doc_other_pend uuid := gen_random_uuid();
+  v_doc_s1_up uuid := gen_random_uuid();
+  v_doc_s1_pend uuid := gen_random_uuid();
+  v_doc_s1_fail uuid := gen_random_uuid();
+  v_doc_s1_delng uuid := gen_random_uuid();
+  v_doc_s1_del uuid := gen_random_uuid();
+  v_doc_s1_arch uuid := gen_random_uuid();
+  v_doc_s2_pend uuid := gen_random_uuid();
+  v_doc_s2_fail uuid := gen_random_uuid();
   v_page uuid := gen_random_uuid();
 BEGIN
   -- Look up existing profiles or create fresh in auth.users
@@ -156,43 +194,66 @@ BEGIN
     (v_top_inact, v_sub_act, 'Draft Normalization', 'normalization-draft', 3, false, v_admin),
     (v_top_sub2, v_sub_inact, 'Quantum Basics', 'quantum-basics', 1, true, v_admin);
 
-  -- Insert documents
+  -- Insert documents with comprehensive lifecycle states
+  -- Student 1 Documents
   INSERT INTO public.kb_documents (
     id, subject_id, topic_id, uploader_id, title, original_filename, 
     storage_path, mime_type, file_size_bytes, upload_status, extraction_status,
     total_pages, processed_pages, pages_with_text, is_archived
   ) VALUES
-    (v_doc_up, v_sub_act, v_top1, v_stud_app, 'DBMS Unit 1', 'unit1.pdf',
-     format('documents/%s/source.pdf', v_doc_up), 'application/pdf', 1024, 'uploaded', 'completed',
+    -- 1. Shared uploaded document
+    (v_doc_s1_up, v_sub_act, v_top1, v_stud_app, 'DBMS Shared Uploaded (S1)', 'unit1.pdf',
+     format('documents/%s/source.pdf', v_doc_s1_up), 'application/pdf', 1024, 'uploaded', 'completed',
      1, 1, 1, false),
-    (v_doc_pend, v_sub_act, v_top1, v_stud_app, 'DBMS Pending', 'pending.pdf',
-     format('documents/%s/source.pdf', v_doc_pend), 'application/pdf', 2048, 'pending_upload', 'pending',
+    -- 2. Pending upload (uploader should see)
+    (v_doc_s1_pend, v_sub_act, v_top1, v_stud_app, 'DBMS Pending (S1)', 'pending.pdf',
+     format('documents/%s/source.pdf', v_doc_s1_pend), 'application/pdf', 2048, 'pending_upload', 'pending',
      0, 0, 0, false),
-    (v_doc_arch, v_sub_act, v_top1, v_stud_app, 'DBMS Archived', 'archived.pdf',
-     format('documents/%s/source.pdf', v_doc_arch), 'application/pdf', 3072, 'uploaded', 'completed',
+    -- 3. Failed upload (uploader should see)
+    (v_doc_s1_fail, v_sub_act, v_top1, v_stud_app, 'DBMS Failed (S1)', 'failed.pdf',
+     format('documents/%s/source.pdf', v_doc_s1_fail), 'application/pdf', 2048, 'upload_failed', 'failed',
+     0, 0, 0, false),
+    -- 4. Deleting document (uploader should NOT see via ordinary policy)
+    (v_doc_s1_delng, v_sub_act, v_top1, v_stud_app, 'DBMS Deleting (S1)', 'deleting.pdf',
+     format('documents/%s/source.pdf', v_doc_s1_delng), 'application/pdf', 2048, 'deleting', 'pending',
+     0, 0, 0, false),
+    -- 5. Deleted document (uploader should NOT see via ordinary policy)
+    (v_doc_s1_del, v_sub_act, v_top1, v_stud_app, 'DBMS Deleted (S1)', 'deleted.pdf',
+     format('documents/%s/source.pdf', v_doc_s1_del), 'application/pdf', 2048, 'deleted', 'pending',
+     0, 0, 0, false),
+    -- 6. Archived document (uploader should NOT see via ordinary policy)
+    (v_doc_s1_arch, v_sub_act, v_top1, v_stud_app, 'DBMS Archived (S1)', 'archived.pdf',
+     format('documents/%s/source.pdf', v_doc_s1_arch), 'application/pdf', 3072, 'uploaded', 'completed',
      1, 1, 1, true),
-    (v_doc_other_pend, v_sub_act, v_top1, v_stud_app2, 'Other Pending', 'other_pending.pdf',
-     format('documents/%s/source.pdf', v_doc_other_pend), 'application/pdf', 4096, 'pending_upload', 'pending',
+    -- Student 2 Documents
+    -- 7. Student 2 pending upload (Student 1 should NOT see)
+    (v_doc_s2_pend, v_sub_act, v_top1, v_stud_app2, 'DBMS Pending (S2)', 's2_pend.pdf',
+     format('documents/%s/source.pdf', v_doc_s2_pend), 'application/pdf', 4096, 'pending_upload', 'pending',
+     0, 0, 0, false),
+    -- 8. Student 2 failed upload (Student 1 should NOT see)
+    (v_doc_s2_fail, v_sub_act, v_top1, v_stud_app2, 'DBMS Failed (S2)', 's2_fail.pdf',
+     format('documents/%s/source.pdf', v_doc_s2_fail), 'application/pdf', 4096, 'upload_failed', 'failed',
      0, 0, 0, false);
 
-  -- Insert document page
+  -- Insert document page for uploaded document
   INSERT INTO public.kb_document_pages (id, document_id, page_number, raw_text, character_count, word_count, has_text)
-  VALUES (v_page, v_doc_up, 1, 'Hello DBMS World', 16, 3, true);
+  VALUES (v_page, v_doc_s1_up, 1, 'Hello DBMS World', 16, 3, true);
 
   -- Insert extraction job
-  INSERT INTO public.kb_extraction_jobs (document_id, status, attempts)
-  VALUES (v_doc_up, 'completed', 1);
+  INSERT INTO public.kb_extraction_jobs (document_id, status, attempts, worker_id, lease_token)
+  VALUES (v_doc_s1_up, 'completed', 1, 'worker-node-alpha', gen_random_uuid());
 
   -- Save IDs to temp table
   INSERT INTO test_vars VALUES (
     v_admin, v_stud_app, v_stud_app2, v_stud_unapp,
     v_sub_act, v_sub_inact, v_top1, v_top2, v_top_inact, v_top_sub2,
-    v_doc_up, v_doc_pend, v_doc_arch, v_doc_other_pend, v_page
+    v_doc_s1_up, v_doc_s1_pend, v_doc_s1_fail, v_doc_s1_delng, v_doc_s1_del, v_doc_s1_arch,
+    v_doc_s2_pend, v_doc_s2_fail, v_page
   );
 END $$;
 
 -- ------------------------------------------------------------------------------
--- 5. Privileges & Isolation: Anonymous User (No Access)
+-- 5. Privileges & Isolation: Anonymous User (No Table Privileges)
 -- ------------------------------------------------------------------------------
 SELECT is(
   has_table_privilege('anon', 'public.kb_subjects', 'SELECT'),
@@ -203,6 +264,11 @@ SELECT is(
   has_table_privilege('anon', 'public.kb_documents', 'SELECT'),
   false,
   'Anonymous role must NOT have SELECT on public.kb_documents'
+);
+SELECT is(
+  has_table_privilege('anon', 'public.kb_extraction_jobs', 'SELECT'),
+  false,
+  'Anonymous role must NOT have SELECT on public.kb_extraction_jobs'
 );
 
 -- ------------------------------------------------------------------------------
@@ -232,7 +298,7 @@ SELECT is_empty(
 );
 
 -- ------------------------------------------------------------------------------
--- 7. RLS: Approved Student Access
+-- 7. RLS: Approved Student Access & Owner Lifecycle Visibility
 -- ------------------------------------------------------------------------------
 SET LOCAL ROLE authenticated;
 DO $$
@@ -254,14 +320,39 @@ SELECT results_eq(
   'Approved student should see ONLY active topics under active subjects'
 );
 
--- Approved student sees uploaded non-archived documents + their own pending upload
--- Document 1 (uploaded, not archived) + Document 2 (own pending_upload)
--- Does NOT see Document 3 (archived) or Document 4 (other user pending)
+-- Student 1 should see:
+--  - DBMS Shared Uploaded (S1) [uploaded, not archived]
+--  - DBMS Pending (S1)         [own pending_upload]
+--  - DBMS Failed (S1)          [own upload_failed]
+-- MUST NOT see:
+--  - DBMS Deleting (S1)        [own deleting - excluded by policy]
+--  - DBMS Deleted (S1)         [own deleted - excluded by policy]
+--  - DBMS Archived (S1)        [is_archived = true]
+--  - DBMS Pending (S2)         [other student pending]
+--  - DBMS Failed (S2)          [other student failed]
 SELECT results_eq(
   'SELECT title FROM public.kb_documents ORDER BY title',
-  $$VALUES ('DBMS Pending'), ('DBMS Unit 1')$$,
-  'Approved student should see uploaded non-archived docs + their own pending upload'
+  $$VALUES ('DBMS Failed (S1)'), ('DBMS Pending (S1)'), ('DBMS Shared Uploaded (S1)')$$,
+  'Student 1 should see shared uploaded docs + own pending and failed uploads ONLY'
 );
+
+-- Student 2 check:
+DO $$
+BEGIN
+  PERFORM set_config('request.jwt.claim.sub', (SELECT student_approved_2_id::text FROM test_vars), true);
+END $$;
+
+SELECT results_eq(
+  'SELECT title FROM public.kb_documents ORDER BY title',
+  $$VALUES ('DBMS Failed (S2)'), ('DBMS Pending (S2)'), ('DBMS Shared Uploaded (S1)')$$,
+  'Student 2 should see shared uploaded docs + own pending and failed uploads ONLY'
+);
+
+-- Switch back to Student 1
+DO $$
+BEGIN
+  PERFORM set_config('request.jwt.claim.sub', (SELECT student_approved_id::text FROM test_vars), true);
+END $$;
 
 -- Approved student can read pages of accessible uploaded document
 SELECT isnt_empty(
@@ -269,10 +360,12 @@ SELECT isnt_empty(
   'Approved student can read pages of accessible uploaded document'
 );
 
--- Approved student can read job status for their own document
-SELECT isnt_empty(
+-- Authenticated user is completely blocked from SELECT on kb_extraction_jobs (SEC-M3.1)
+SELECT throws_ok(
   'SELECT * FROM public.kb_extraction_jobs',
-  'Approved student can read extraction job status for their own document'
+  '42501',
+  NULL,
+  'Authenticated user must be blocked from direct SELECT on kb_extraction_jobs'
 );
 
 -- ------------------------------------------------------------------------------
@@ -298,11 +391,19 @@ SELECT results_eq(
   'Admin should see all topics including inactive'
 );
 
--- Admin sees ALL documents (uploaded, pending, archived, all users)
+-- Admin sees ALL documents (all 8 across all statuses and users)
 SELECT results_eq(
   'SELECT title FROM public.kb_documents ORDER BY title',
-  $$VALUES ('DBMS Archived'), ('DBMS Pending'), ('DBMS Unit 1'), ('Other Pending')$$,
-  'Admin should see all documents across all statuses'
+  $$VALUES 
+    ('DBMS Archived (S1)'), 
+    ('DBMS Deleted (S1)'), 
+    ('DBMS Deleting (S1)'), 
+    ('DBMS Failed (S1)'), 
+    ('DBMS Failed (S2)'), 
+    ('DBMS Pending (S1)'), 
+    ('DBMS Pending (S2)'), 
+    ('DBMS Shared Uploaded (S1)')$$,
+  'Admin should see all documents across all lifecycle statuses'
 );
 
 -- ------------------------------------------------------------------------------
@@ -311,7 +412,6 @@ SELECT results_eq(
 RESET ROLE;
 
 -- 9.1 Composite Subject/Topic Mismatch is rejected
--- Attempt to insert document with Subject 1 but Topic from Subject 2 (topic_sub2_id)
 SELECT throws_ok(
   format(
     $$INSERT INTO public.kb_documents (
@@ -343,7 +443,7 @@ SELECT throws_ok(
   format(
     $$INSERT INTO public.kb_document_pages (document_id, page_number, raw_text, character_count, word_count, has_text)
       VALUES ('%s', 1, 'Duplicate Page', 14, 2, true)$$,
-    (SELECT doc_uploaded_id FROM test_vars)
+    (SELECT doc_s1_uploaded_id FROM test_vars)
   ),
   '23505', -- unique_violation
   NULL,
@@ -403,7 +503,7 @@ SELECT throws_ok(
   format(
     $$INSERT INTO public.kb_document_pages (document_id, page_number, raw_text, character_count, word_count, has_text)
       VALUES ('%s', -1, 'Invalid Page Num', 16, 3, true)$$,
-    (SELECT doc_uploaded_id FROM test_vars)
+    (SELECT doc_s1_uploaded_id FROM test_vars)
   ),
   '23514', -- check_violation
   NULL,
@@ -415,7 +515,7 @@ SELECT throws_ok(
   format(
     $$INSERT INTO public.kb_document_pages (document_id, page_number, raw_text, character_count, word_count, has_text)
       VALUES ('%s', 2, 'Has Text Here', 13, 3, false)$$,
-    (SELECT doc_uploaded_id FROM test_vars)
+    (SELECT doc_s1_uploaded_id FROM test_vars)
   ),
   '23514', -- check_violation
   NULL,
