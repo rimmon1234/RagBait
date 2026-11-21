@@ -57,7 +57,6 @@ class OpenRouterAdapter(BaseProviderAdapter):
             "max_tokens": max_output_tokens,
             "stream": True,
             "stream_options": {"include_usage": True},
-            "provider": {"allow_fallbacks": False},
         }
         if top_p is not None:
             payload["top_p"] = top_p
@@ -174,7 +173,6 @@ class OpenRouterAdapter(BaseProviderAdapter):
             "temperature": temperature,
             "max_tokens": max_output_tokens,
             "stream": False,
-            "provider": {"allow_fallbacks": False},
         }
         if top_p is not None:
             payload["top_p"] = top_p
@@ -211,7 +209,7 @@ class OpenRouterAdapter(BaseProviderAdapter):
             )
 
         first = choices[0]
-        content = (first.get("message") or {}).get("content", "")
+        content = (first.get("message") or {}).get("content") or ""
         finish_reason = first.get("finish_reason") or "stop"
         resolved_model = body_data.get("model") or model_id
         upstream_gen_id = body_data.get("id")

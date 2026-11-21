@@ -8,10 +8,10 @@ from uuid import UUID, uuid4
 
 from app.core.database import get_pool
 from app.modules.admission.errors import AdmissionRejectionError
-from app.modules.admission.ledger import mark_outcome_unknown_transactional
 from app.modules.admission.schemas import AdmissionRequest, SettlementRequest
 from app.modules.admission.service import (
     mark_dispatched,
+    mark_outcome_unknown,
     release_reservation,
     reserve_generation,
     settle_reservation,
@@ -211,6 +211,7 @@ async def execute_cloud_candidate(
             usage_received: NormalizedUsage | None = None
             resolved_model = candidate.model_id
             upstream_gen_id: str | None = None
+            is_settled = False
 
             try:
                 async for chunk in adapter.stream(
@@ -264,12 +265,13 @@ async def execute_cloud_candidate(
                         user_id=user_id,
                     )
 
+                actual_cost_micro = 0 if (resolved_model.endswith(":free") or candidate.is_shared_credential) else None
                 settlement = await settle_reservation(
                     reservation_id=reservation.reservation_id,
                     req=SettlementRequest(
                         actual_input_tokens=usage_received.input_tokens,
                         actual_output_tokens=usage_received.output_tokens,
-                        actual_cost_microcents=None,
+                        actual_cost_microcents=actual_cost_micro,
                         resolved_model_id=resolved_model,
                         upstream_provider=candidate.provider_id,
                         upstream_generation_id=upstream_gen_id,
@@ -281,6 +283,7 @@ async def execute_cloud_candidate(
                     upstream_generation_id=upstream_gen_id,
                     usage_source=usage_received.usage_source,
                 )
+                is_settled = True
 
                 yield format_sse_event(
                     "usage",
@@ -312,12 +315,14 @@ async def execute_cloud_candidate(
 
             except Exception as exc:
                 logger.warning(f"Mid-stream generation error during {request_id}: {exc}")
-                try:
-                    await mark_outcome_unknown_transactional(
-                        reservation.reservation_id, reason="mid_stream_failure"
-                    )
-                except Exception:
-                    pass
+                if not is_settled:
+                    try:
+                        await mark_outcome_unknown(
+                            reservation.reservation_id, reason="mid_stream_failure"
+                        )
+                        is_settled = True
+                    except Exception:
+                        pass
                 yield format_sse_event(
                     "generation_error",
                     {
@@ -326,6 +331,15 @@ async def execute_cloud_candidate(
                         "message": str(exc),
                     },
                 )
+            finally:
+                if not is_settled:
+                    try:
+                        await mark_outcome_unknown(
+                            reservation.reservation_id, reason="stream_cancelled_or_aborted"
+                        )
+                        is_settled = True
+                    except Exception:
+                        pass
 
         return stream_generator(), True
 
@@ -341,7 +355,7 @@ async def execute_cloud_candidate(
         )
     except Exception:
         try:
-            await mark_outcome_unknown_transactional(
+            await mark_outcome_unknown(
                 reservation.reservation_id, reason="non_streaming_failure"
             )
         except Exception:
@@ -364,12 +378,13 @@ async def execute_cloud_candidate(
             user_id=user_id,
         )
 
+    actual_cost_micro = 0 if (gen_result.resolved_model.endswith(":free") or candidate.is_shared_credential) else None
     settlement = await settle_reservation(
         reservation_id=reservation.reservation_id,
         req=SettlementRequest(
             actual_input_tokens=usage.input_tokens,
             actual_output_tokens=usage.output_tokens,
-            actual_cost_microcents=None,
+            actual_cost_microcents=actual_cost_micro,
             resolved_model_id=gen_result.resolved_model,
             upstream_provider=candidate.provider_id,
             upstream_generation_id=gen_result.upstream_generation_id,
