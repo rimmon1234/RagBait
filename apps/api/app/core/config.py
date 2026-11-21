@@ -123,6 +123,13 @@ class Settings(BaseSettings):
     COMMUNITY_PENDING_CLAIM_IDLE_SECONDS: int = 30
     COMMUNITY_CONSENT_POLICY_VERSION: str = "2026-02-community-v1"
 
+    # Knowledge Base & Document Storage (Phase 3)
+    KB_STORAGE_BUCKET: str = "study-materials"
+    KB_MAX_FILE_SIZE_BYTES: int = 52_428_800  # 50 MB
+    KB_SIGNED_UPLOAD_EXPIRY_SECONDS: int = 7200  # 2 hours
+    KB_SIGNED_DOWNLOAD_EXPIRY_SECONDS: int = 300  # 5 minutes
+    KB_USER_DAILY_UPLOAD_LIMIT: int = 20
+
     @model_validator(mode="after")
     def validate_security_configuration(self) -> "Settings":
         """Validate critical cryptographic keys and environmental separation rules."""
