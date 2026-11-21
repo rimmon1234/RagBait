@@ -59,6 +59,16 @@ export function DocumentPreviewDrawer({
     loadPages();
   }, [isOpen, document]);
 
+  // Handle Escape key to close drawer
+  useEffect(() => {
+    if (!isOpen) return;
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onClose();
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [isOpen, onClose]);
+
   if (!isOpen || !document) return null;
 
   const handleDownload = async () => {
@@ -81,7 +91,12 @@ export function DocumentPreviewDrawer({
       />
 
       <div className="fixed inset-y-0 right-0 flex max-w-full pl-10">
-        <div className="w-screen max-w-2xl bg-white shadow-2xl flex flex-col">
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="preview-drawer-title"
+          className="w-screen max-w-2xl bg-white shadow-2xl flex flex-col"
+        >
           {/* Drawer Header */}
           <div className="flex items-center justify-between border-b border-gray-200 px-6 py-4">
             <div className="flex items-center gap-3 min-w-0">
@@ -89,7 +104,7 @@ export function DocumentPreviewDrawer({
                 <FileText className="h-5 w-5" />
               </div>
               <div className="min-w-0">
-                <h3 className="text-base font-semibold text-gray-900 truncate">
+                <h3 id="preview-drawer-title" className="text-base font-semibold text-gray-900 truncate">
                   {document.title}
                 </h3>
                 <p className="text-xs text-gray-500 truncate">

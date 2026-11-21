@@ -70,6 +70,24 @@ export function DocumentUploadModal({
     }
   }, [selectedTopicId, topics]);
 
+  const isUploading =
+    stage === "hashing" ||
+    stage === "reserving" ||
+    stage === "uploading" ||
+    stage === "confirming";
+
+  // Handle Escape key to close modal (if not actively uploading)
+  useEffect(() => {
+    if (!isOpen) return;
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape" && !isUploading) {
+        onClose();
+      }
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [isOpen, isUploading, onClose]);
+
   if (!isOpen) return null;
 
   const handleFileSelect = (file: File) => {
@@ -105,12 +123,6 @@ export function DocumentUploadModal({
     }
   };
 
-  const isUploading =
-    stage === "hashing" ||
-    stage === "reserving" ||
-    stage === "uploading" ||
-    stage === "confirming";
-
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
       {/* Backdrop */}
@@ -120,11 +132,16 @@ export function DocumentUploadModal({
       />
 
       {/* Modal Dialog */}
-      <div className="relative w-full max-w-lg rounded-xl bg-white p-6 shadow-xl transition-all">
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="upload-modal-title"
+        className="relative w-full max-w-lg rounded-xl bg-white p-6 shadow-xl transition-all"
+      >
         <div className="flex items-center justify-between border-b border-gray-100 pb-4">
           <div className="flex items-center gap-2 text-gray-900">
             <UploadCloud className="h-5 w-5 text-blue-600" />
-            <h2 className="text-lg font-semibold">Upload Study Material</h2>
+            <h2 id="upload-modal-title" className="text-lg font-semibold">Upload Study Material</h2>
           </div>
           <button
             type="button"

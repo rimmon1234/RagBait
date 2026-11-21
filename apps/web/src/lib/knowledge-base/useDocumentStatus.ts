@@ -3,10 +3,13 @@ import { getDocument } from "./knowledge-base-api";
 import type { DocumentDetail, DocumentListItem } from "./knowledge-base-types";
 
 const ACTIVE_EXTRACTION_STATUSES = new Set(["pending", "queued", "processing"]);
-const POLL_INTERVAL_MS = 3000;
+const BASE_POLL_INTERVAL_MS = 3000;
+const MAX_POLL_INTERVAL_MS = 15000;
+const MAX_CONCURRENT_POLLS = 3;
 
 /**
- * Polls active extraction jobs every 3 seconds until terminal state or unmount.
+ * Polls active extraction jobs with bounded concurrency, exponential error backoff,
+ * and visibilitychange pausing until terminal state or unmount.
  */
 export function useDocumentStatus(
   documents: DocumentListItem[],
@@ -32,27 +35,95 @@ export function useDocumentStatus(
 
     const idsToPoll = activeIdsKey.split(",");
     let isCancelled = false;
+    let isPollRunning = false;
+    let consecutiveFailures = 0;
+    let timerId: NodeJS.Timeout | null = null;
 
-    const poll = async () => {
-      await Promise.all(
-        idsToPoll.map(async (id) => {
-          try {
-            const updated = await getDocument(id);
-            if (!isCancelled) {
-              onUpdateRef.current(updated);
+    // Concurrency-bounded queue processor
+    const pollBatch = async () => {
+      if (isCancelled || isPollRunning) return;
+
+      // Pause polling if the browser tab/window is hidden
+      if (typeof document !== "undefined" && document.visibilityState === "hidden") {
+        return;
+      }
+
+      isPollRunning = true;
+      let roundHadSuccess = false;
+
+      try {
+        const queue = [...idsToPoll];
+        const workers = Array.from(
+          { length: Math.min(MAX_CONCURRENT_POLLS, queue.length) },
+          async () => {
+            while (queue.length > 0 && !isCancelled) {
+              const docId = queue.shift();
+              if (!docId) break;
+              try {
+                const updated = await getDocument(docId);
+                if (!isCancelled) {
+                  onUpdateRef.current(updated);
+                  roundHadSuccess = true;
+                }
+              } catch {
+                // Ignore individual document fetch failures
+              }
             }
-          } catch {
-            // Ignore temporary polling errors
           }
-        })
-      );
+        );
+
+        await Promise.all(workers);
+
+        if (roundHadSuccess) {
+          consecutiveFailures = 0;
+        } else {
+          consecutiveFailures++;
+        }
+      } catch {
+        consecutiveFailures++;
+      } finally {
+        isPollRunning = false;
+        scheduleNext();
+      }
     };
 
-    const intervalId = setInterval(poll, POLL_INTERVAL_MS);
+    const scheduleNext = () => {
+      if (isCancelled) return;
+      if (timerId) clearTimeout(timerId);
+
+      // Bounded backoff upon consecutive failures
+      const backoffFactor = Math.min(consecutiveFailures, 5);
+      const delay = Math.min(
+        BASE_POLL_INTERVAL_MS * Math.pow(1.5, backoffFactor),
+        MAX_POLL_INTERVAL_MS
+      );
+
+      timerId = setTimeout(() => {
+        pollBatch();
+      }, delay);
+    };
+
+    // When tab becomes visible again, trigger immediate poll
+    const handleVisibilityChange = () => {
+      if (typeof document !== "undefined" && document.visibilityState === "visible") {
+        consecutiveFailures = 0;
+        pollBatch();
+      }
+    };
+
+    if (typeof document !== "undefined") {
+      document.addEventListener("visibilitychange", handleVisibilityChange);
+    }
+
+    // Initial schedule
+    scheduleNext();
 
     return () => {
       isCancelled = true;
-      clearInterval(intervalId);
+      if (timerId) clearTimeout(timerId);
+      if (typeof document !== "undefined") {
+        document.removeEventListener("visibilitychange", handleVisibilityChange);
+      }
     };
   }, [activeIdsKey]);
 }
