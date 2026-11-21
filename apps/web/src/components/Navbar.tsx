@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
-import { Cpu, Key, LogOut, Network, Shield, User } from "lucide-react";
+import { BookOpen, Cpu, Key, LogOut, Network, Shield, User } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 import type { UserProfile } from "@/types";
 
@@ -72,6 +72,13 @@ export function Navbar() {
           </Link>
           {profile && (profile.approval_status === "approved" || profile.role === "admin" || profile.role === "super_admin") && (
             <>
+              <Link
+                href="/knowledge-base"
+                className="flex items-center gap-1.5 text-sm font-medium text-gray-700 hover:text-blue-600"
+              >
+                <BookOpen className="h-4 w-4" />
+                Knowledge Base
+              </Link>
               <Link
                 href="/credentials"
                 className="flex items-center gap-1.5 text-sm font-medium text-gray-700 hover:text-blue-600"
