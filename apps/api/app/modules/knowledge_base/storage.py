@@ -2,8 +2,11 @@
 
 import asyncio
 import logging
+from collections.abc import AsyncGenerator
+from contextlib import asynccontextmanager
 from typing import Any
 
+import httpx
 from storage3.exceptions import StorageApiError
 from supabase import AsyncClient, create_async_client
 
@@ -102,6 +105,53 @@ async def download_object_bytes(path: str) -> bytes:
             message="Unexpected error accessing storage.",
             status_code=500,
         ) from e
+
+
+@asynccontextmanager
+async def open_storage_stream(
+    path: str,
+    chunk_size: int = 64 * 1024,
+) -> AsyncGenerator[AsyncGenerator[bytes, None], None]:
+    """Stream object bytes directly from private Supabase Storage with bounded memory."""
+    url = (
+        f"{settings.SUPABASE_URL.rstrip('/')}/storage/v1/object/{settings.KB_STORAGE_BUCKET}/{path}"
+    )
+    headers = {"Authorization": f"Bearer {settings.SUPABASE_SERVICE_ROLE_KEY}"}
+
+    client = httpx.AsyncClient(timeout=httpx.Timeout(60.0, connect=10.0))
+    try:
+        req = client.build_request("GET", url, headers=headers)
+        resp = await client.send(req, stream=True)
+        if resp.status_code != 200:
+            err_bytes = await resp.aread()
+            await resp.aclose()
+            err_str = err_bytes.decode(errors="ignore").lower()
+            if (
+                resp.status_code == 404
+                or "not_found" in err_str
+                or "nosuchkey" in err_str
+                or "object not found" in err_str
+            ):
+                raise NotFoundError(
+                    message=f"Storage object at path '{path}' does not exist.",
+                    code="STORAGE_OBJECT_NOT_FOUND",
+                )
+            raise AppError(
+                code="STORAGE_DOWNLOAD_FAILED",
+                message=f"Failed to stream storage object (HTTP {resp.status_code}).",
+                status_code=502,
+            )
+
+        async def _generator() -> AsyncGenerator[bytes, None]:
+            try:
+                async for chunk in resp.aiter_bytes(chunk_size=chunk_size):
+                    yield chunk
+            finally:
+                await resp.aclose()
+
+        yield _generator()
+    finally:
+        await client.aclose()
 
 
 async def create_signed_download(path: str, expires_in: int = 300) -> str:

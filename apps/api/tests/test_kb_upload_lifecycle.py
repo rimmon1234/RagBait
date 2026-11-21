@@ -1172,3 +1172,276 @@ async def test_kb_abandoned_upload_sweeper():
         )
         assert row["upload_status"] == "upload_failed"
         assert row["error_code"] == "RESERVATION_EXPIRED"
+
+
+# ------------------------------------------------------------------------------
+# 10. Focused Security Verification Tests (Bounded Memory, Concurrency, Fencing)
+# ------------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_kb_bounded_memory_streaming_validation():
+    """Verify O(1) bounded memory streaming validation for large documents."""
+    from app.modules.knowledge_base.validators import validate_storage_stream
+
+    # Generator simulating 1000 chunks of 64KB (approx 64MB, exceeding 50MB)
+    async def oversized_stream():
+        chunk = b"X" * (64 * 1024)
+        for _ in range(1000):
+            yield chunk
+
+    # Must raise FILE_TOO_LARGE before consuming all chunks
+    with pytest.raises(Exception) as exc_info:
+        await validate_storage_stream(
+            stream=oversized_stream(),
+            mime_type="text/plain",
+        )
+    assert getattr(exc_info.value, "code", None) == "FILE_TOO_LARGE"
+
+    # Generator simulating valid 1MB text stream in 64KB chunks
+    async def valid_text_stream():
+        chunk = ("Academic notes on distributed consensus protocols.\n" * 1200).encode("utf-8")
+        for _ in range(16):
+            yield chunk
+
+    size, sha256 = await validate_storage_stream(
+        stream=valid_text_stream(),
+        mime_type="text/plain",
+    )
+    assert size > 0
+    assert len(sha256) == 64
+
+
+@pytest.mark.asyncio
+async def test_kb_strong_txt_validation_suite():
+    """Comprehensive test of conservative text validation heuristic."""
+    from app.modules.knowledge_base.validators import validate_content_and_checksum
+
+    # 1. Valid UTF-8
+    utf8_data = b"Hello world, standard UTF-8 academic text.\nLine 2.\tIndented.\n"
+    s1, h1 = validate_content_and_checksum(utf8_data, "text/plain")
+    assert s1 == len(utf8_data)
+
+    # 2. Valid Latin-1 (ISO-8859-1 accented)
+    latin1_data = b"R\xe9sum\xe9 d'un cours: mod\xe8le relationnel de donn\xe9es."
+    s2, h2 = validate_content_and_checksum(latin1_data, "text/plain")
+    assert s2 == len(latin1_data)
+
+    # 3. Multilingual UTF-8
+    multi_data = (
+        "English. Français. Deutsch. Español. Русский. 中文. 日本語. हिन्दी. العربية.".encode()
+    )
+    s3, h3 = validate_content_and_checksum(multi_data, "text/plain")
+    assert s3 == len(multi_data)
+
+    # 4. Mathematical and academic symbols
+    math_data = (
+        "Theorem: ∀ x ∈ ℝ, ∫_{-∞}^{∞} e^{-x²} dx = √π. Also ∑_{i=1}^n x_i ≤ C ≈ ∞.\n".encode()
+    )
+    s4, h4 = validate_content_and_checksum(math_data, "text/plain")
+    assert s4 == len(math_data)
+
+    # 5. Null bytes rejected
+    with pytest.raises(Exception) as exc:
+        validate_content_and_checksum(b"Notes\x00Chapter 1", "text/plain")
+    assert getattr(exc.value, "code", None) == "INVALID_TEXT_FORMAT"
+
+    # 6. High control-character ratio rejected
+    high_controls = b"Notes\x01\x02\x03\x04\x05\x06\x07\x08\x0b\x0e\x0f\x10\x11\x12\x13\x14\x15end"
+    with pytest.raises(Exception) as exc:
+        validate_content_and_checksum(high_controls, "text/plain")
+    assert getattr(exc.value, "code", None) == "INVALID_TEXT_FORMAT"
+
+    # 7. Disguised binary (random non-null bytes renamed .txt)
+    pseudo_binary = bytes([((i * 37) % 255) + 1 for i in range(250)])
+    with pytest.raises(Exception) as exc:
+        validate_content_and_checksum(pseudo_binary, "text/plain")
+    assert getattr(exc.value, "code", None) == "INVALID_TEXT_FORMAT"
+
+
+@pytest.mark.asyncio
+async def test_kb_confirm_concurrency_and_atomicity(client: httpx.AsyncClient):
+    """Multiple concurrent confirmation requests result in exactly ONE extraction job."""
+    import asyncio
+
+    subject_id, topic_id, _ = await create_test_taxonomy()
+    user_id = await create_db_user(status="approved")
+    headers = setup_auth_context(user_id=user_id)
+
+    txt_content = b"Concurrency and atomicity test document content."
+    payload = {
+        "subject_id": str(subject_id),
+        "topic_id": str(topic_id),
+        "title": "Concurrent Doc",
+        "original_filename": "concurrent.txt",
+        "mime_type": "text/plain",
+        "file_size_bytes": len(txt_content),
+    }
+    intent = await client.post("/api/v1/kb/documents/upload-intent", json=payload, headers=headers)
+    doc_id = intent.json()["document_id"]
+    storage_path = intent.json()["storage_path"]
+    CREATED_STORAGE_PATHS.append(storage_path)
+
+    # Upload object
+    storage_client = await storage.get_storage_client()
+    await storage_client.storage.from_(settings.KB_STORAGE_BUCKET).upload(
+        storage_path, txt_content, {"content-type": "text/plain"}
+    )
+
+    # Fire 5 concurrent confirm requests simultaneously
+    async def call_confirm():
+        return await client.post(f"/api/v1/kb/documents/{doc_id}/confirm-upload", headers=headers)
+
+    responses = await asyncio.gather(*(call_confirm() for _ in range(5)))
+
+    # All should return 200 (either initial confirmation or idempotent response)
+    for resp in responses:
+        assert resp.status_code == 200
+
+    # Exactly ONE job must exist in kb_extraction_jobs
+    pool = get_pool()
+    async with pool.acquire() as conn:
+        jobs = await conn.fetch(
+            "SELECT id, status FROM public.kb_extraction_jobs WHERE document_id = $1",
+            UUID(doc_id),
+        )
+        assert len(jobs) == 1
+        assert jobs[0]["status"] == "queued"
+
+
+@pytest.mark.asyncio
+async def test_kb_deletion_fences_active_extraction_worker(client: httpx.AsyncClient):
+    """Document deletion immediately invalidates active extraction jobs and clears lease tokens."""
+    subject_id, topic_id, _ = await create_test_taxonomy()
+    user_id = await create_db_user(status="approved")
+    headers = setup_auth_context(user_id=user_id)
+
+    doc_id = uuid4()
+    storage_path = f"documents/{doc_id}/source.txt"
+    CREATED_STORAGE_PATHS.append(storage_path)
+
+    storage_client = await storage.get_storage_client()
+    await storage_client.storage.from_(settings.KB_STORAGE_BUCKET).upload(
+        storage_path, b"Worker fencing test", {"content-type": "text/plain"}
+    )
+
+    lease_token = uuid4()
+    pool = get_pool()
+    async with pool.acquire() as conn:
+        await conn.execute(
+            """
+            INSERT INTO public.kb_documents (
+                id, subject_id, topic_id, uploader_id, title, original_filename,
+                storage_path, mime_type, file_size_bytes, upload_status, extraction_status
+            ) VALUES (
+                $1, $2, $3, $4, 'Fencing Doc', 'fence.txt',
+                $5, 'text/plain', 19, 'uploaded', 'processing'
+            )
+            """,
+            doc_id,
+            subject_id,
+            topic_id,
+            user_id,
+            storage_path,
+        )
+        await conn.execute(
+            """
+            INSERT INTO public.kb_extraction_jobs (
+                document_id, status, worker_id, lease_token, attempts, locked_until
+            ) VALUES (
+                $1, 'processing', 'worker-node-1', $2, 1, timezone('utc'::text, now()) + interval '5 minutes'
+            )
+            """,
+            doc_id,
+            lease_token,
+        )
+
+    # Delete the document
+    del_resp = await client.delete(f"/api/v1/kb/documents/{doc_id}", headers=headers)
+    assert del_resp.status_code == 204
+
+    # Assert that the extraction job was safely cancelled and lease token was revoked
+    async with pool.acquire() as conn:
+        job = await conn.fetchrow(
+            "SELECT status, error_code, lease_token FROM public.kb_extraction_jobs WHERE document_id = $1",
+            doc_id,
+        )
+        assert job["status"] == "failed"
+        assert job["error_code"] == "DOCUMENT_DELETED"
+        assert job["lease_token"] is None  # Worker is fenced
+
+
+@pytest.mark.asyncio
+async def test_kb_sweeper_recovers_stranded_deleting_documents():
+    """Sweeper recovers stranded deleting documents without touching valid uploaded documents."""
+    subject_id, topic_id, _ = await create_test_taxonomy()
+    user_id = await create_db_user(status="approved")
+
+    # Document 1: Valid uploaded document (should NEVER be touched by sweeper)
+    doc_uploaded = uuid4()
+    path_uploaded = f"documents/{doc_uploaded}/source.txt"
+    CREATED_STORAGE_PATHS.append(path_uploaded)
+
+    # Document 2: Stranded in 'deleting' state for > 15 minutes (server crash recovery)
+    doc_stranded = uuid4()
+    path_stranded = f"documents/{doc_stranded}/source.txt"
+    CREATED_STORAGE_PATHS.append(path_stranded)
+
+    past = datetime.now(UTC) - timedelta(minutes=20)
+    pool = get_pool()
+    async with pool.acquire() as conn:
+        await conn.execute(
+            """
+            INSERT INTO public.kb_documents (
+                id, subject_id, topic_id, uploader_id, title, original_filename,
+                storage_path, mime_type, file_size_bytes, upload_status, extraction_status
+            ) VALUES (
+                $1, $2, $3, $4, 'Valid Uploaded', 'valid.txt',
+                $5, 'text/plain', 10, 'uploaded', 'completed'
+            )
+            """,
+            doc_uploaded,
+            subject_id,
+            topic_id,
+            user_id,
+            path_uploaded,
+        )
+        await conn.execute(
+            """
+            INSERT INTO public.kb_documents (
+                id, subject_id, topic_id, uploader_id, title, original_filename,
+                storage_path, mime_type, file_size_bytes, upload_status, extraction_status,
+                is_archived, updated_at
+            ) VALUES (
+                $1, $2, $3, $4, 'Stranded Doc', 'stranded.txt',
+                $5, 'text/plain', 10, 'deleting', 'pending', false, $6
+            )
+            """,
+            doc_stranded,
+            subject_id,
+            topic_id,
+            user_id,
+            path_stranded,
+            past,
+        )
+
+    # Run sweeper
+    count = await cleanup.sweep_abandoned_uploads(batch_size=10)
+    assert count >= 1
+
+    # Check Document 1 is UNTOUCHED
+    async with pool.acquire() as conn:
+        doc1 = await conn.fetchrow(
+            "SELECT upload_status, is_archived FROM public.kb_documents WHERE id = $1",
+            doc_uploaded,
+        )
+        assert doc1["upload_status"] == "uploaded"
+        assert doc1["is_archived"] is False
+
+        # Check Document 2 is properly recovered and finalized as deleted
+        doc2 = await conn.fetchrow(
+            "SELECT upload_status, is_archived FROM public.kb_documents WHERE id = $1",
+            doc_stranded,
+        )
+        assert doc2["upload_status"] == "deleted"
+        assert doc2["is_archived"] is True

@@ -345,7 +345,10 @@ async def transition_document_to_deleting(
     user_id: UUID | None,
     is_admin: bool,
 ) -> dict[str, Any] | None:
-    """Transition a document to deleting state if owned by user or if caller is admin."""
+    """Transition a document to deleting state if owned by user or if caller is admin.
+
+    Also cancels any active extraction jobs and clears lease tokens to fence stale workers.
+    """
     row = await conn.fetchrow(
         """
         UPDATE public.kb_documents
@@ -361,7 +364,24 @@ async def transition_document_to_deleting(
         is_admin,
         user_id,
     )
-    return dict(row) if row else None
+    if not row:
+        return None
+
+    # Cancel active extraction jobs and invalidate lease tokens (fencing protection)
+    await conn.execute(
+        """
+        UPDATE public.kb_extraction_jobs
+        SET status = 'failed',
+            error_code = 'DOCUMENT_DELETED',
+            error_message = 'Document was deleted before extraction completed.',
+            lease_token = NULL,
+            updated_at = timezone('utc'::text, now())
+        WHERE document_id = $1 AND status IN ('queued', 'processing');
+        """,
+        document_id,
+    )
+
+    return dict(row)
 
 
 async def finalize_document_deletion(conn: asyncpg.Connection, document_id: UUID) -> None:
@@ -401,6 +421,26 @@ async def sweep_abandoned_pending_uploads(
         WHERE d.id = expired.id
         RETURNING d.id, d.storage_path;
         """,
+        batch_size,
+    )
+    return [dict(row) for row in rows]
+
+
+async def sweep_stale_deleting_documents(
+    conn: asyncpg.Connection, stale_threshold_seconds: int = 600, batch_size: int = 50
+) -> list[dict[str, Any]]:
+    """Find documents stuck in 'deleting' for longer than threshold to finalize or retry storage purge."""
+    rows = await conn.fetch(
+        """
+        SELECT id, storage_path, uploader_id, title
+        FROM public.kb_documents
+        WHERE upload_status = 'deleting'
+          AND is_archived = false
+          AND updated_at < timezone('utc'::text, now()) - ($1 || ' seconds')::interval
+        LIMIT $2
+        FOR UPDATE SKIP LOCKED;
+        """,
+        str(stale_threshold_seconds),
         batch_size,
     )
     return [dict(row) for row in rows]

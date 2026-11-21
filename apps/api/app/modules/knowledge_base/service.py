@@ -30,8 +30,8 @@ from app.modules.knowledge_base.schemas import (
 )
 from app.modules.knowledge_base.validators import (
     sanitize_title,
-    validate_content_and_checksum,
     validate_filename,
+    validate_storage_stream,
 )
 from app.modules.users.schemas import UserProfile
 
@@ -268,26 +268,23 @@ class KBService:
                 code="RESERVATION_EXPIRED",
             )
 
-        # 2. Retrieve file content from private Supabase Storage
+        # 2 & 3. Stream file from storage with strictly bounded memory & validate
+        expected_size = req.file_size_bytes or doc["file_size_bytes"]
+        expected_checksum = req.sha256_checksum or doc["sha256_checksum"]
+
         try:
-            file_bytes = await storage.download_object_bytes(doc["storage_path"])
+            async with storage.open_storage_stream(doc["storage_path"]) as stream:
+                actual_size, actual_sha256 = await validate_storage_stream(
+                    stream=stream,
+                    mime_type=doc["mime_type"],
+                    expected_size=expected_size,
+                    expected_checksum=expected_checksum,
+                )
         except NotFoundError as e:
             raise BadRequestError(
                 "Uploaded file was not found in storage. Ensure file was uploaded to the signed URL before confirmation.",
                 code="FILE_NOT_FOUND_IN_STORAGE",
             ) from e
-
-        # 3. Strict structural and cryptographic verification
-        expected_size = req.file_size_bytes or doc["file_size_bytes"]
-        expected_checksum = req.sha256_checksum or doc["sha256_checksum"]
-
-        try:
-            actual_size, actual_sha256 = validate_content_and_checksum(
-                data=file_bytes,
-                mime_type=doc["mime_type"],
-                expected_size=expected_size,
-                expected_checksum=expected_checksum,
-            )
         except BadRequestError as exc:
             # Verification failed: clean up invalid storage object and mark document failed
             logger.warning(
@@ -308,6 +305,14 @@ class KBService:
             )
 
         if not updated_doc:
+            # Check if another concurrent request successfully confirmed it
+            async with get_admin_db_session() as conn:
+                doc_concurrent = await repository.get_raw_document_by_id(conn, document_id)
+            if doc_concurrent and doc_concurrent["upload_status"] == "uploaded":
+                return ConfirmUploadResponse(
+                    document=DocumentDetail.model_validate(doc_concurrent),
+                    message="Document upload was already verified and queued.",
+                )
             raise ConflictError(
                 "Failed to confirm document. It may have been updated concurrently.",
                 code="CONCURRENT_UPDATE",
