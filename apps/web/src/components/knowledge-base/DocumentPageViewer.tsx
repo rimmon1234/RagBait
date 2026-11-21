@@ -36,7 +36,8 @@ export function DocumentPageViewer({
     );
   }
 
-  if (pages.length === 0) {
+  const safePages = pages || [];
+  if (safePages.length === 0) {
     return (
       <div className="rounded-xl border border-gray-200 bg-gray-50 p-8 text-center text-sm text-gray-500">
         No extracted text available for this document.
@@ -44,8 +45,8 @@ export function DocumentPageViewer({
     );
   }
 
-  const activePage = pages[currentPageIndex] || pages[0];
-  const totalPages = pages.length;
+  const activePage = safePages[currentPageIndex] || safePages[0];
+  const totalPages = safePages.length;
 
   return (
     <div className="flex flex-col space-y-4">

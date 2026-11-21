@@ -5,6 +5,7 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, Query, status
 
 from app.core.dependencies import require_approved_user
+from app.modules.knowledge_base.admin_router import kb_admin_router
 from app.modules.knowledge_base.schemas import (
     ConfirmUploadRequest,
     ConfirmUploadResponse,
@@ -21,6 +22,7 @@ from app.modules.knowledge_base.service import KBService
 from app.modules.users.schemas import UserProfile
 
 kb_router = APIRouter(prefix="/kb", tags=["knowledge-base"])
+kb_router.include_router(kb_admin_router)
 
 
 @kb_router.get(

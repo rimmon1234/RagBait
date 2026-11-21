@@ -2,10 +2,11 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { Activity, FileText, LayoutDashboard, ShieldCheck, UserCheck, Users } from "lucide-react";
+import { Activity, BookOpen, FileText, LayoutDashboard, ShieldCheck, UserCheck, Users } from "lucide-react";
 
 const navItems = [
   { href: "/admin", label: "Overview", icon: LayoutDashboard },
+  { href: "/admin/knowledge-base", label: "Knowledge Base", icon: BookOpen },
   { href: "/admin/requests", label: "Access Requests", icon: UserCheck },
   { href: "/admin/users", label: "Users & Roles", icon: Users },
   { href: "/admin/presence", label: "Active Presence", icon: Activity },
@@ -32,7 +33,9 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
       <div className="mb-6 flex flex-wrap gap-2 border-b border-gray-200 pb-2">
         {navItems.map((item) => {
           const Icon = item.icon;
-          const isActive = pathname === item.href;
+          const isActive =
+            pathname === item.href ||
+            (item.href !== "/admin" && pathname.startsWith(item.href));
           return (
             <Link
               key={item.href}

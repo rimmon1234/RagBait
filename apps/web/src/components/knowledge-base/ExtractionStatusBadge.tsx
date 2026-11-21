@@ -12,15 +12,20 @@ import {
 } from "lucide-react";
 
 interface ExtractionStatusBadgeProps {
-  uploadStatus: string;
-  extractionStatus: string;
+  uploadStatus?: string;
+  extractionStatus?: string;
+  status?: string;
 }
 
 export function ExtractionStatusBadge({
   uploadStatus,
   extractionStatus,
+  status,
 }: ExtractionStatusBadgeProps) {
-  if (uploadStatus === "pending_upload") {
+  const effectiveUpload = uploadStatus || "uploaded";
+  const effectiveExtraction = extractionStatus || status || "pending";
+
+  if (effectiveUpload === "pending_upload") {
     return (
       <span className="inline-flex items-center gap-1.5 rounded-full bg-yellow-50 px-2.5 py-0.5 text-xs font-medium text-yellow-700 ring-1 ring-yellow-600/20 ring-inset">
         <Clock className="h-3 w-3 animate-pulse" />
@@ -29,7 +34,7 @@ export function ExtractionStatusBadge({
     );
   }
 
-  if (uploadStatus === "upload_failed") {
+  if (effectiveUpload === "upload_failed") {
     return (
       <span className="inline-flex items-center gap-1.5 rounded-full bg-red-50 px-2.5 py-0.5 text-xs font-medium text-red-700 ring-1 ring-red-600/20 ring-inset">
         <AlertCircle className="h-3 w-3" />
@@ -38,7 +43,7 @@ export function ExtractionStatusBadge({
     );
   }
 
-  if (uploadStatus === "deleted" || extractionStatus === "deleted" || extractionStatus === "deleting") {
+  if (effectiveUpload === "deleted" || effectiveExtraction === "deleted" || effectiveExtraction === "deleting") {
     return (
       <span className="inline-flex items-center gap-1.5 rounded-full bg-gray-100 px-2.5 py-0.5 text-xs font-medium text-gray-600 ring-1 ring-gray-500/20 ring-inset">
         <Trash2 className="h-3 w-3" />
@@ -47,7 +52,7 @@ export function ExtractionStatusBadge({
     );
   }
 
-  switch (extractionStatus) {
+  switch (effectiveExtraction) {
     case "pending":
       return (
         <span className="inline-flex items-center gap-1.5 rounded-full bg-blue-50 px-2.5 py-0.5 text-xs font-medium text-blue-700 ring-1 ring-blue-600/20 ring-inset">

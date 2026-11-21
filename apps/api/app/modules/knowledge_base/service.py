@@ -76,6 +76,12 @@ class KBService:
                     f"Topic '{topic_id}' not found or inactive.",
                     code="TOPIC_NOT_FOUND",
                 )
+            subject = await repository.get_subject_by_id(conn, topic["subject_id"])
+            if not subject or not subject["is_active"]:
+                raise NotFoundError(
+                    f"Subject '{topic['subject_id']}' not found or inactive.",
+                    code="SUBJECT_NOT_FOUND",
+                )
             docs, total = await repository.list_documents_in_topic(
                 conn, topic_id, limit=bounded_limit, offset=bounded_offset
             )
@@ -107,6 +113,21 @@ class KBService:
             return DocumentDetail.model_validate(doc)
 
         if doc["is_archived"] or doc["upload_status"] in ("deleting", "deleted"):
+            raise NotFoundError(f"Document '{document_id}' not found.", code="DOCUMENT_NOT_FOUND")
+
+        # Non-admin check: parent subject and topic must both be active
+        async with get_admin_db_session() as conn:
+            tax = await conn.fetchrow(
+                """
+                SELECT s.is_active AS subject_active, t.is_active AS topic_active
+                FROM public.kb_topics t
+                JOIN public.kb_subjects s ON s.id = t.subject_id
+                WHERE t.id = $1 AND s.id = $2
+                """,
+                doc["topic_id"],
+                doc["subject_id"],
+            )
+        if not tax or not tax["subject_active"] or not tax["topic_active"]:
             raise NotFoundError(f"Document '{document_id}' not found.", code="DOCUMENT_NOT_FOUND")
 
         if doc["upload_status"] == "uploaded":
