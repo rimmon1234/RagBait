@@ -48,6 +48,7 @@ interface Message {
   id: string;
   role: "user" | "assistant";
   content: string;
+  modelName?: string;
 }
 
 function formatModelSize(bytes?: number): string {
@@ -291,6 +292,7 @@ export function LocalInferenceWorkspace({
       id: assistantMessageId,
       role: "assistant",
       content: "",
+      modelName: selectedModel,
     };
 
     const updatedMessages = [...messages, userMessage];
@@ -325,6 +327,13 @@ export function LocalInferenceWorkspace({
         {
           onRouteHeaders: (headers) => {
             setLastRouteHeaders(headers);
+            if (headers.selectedModel) {
+              setMessages((prev) =>
+                prev.map((m) =>
+                  m.id === assistantMessageId ? { ...m, modelName: headers.selectedModel } : m
+                )
+              );
+            }
           },
           onDelta: (delta) => {
             setMessages((prev) =>
@@ -407,6 +416,7 @@ export function LocalInferenceWorkspace({
       id: assistantMessageId,
       role: "assistant",
       content: "",
+      modelName: selectedModel,
     };
 
     const updatedMessages = [...messages, userMessage];
@@ -1125,9 +1135,10 @@ Environment="OLLAMA_ORIGINS=http://localhost:3000,http://127.0.0.1:3000"`}
                   <div className="text-[11px] font-semibold text-gray-400 mb-1 px-1 uppercase tracking-wider">
                     {msg.role === "user"
                       ? "You"
-                      : executionMode === "private"
-                      ? selectedModel || "Local Assistant"
-                      : lastRouteHeaders?.selectedModel || selectedCloudModel || "AI Assistant"}
+                      : msg.modelName ||
+                        (executionMode === "private"
+                          ? selectedModel || "Local Assistant"
+                          : lastRouteHeaders?.selectedModel || selectedCloudModel || "AI Assistant")}
                   </div>
 
                   <div

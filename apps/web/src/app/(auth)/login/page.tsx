@@ -31,12 +31,14 @@ export default function LoginPage() {
             const stateData = await res.json();
             if (stateData.effective_state === "admin") {
               router.push("/admin");
-            } else if (stateData.effective_state === "active") {
-              router.push("/local-inference");
-            } else if (stateData.effective_state === "contribution_required") {
-              router.push("/access/contribution-required");
             } else if (stateData.effective_state === "pending") {
               router.push("/access/pending");
+            } else if (stateData.effective_state === "rejected") {
+              router.push("/access/rejected");
+            } else if (stateData.effective_state === "unverified") {
+              router.push(`/auth/verify?email=${encodeURIComponent(session.user.email || "")}`);
+            } else {
+              router.push("/knowledge-base");
             }
           }
         } catch {
@@ -88,12 +90,7 @@ export default function LoginPage() {
           const stateData: AccessStateResponse = await res.json();
           if (stateData.effective_state === "admin") {
             router.push("/admin");
-<<<<<<< HEAD
             return;
-=======
-          } else if (stateData.effective_state === "active") {
-            router.push("/local-inference");
->>>>>>> 32cabfcfacede0a2b543f06e7083707ae399a44d
           } else if (stateData.effective_state === "pending") {
             router.push("/access/pending");
             return;

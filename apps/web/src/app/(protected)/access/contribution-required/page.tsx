@@ -2,7 +2,15 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import { CheckCircle2, Key, Sparkles, AlertCircle, ArrowRight, RefreshCw } from "lucide-react";
+import {
+  AlertCircle,
+  ArrowRight,
+  BookOpen,
+  CheckCircle2,
+  Key,
+  RefreshCw,
+  Sparkles,
+} from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 import type { ChatEntitlementResponse } from "@/types";
 
@@ -76,7 +84,6 @@ export default function ContributionRequiredPage() {
           Your student account has been approved by the platform administrators. You have full access to browse, upload, and read study materials.
         </p>
 
-<<<<<<< HEAD
         <div className="mt-6 flex flex-col gap-3 sm:flex-row sm:justify-center">
           <Link
             href="/knowledge-base"
@@ -87,24 +94,6 @@ export default function ContributionRequiredPage() {
           </Link>
         </div>
 
-        <div className="mt-6 rounded-lg border border-blue-100 bg-blue-50 p-5 text-left text-sm text-blue-900">
-          <div className="flex items-center gap-2 font-semibold">
-            <Sparkles className="h-5 w-5 text-blue-600" />
-            <span>Milestone M2 Feature Gate</span>
-          </div>
-          <p className="mt-2 text-blue-800">
-            Interactive AI study features and subject-scoped RAG queries require AI provider credentials.
-            Contribute your own provider API keys to unlock platform inference.
-          </p>
-          <div className="mt-4">
-            <Link
-              href="/credentials"
-              className="inline-flex items-center gap-2 rounded-lg border border-blue-300 bg-white px-4 py-2 text-sm font-medium text-blue-700 shadow-sm hover:bg-blue-50"
-            >
-              <Key className="h-4 w-4" />
-              Manage API Credentials (Optional)
-            </Link>
-=======
         {entitlement?.eligible ? (
           <div className="mt-6 rounded-lg border border-emerald-200 bg-emerald-50 p-5 text-left text-sm text-emerald-900">
             <div className="flex items-center gap-2 font-semibold">
@@ -165,7 +154,6 @@ export default function ContributionRequiredPage() {
                 Check Status
               </button>
             </div>
->>>>>>> 32cabfcfacede0a2b543f06e7083707ae399a44d
           </div>
         )}
 

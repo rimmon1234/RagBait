@@ -129,10 +129,15 @@ export async function streamChatCompletion(
         errorDetail = errJson.error.message;
         if (errJson.error.details && Array.isArray(errJson.error.details)) {
           const detailMsgs = errJson.error.details
-            .map((d: any) => `${d.loc ? d.loc.join(".") + ": " : ""}${d.msg || JSON.stringify(d)}`)
+            .map((d: any) => {
+              const loc = Array.isArray(d.loc)
+                ? d.loc.filter((part: any) => part !== "body").join(".")
+                : d.loc;
+              return `${loc ? loc + ": " : ""}${d.msg || JSON.stringify(d)}`;
+            })
             .join("; ");
           if (detailMsgs) {
-            errorDetail += ` (${detailMsgs})`;
+            errorDetail = `${errJson.error.message}: ${detailMsgs}`;
           }
         }
       } else if (errJson.detail) {
@@ -182,18 +187,28 @@ export async function streamChatCompletion(
 
           try {
             const parsed = JSON.parse(dataStr);
+            if (
+              currentEvent === "generation_error" ||
+              currentEvent === "error" ||
+              parsed.error_code ||
+              parsed.error
+            ) {
+              const errorMsg =
+                parsed.message ||
+                (typeof parsed.error === "string" ? parsed.error : parsed.error?.message) ||
+                parsed.error_code ||
+                "Generation error";
+              callbacks.onError?.(new Error(errorMsg));
+              return;
+            }
             const delta =
               parsed.delta ??
               parsed.choices?.[0]?.delta?.content ??
+              parsed.choices?.[0]?.text ??
               parsed.content ??
               parsed.text;
             if (delta) {
               callbacks.onDelta(delta);
-            }
-            if (parsed.error_code || (parsed.message && !delta && parsed.error_code)) {
-              callbacks.onError?.(
-                new Error(parsed.message || parsed.error_code || "Generation failed")
-              );
             }
           } catch {
             // Ignore partial non-JSON line

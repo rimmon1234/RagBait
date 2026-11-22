@@ -259,6 +259,28 @@ class ChatCompletionRequest(BaseModel):
     @classmethod
     def reconcile_routing_fields(cls, data: Any) -> Any:
         if isinstance(data, dict):
+            # Normalize empty strings to None for model, model_id, provider_id
+            for str_field in ("model", "model_id", "provider_id"):
+                if str_field in data:
+                    val = data[str_field]
+                    if val is None or (isinstance(val, str) and not val.strip()):
+                        data[str_field] = None
+                    elif isinstance(val, str):
+                        data[str_field] = val.strip()
+
+            # Sanitize messages list: prune empty messages if list exists
+            if "messages" in data and isinstance(data["messages"], list):
+                sanitized_messages = []
+                for m in data["messages"]:
+                    if isinstance(m, dict):
+                        content = m.get("content")
+                        if content is not None and str(content).strip():
+                            sanitized_messages.append(m)
+                    else:
+                        sanitized_messages.append(m)
+                if sanitized_messages:
+                    data["messages"] = sanitized_messages
+
             # Auto-generate idempotency_key if missing or empty
             if not data.get("idempotency_key"):
                 data["idempotency_key"] = f"idem-{uuid4().hex}"

@@ -43,6 +43,7 @@ export async function updateSession(request: NextRequest) {
     pathname.startsWith("/credentials") ||
     pathname.startsWith("/access") ||
     pathname.startsWith("/community-nodes") ||
+    pathname.startsWith("/knowledge-base") ||
     pathname.startsWith("/admin");
 
   if (!user && isProtectedRoute) {

@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
-import { Cpu, Key, LogOut, Shield, Sparkles, User } from "lucide-react";
+import { BookOpen, Cpu, Key, LogOut, Shield, Sparkles, User } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 import { fetchWithAuth } from "@/lib/api";
 import type { UserProfile } from "@/types";

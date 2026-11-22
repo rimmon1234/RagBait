@@ -596,3 +596,29 @@ async def test_route_and_dispatch_community_candidate():
         )
 
     assert "discontinued" in str(exc_info_exec.value).lower()
+
+
+def test_chat_message_role_and_content_sanitization():
+    """Verify ChatMessage normalizes role case and rejects whitespace-only content."""
+    msg = ChatMessage(role="USER", content="  Hello RagBait!  ")
+    assert msg.role == "user"
+    assert msg.content == "Hello RagBait!"
+
+    with pytest.raises(ValueError):
+        ChatMessage(role="user", content="   \n\t  ")
+
+
+def test_chat_completion_request_reconciles_empty_fields():
+    """Verify ChatCompletionRequest normalizes empty strings for model, model_id, provider_id to None."""
+    req = ChatCompletionRequest(
+        messages=[ChatMessage(role="user", content="Test prompt")],
+        model="",
+        model_id="",
+        provider_id="",
+    )
+    assert req.model is None
+    assert req.model_id is None
+    assert req.provider_id is None
+    assert req.routing_mode == "auto"
+    assert req.idempotency_key.startswith("idem-")
+

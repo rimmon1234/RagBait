@@ -167,15 +167,14 @@ export default function CredentialsPage() {
       const code = res.safe_code ?? res.error_code ?? null;
 
       // Update local item validation status
-      const isValid = res.is_valid ?? (res.outcome === "valid");
       setCredentials((prev) =>
         prev.map((c) =>
           c.id === cred.id
             ? {
               ...c,
               validation_status: isValid ? "valid" : "invalid",
-              last_validated_at: res.probed_at || res.validated_at || new Date().toISOString(),
-              validation_error_code: res.error_code || res.safe_code,
+              last_validated_at: probedAt,
+              validation_error_code: code,
               billing_tier: res.billing_tier || c.billing_tier,
             }
             : c

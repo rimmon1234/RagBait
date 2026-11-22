@@ -417,9 +417,6 @@ def test_trusted_proxy_client_ip_resolution():
     from app.core.config import settings
     from app.core.dependencies import get_trusted_client_ip
 
-    from app.core.config import settings
-    from app.core.dependencies import get_trusted_client_ip
-
     # Case 1: No trusted proxies configured -> uses client.host directly
     req1 = Request(
         {
