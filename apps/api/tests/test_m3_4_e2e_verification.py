@@ -401,7 +401,9 @@ async def test_two_student_e2e_txt_upload(client: httpx.AsyncClient):
 
     # PUT upload to storage
     async with httpx.AsyncClient() as http:
-        put_resp = await http.put(signed_url, content=txt_content, headers={"Content-Type": "text/plain"})
+        put_resp = await http.put(
+            signed_url, content=txt_content, headers={"Content-Type": "text/plain"}
+        )
         assert put_resp.status_code in (200, 201)
 
     # Confirm
@@ -409,7 +411,9 @@ async def test_two_student_e2e_txt_upload(client: httpx.AsyncClient):
     assert conf.status_code == 200
 
     # Worker extraction
-    worker = KnowledgeBaseExtractionWorker(settings=WorkerSettings(WORKER_ID="txt-worker"), once=True)
+    worker = KnowledgeBaseExtractionWorker(
+        settings=WorkerSettings(WORKER_ID="txt-worker"), once=True
+    )
     await worker.start()
     try:
         await worker.process_next_job()
@@ -428,7 +432,9 @@ async def test_two_student_e2e_txt_upload(client: httpx.AsyncClient):
 async def test_scanned_pdf_completed_no_text_lifecycle(client: httpx.AsyncClient):
     """Scanned image-only PDF with zero text transitions to completed_no_text safely."""
     subject_id, topic_id = await create_taxonomy()
-    student_id, student_email = await create_db_user(email="scanned_uploader@univ.edu", status="approved")
+    student_id, student_email = await create_db_user(
+        email="scanned_uploader@univ.edu", status="approved"
+    )
     headers = setup_auth(student_id, email=student_email)
 
     # PDF with 2 blank / non-selectable pages
@@ -455,13 +461,17 @@ async def test_scanned_pdf_completed_no_text_lifecycle(client: httpx.AsyncClient
     CREATED_STORAGE_PATHS.append(intent_resp.json()["storage_path"])
 
     async with httpx.AsyncClient() as http:
-        put_resp = await http.put(signed_url, content=scanned_pdf, headers={"Content-Type": "application/pdf"})
+        put_resp = await http.put(
+            signed_url, content=scanned_pdf, headers={"Content-Type": "application/pdf"}
+        )
         assert put_resp.status_code in (200, 201)
 
     await client.post(f"/api/v1/kb/documents/{doc_id}/confirm-upload", headers=headers)
 
     # Worker extraction
-    worker = KnowledgeBaseExtractionWorker(settings=WorkerSettings(WORKER_ID="scanned-worker"), once=True)
+    worker = KnowledgeBaseExtractionWorker(
+        settings=WorkerSettings(WORKER_ID="scanned-worker"), once=True
+    )
     await worker.start()
     try:
         await worker.process_next_job()
@@ -504,7 +514,9 @@ async def test_kb_authorization_scopes(client: httpx.AsyncClient):
     assert res_suspended.status_code == 403
 
     # Approved non-contributor (approved user with 0 credentials and 0 nodes)
-    approved_id, email_app = await create_db_user(email="approved_non_contributor@univ.edu", status="approved")
+    approved_id, email_app = await create_db_user(
+        email="approved_non_contributor@univ.edu", status="approved"
+    )
     h_approved = setup_auth(approved_id, email=email_app, status="approved")
     res_approved = await client.get("/api/v1/kb/subjects", headers=h_approved)
     assert res_approved.status_code == 200
