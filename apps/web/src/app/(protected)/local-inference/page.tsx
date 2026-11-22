@@ -49,6 +49,7 @@ interface Message {
   id: string;
   role: "user" | "assistant";
   content: string;
+  modelName?: string;
 }
 
 function formatModelSize(bytes?: number): string {
@@ -274,6 +275,7 @@ export default function LocalInferencePage() {
       id: assistantMessageId,
       role: "assistant",
       content: "",
+      modelName: selectedCloudModel || (mode === "auto" ? "Router Assistant" : "Assistant"),
     };
 
     const updatedMessages = [...messages, userMessage];
@@ -308,6 +310,13 @@ export default function LocalInferencePage() {
         {
           onRouteHeaders: (headers) => {
             setLastRouteHeaders(headers);
+            if (headers.selectedModel) {
+              setMessages((prev) =>
+                prev.map((m) =>
+                  m.id === assistantMessageId ? { ...m, modelName: headers.selectedModel } : m
+                )
+              );
+            }
           },
           onDelta: (delta) => {
             setMessages((prev) =>
@@ -392,6 +401,7 @@ export default function LocalInferencePage() {
       id: assistantMessageId,
       role: "assistant",
       content: "",
+      modelName: selectedModel || "Local Ollama",
     };
 
     const updatedMessages = [...messages, userMessage];
@@ -1041,11 +1051,7 @@ Environment="OLLAMA_ORIGINS=http://localhost:3000,http://127.0.0.1:3000"`}
                   }`}
                 >
                   <div className="text-[11px] font-semibold text-gray-400 mb-1 px-1 uppercase tracking-wider">
-                    {msg.role === "user"
-                      ? "You"
-                      : inferenceMode === "auto" || inferenceMode === "cloud_only"
-                        ? lastRouteHeaders?.selectedModel || selectedCloudModel || "Router Assistant"
-                        : selectedModel || "Assistant"}
+                    {msg.role === "user" ? "You" : msg.modelName || "Assistant"}
                   </div>
 
                   <div

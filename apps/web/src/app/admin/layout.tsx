@@ -1,8 +1,12 @@
 "use client";
 
 import Link from "next/link";
-import { usePathname } from "next/navigation";
-import { Activity, BookOpen, FileText, LayoutDashboard, ShieldCheck, UserCheck, Users } from "lucide-react";
+import { usePathname, useRouter } from "next/navigation";
+import { useEffect, useState } from "react";
+import { Activity, BookOpen, FileText, LayoutDashboard, Loader2, ShieldCheck, UserCheck, Users } from "lucide-react";
+import { createClient } from "@/lib/supabase/client";
+import { fetchWithAuth } from "@/lib/api";
+import type { UserProfile } from "@/types";
 
 const navItems = [
   { href: "/admin", label: "Overview", icon: LayoutDashboard },
@@ -15,6 +19,56 @@ const navItems = [
 
 export default function AdminLayout({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
+  const router = useRouter();
+  const [authorized, setAuthorized] = useState<boolean | null>(null);
+
+  useEffect(() => {
+    let isMounted = true;
+    const supabase = createClient();
+
+    const verifyAdmin = async () => {
+      const {
+        data: { session },
+      } = await supabase.auth.getSession();
+
+      if (!session) {
+        if (isMounted) router.push("/login");
+        return;
+      }
+
+      // Fast check from token claims
+      const metaRole = session.user.app_metadata?.role || session.user.user_metadata?.role;
+      if (metaRole === "admin" || metaRole === "super_admin") {
+        if (isMounted) setAuthorized(true);
+        return;
+      }
+
+      try {
+        const profile = await fetchWithAuth<UserProfile>("/api/v1/me");
+        if (profile.role === "admin" || profile.role === "super_admin") {
+          if (isMounted) setAuthorized(true);
+        } else {
+          if (isMounted) router.push("/knowledge-base");
+        }
+      } catch {
+        if (isMounted) router.push("/knowledge-base");
+      }
+    };
+
+    verifyAdmin();
+
+    return () => {
+      isMounted = false;
+    };
+  }, [router]);
+
+  if (authorized === null) {
+    return (
+      <div className="flex min-h-[50vh] items-center justify-center">
+        <Loader2 className="h-8 w-8 animate-spin text-blue-600" />
+      </div>
+    );
+  }
 
   return (
     <div className="mx-auto max-w-7xl px-4 py-8 sm:px-6 lg:px-8">

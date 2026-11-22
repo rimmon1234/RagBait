@@ -171,11 +171,14 @@ class KBService:
         user: UserProfile, req: UploadIntentRequest
     ) -> UploadIntentResponse:
         """Initiate document upload reservation with signed storage capability."""
-        # 1. Enforce per-user daily upload quota via Redis (20 uploads/day)
+        # 1. Enforce per-user daily upload quota via Redis (20 uploads/day for students, 100 for admins)
+        daily_limit = (
+            100 if user.role in ("admin", "super_admin") else settings.KB_USER_DAILY_UPLOAD_LIMIT
+        )
         await check_rate_limit(
             key_prefix="kb_upload_daily",
             identifier=str(user.id),
-            limit=settings.KB_USER_DAILY_UPLOAD_LIMIT,
+            limit=daily_limit,
             window_seconds=86400,
         )
 

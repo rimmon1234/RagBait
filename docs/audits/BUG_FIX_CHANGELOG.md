@@ -101,6 +101,11 @@
     - Added parsing for SSE `event: generation_error` and `error_code`, properly dispatching `callbacks.onError` so upstream failures render descriptive alerts in the chat bubble instead of silently closing the stream.
     - Updated `local-inference/page.tsx` onComplete handler to render a fallback label if zero tokens were produced.
 
+14. **`apps/web/src/app/admin/layout.tsx`, `apps/api/app/modules/knowledge_base/service.py`, `apps/web/src/app/(protected)/local-inference/page.tsx` (BUG-15)**
+    - Added proactive authorization guard in `AdminLayout` to redirect unauthenticated or non-admin users to `/login` or `/knowledge-base`, preventing unauthorized access attempts and broken 403 screens.
+    - Increased knowledge base daily upload rate limit for administrators and faculty from 20 to 100 uploads/day to facilitate batch curriculum ingestion.
+    - Added per-message model name tracking on `Message` interface to prevent historical message bubbles from retroactively changing displayed model names when the model selector is switched.
+
 ### Database Tests (`supabase`)
 
 1. **`supabase/tests/m3_1_knowledge_base_test.sql`**
