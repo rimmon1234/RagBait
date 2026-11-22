@@ -87,6 +87,26 @@ async def require_approved_user(
     return profile
 
 
+async def require_chat_entitled_user(
+    profile: UserProfile = Depends(require_approved_user),
+) -> UserProfile:
+    """Require approved user status AND a qualifying free-tier cloud API credential contribution.
+
+    Under RagBait product policy, all users (including administrators) must contribute at least
+    one valid, active, provider-approved free-tier cloud API credential to the shared pool
+    before accessing AI Chat. Private local Ollama and paid keys do not satisfy this requirement.
+    """
+    from app.modules.credentials.service import check_chat_contribution_entitlement
+
+    is_entitled, reason_code, _ = await check_chat_contribution_entitlement(profile.id)
+    if not is_entitled:
+        raise AuthorizationError(
+            "A valid, approved free-tier cloud API credential must be contributed before accessing AI Chat.",
+            code="CONTRIBUTION_REQUIRED",
+        )
+    return profile
+
+
 async def require_admin(
     profile: UserProfile = Depends(require_not_suspended),
 ) -> UserProfile:

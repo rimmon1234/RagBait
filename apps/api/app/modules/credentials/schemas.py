@@ -8,6 +8,7 @@ from pydantic import BaseModel, ConfigDict, Field, computed_field
 
 CredentialStatus = Literal["active", "disabled", "revoked", "rate_limited", "quota_exhausted"]
 CredentialSharingScope = Literal["owner_only", "community_shared"]
+BillingTier = Literal["verified_free_only", "paid", "unknown"]
 ValidationStatus = Literal[
     "unvalidated",
     "valid",
@@ -59,6 +60,10 @@ class ApiKeyMetadataRecord(BaseModel):
     account_scope_verified: bool = False
     account_scope_source: str | None = None
     account_scope_verified_at: datetime | None = None
+    billing_tier: BillingTier = "unknown"
+    billing_verified_at: datetime | None = None
+    billing_verification_error: str | None = None
+    billing_verification_source: str | None = None
     daily_request_limit: int = 500
     monthly_request_limit: int = 15000
     daily_spending_limit_cents: int | None = None
@@ -88,6 +93,10 @@ class StoredCredentialResult(BaseModel):
     account_scope_verified: bool = False
     account_scope_source: str | None = None
     account_scope_verified_at: datetime | None = None
+    billing_tier: BillingTier = "unknown"
+    billing_verified_at: datetime | None = None
+    billing_verification_error: str | None = None
+    billing_verification_source: str | None = None
     daily_request_limit: int
     monthly_request_limit: int
     daily_spending_limit_cents: int | None = None
@@ -212,6 +221,10 @@ class CredentialResponse(BaseModel):
     account_scope_verified: bool = False
     account_scope_source: str | None = None
     account_scope_verified_at: datetime | None = None
+    billing_tier: BillingTier = "unknown"
+    billing_verified_at: datetime | None = None
+    billing_verification_error: str | None = None
+    billing_verification_source: str | None = None
     daily_request_limit: int
     monthly_request_limit: int
     daily_spending_limit_cents: int | None = None
@@ -241,24 +254,17 @@ class ValidationResultResponse(BaseModel):
     outcome: ValidationStatus
     safe_code: str
     message: str
+    billing_tier: BillingTier = "unknown"
+    billing_verification_error: str | None = None
     validated_at: datetime
+    is_valid: bool = False
+    diagnostic_message: str = ""
 
-    @computed_field  # type: ignore[prop-decorator]
-    @property
-    def is_valid(self) -> bool:
-        return self.outcome == "valid"
 
-    @computed_field  # type: ignore[prop-decorator]
-    @property
-    def diagnostic_message(self) -> str:
-        return self.message
+class ChatEntitlementResponse(BaseModel):
+    """Result of user AI chat contribution entitlement verification."""
 
-    @computed_field  # type: ignore[prop-decorator]
-    @property
-    def error_code(self) -> str:
-        return self.safe_code
+    eligible: bool
+    reason_code: str
+    eligible_credential_count: int
 
-    @computed_field  # type: ignore[prop-decorator]
-    @property
-    def probed_at(self) -> str:
-        return self.validated_at.isoformat()

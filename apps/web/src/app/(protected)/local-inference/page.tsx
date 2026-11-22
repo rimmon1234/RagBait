@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
@@ -71,6 +72,9 @@ function isHeavyModel(model?: OllamaTagModel): boolean {
   }
   return false;
 }
+=======
+import { LocalInferenceWorkspace } from "@/components/LocalInferenceWorkspace";
+>>>>>>> 32cabfcfacede0a2b543f06e7083707ae399a44d
 
 const FALLBACK_CLOUD_MODELS = [
   { id: "openrouter/free", display_name: "OpenRouter Free Router (Dynamic Alias)" },
@@ -85,6 +89,7 @@ const FALLBACK_CLOUD_MODELS = [
 ];
 
 export default function LocalInferencePage() {
+<<<<<<< HEAD
   const router = useRouter();
   const [authLoading, setAuthLoading] = useState(true);
 
@@ -1292,4 +1297,7 @@ Environment="OLLAMA_ORIGINS=http://localhost:3000,http://127.0.0.1:3000"`}
       </div>
     </div>
   );
+=======
+  return <LocalInferenceWorkspace />;
+>>>>>>> 32cabfcfacede0a2b543f06e7083707ae399a44d
 }

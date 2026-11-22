@@ -75,6 +75,10 @@ def _to_credential_response(
         account_scope_verified=res.account_scope_verified,
         account_scope_source=res.account_scope_source,
         account_scope_verified_at=res.account_scope_verified_at,
+        billing_tier=res.billing_tier,
+        billing_verified_at=res.billing_verified_at,
+        billing_verification_error=res.billing_verification_error,
+        billing_verification_source=res.billing_verification_source,
         daily_request_limit=res.daily_request_limit,
         monthly_request_limit=res.monthly_request_limit,
         daily_spending_limit_cents=res.daily_spending_limit_cents,
@@ -99,7 +103,7 @@ async def create_user_credential(
     sharing_scope = payload.sharing_scope
     shared_consent = payload.shared_consent
 
-    if sharing_scope == "community_shared":
+    if sharing_scope == "community_shared" or shared_consent:
         if not provider.get("allows_community_sharing", False):
             raise ConflictError(
                 f"Provider '{payload.provider_id}' is not approved for community sharing"
@@ -110,9 +114,15 @@ async def create_user_credential(
             )
         consent_timestamp = datetime.now(UTC)
         consent_version = "v1"
+        sharing_scope = "community_shared"
+        shared_consent = True
     else:
         sharing_scope = "owner_only"
         shared_consent = False
+
+    # Server enforces platform-controlled default quotas (users cannot override platform limits)
+    platform_daily_limit = 500
+    platform_monthly_limit = 15000
 
     # Store in vault repository
     stored = await store_credential(
@@ -124,8 +134,8 @@ async def create_user_credential(
         shared_consent=shared_consent,
         sharing_consent_timestamp=consent_timestamp,
         consent_version=consent_version,
-        daily_request_limit=payload.daily_request_limit,
-        monthly_request_limit=payload.monthly_request_limit,
+        daily_request_limit=platform_daily_limit,
+        monthly_request_limit=platform_monthly_limit,
         daily_spending_limit_cents=payload.daily_spending_limit_cents,
         monthly_spending_limit_cents=payload.monthly_spending_limit_cents,
         status="disabled",  # Credentials start disabled until validated
@@ -191,11 +201,11 @@ async def update_user_credential(
     if payload.nickname is not None:
         updates["nickname"] = payload.nickname.strip()
 
-    if payload.daily_request_limit is not None:
-        updates["daily_request_limit"] = payload.daily_request_limit
-
-    if payload.monthly_request_limit is not None:
-        updates["monthly_request_limit"] = payload.monthly_request_limit
+    if payload.daily_request_limit is not None or payload.monthly_request_limit is not None:
+        raise ConflictError(
+            "Platform-controlled quotas cannot be modified by user requests",
+            code="QUOTA_MODIFICATION_FORBIDDEN",
+        )
 
     if payload.daily_spending_limit_cents is not None:
         updates["daily_spending_limit_cents"] = payload.daily_spending_limit_cents
@@ -220,6 +230,10 @@ async def update_user_credential(
                 raise ConflictError(
                     f"Provider '{existing.provider_id}' is not approved for community sharing"
                 )
+            if existing.billing_tier != "verified_free_only":
+                raise ConflictError(
+                    "Only verified free-tier credentials can be shared with the community. Current billing tier is not verified."
+                )
             if not target_consent:
                 raise ValidationError("Explicit consent is required to enable community sharing")
             updates["sharing_scope"] = "community_shared"
@@ -238,9 +252,16 @@ async def update_user_credential(
         updates=updates,
     )
 
+    # Log audit event for updates
+    audit_action = "credential.updated"
+    if updates.get("sharing_scope") == "owner_only" and existing.sharing_scope == "community_shared":
+        audit_action = "credential.consent_withdrawn"
+    elif updates.get("sharing_scope") == "community_shared" and existing.sharing_scope == "owner_only":
+        audit_action = "credential.consent_granted"
+
     await log_credential_audit(
         actor_id=owner_id,
-        action="credential.updated",
+        action=audit_action,
         credential_id=credential_id,
         provider_id=existing.provider_id,
         outcome="success",
@@ -284,6 +305,9 @@ async def validate_user_credential(
         owner_id=owner_id,
         validation_status=outcome_val,
         validation_error_code=probe_result.safe_code,
+        billing_tier=probe_result.billing_tier,
+        billing_verification_error=probe_result.billing_error,
+        billing_verification_source=f"{existing.provider_id}_auth_probe",
     )
 
     await log_credential_audit(
@@ -292,7 +316,10 @@ async def validate_user_credential(
         credential_id=credential_id,
         provider_id=existing.provider_id,
         outcome=outcome_val,
-        details={"safe_code": probe_result.safe_code},
+        details={
+            "safe_code": probe_result.safe_code,
+            "billing_tier": probe_result.billing_tier,
+        },
     )
 
     return ValidationResultResponse(
@@ -301,7 +328,11 @@ async def validate_user_credential(
         outcome=outcome_val,  # type: ignore[arg-type]
         safe_code=probe_result.safe_code,
         message=probe_result.message,
+        billing_tier=probe_result.billing_tier,  # type: ignore[arg-type]
+        billing_verification_error=probe_result.billing_error,
         validated_at=datetime.now(UTC),
+        is_valid=(outcome_val == "valid"),
+        diagnostic_message=probe_result.message,
     )
 
 
@@ -382,3 +413,149 @@ async def delete_user_credential(
     )
 
     return {"deleted": True, "id": str(credential_id)}
+
+
+async def check_chat_contribution_entitlement(
+    user_id: UUID,
+) -> tuple[bool, str, int]:
+    """Authoritatively evaluate whether a user has satisfied the mandatory AI Chat contribution requirement.
+
+    A user is entitled to use AI Chat if and only if they personally own at least one
+    credential that satisfies all of the following:
+      1. owner_id == user_id
+      2. status IN ('active', 'rate_limited', 'quota_exhausted') (temporary exhaustion does not revoke contributor entitlement)
+      3. validation_status == 'valid'
+      4. sharing_scope == 'community_shared'
+      5. shared_consent == true
+      6. provider allows community sharing (p.allows_community_sharing == true)
+      7. provider is enabled and is cloud_api (p.is_enabled == true, p.runtime_type == 'cloud_api')
+      8. provider has at least one active free-tier eligible model and is not paid-only
+
+    Returns:
+      (eligible: bool, reason_code: str, eligible_credential_count: int)
+    """
+    try:
+        pool = get_pool()
+    except Exception:
+        return False, "DATABASE_UNAVAILABLE", 0
+
+    async with pool.acquire() as conn:
+        rows = await conn.fetch(
+            """
+            SELECT
+                c.id,
+                c.provider_id,
+                c.status,
+                c.validation_status,
+                c.sharing_scope,
+                c.shared_consent,
+                c.billing_tier,
+                c.billing_verified_at,
+                p.allows_community_sharing,
+                p.is_enabled AS provider_enabled,
+                p.runtime_type,
+                p.account_tier,
+                EXISTS (
+                    SELECT 1 FROM public.llm_models m
+                    WHERE m.provider_id = p.id
+                      AND m.free_tier_eligible = true
+                      AND m.availability_status = 'active'
+                ) AS has_free_tier_models
+            FROM public.api_key_metadata c
+            JOIN public.llm_providers p ON c.provider_id = p.id
+            WHERE c.owner_id = $1
+            ORDER BY c.created_at DESC
+            """,
+            user_id,
+        )
+
+    if not rows:
+        return False, "NO_CREDENTIAL_CONTRIBUTED", 0
+
+    qualifying_count = 0
+    now = datetime.now(UTC)
+    for r in rows:
+        is_stale = False
+        if r["billing_verified_at"]:
+            verified_at = r["billing_verified_at"]
+            if verified_at.tzinfo is None:
+                verified_at = verified_at.replace(tzinfo=UTC)
+            is_stale = (now - verified_at).days > 30
+        else:
+            is_stale = True
+
+        is_qualifying = (
+            r["status"] in ("active", "rate_limited", "quota_exhausted")
+            and r["validation_status"] == "valid"
+            and r["sharing_scope"] == "community_shared"
+            and r["shared_consent"] is True
+            and r["allows_community_sharing"] is True
+            and r["provider_enabled"] is True
+            and r["runtime_type"] == "cloud_api"
+            and r["has_free_tier_models"] is True
+            and r["billing_tier"] == "verified_free_only"
+            and not is_stale
+        )
+        if is_qualifying:
+            qualifying_count += 1
+
+    if qualifying_count > 0:
+        return True, "QUALIFYING_CONTRIBUTION_ACTIVE", qualifying_count
+
+    # Determine most specific actionable remediation reason code
+    # 1. Check if user attempted community sharing but didn't pass validation
+    for r in rows:
+        if r["sharing_scope"] == "community_shared" and r["validation_status"] != "valid":
+            return False, "VALIDATION_REQUIRED", 0
+
+    # 2. Check if user shared and validated but credential is disabled
+    for r in rows:
+        if (
+            r["sharing_scope"] == "community_shared"
+            and r["validation_status"] == "valid"
+            and r["status"] in ("disabled", "revoked")
+        ):
+            return False, "CREDENTIAL_INACTIVE", 0
+
+    # 3. Check if user contributed a paid credential
+    for r in rows:
+        if r["sharing_scope"] == "community_shared" and r["billing_tier"] == "paid":
+            return False, "PAID_CREDENTIAL_INELIGIBLE", 0
+
+    # 4. Check if user contributed a credential with unverified billing
+    for r in rows:
+        if (
+            r["sharing_scope"] == "community_shared"
+            and r["validation_status"] == "valid"
+            and r["billing_tier"] == "unknown"
+        ):
+            return False, "BILLING_VERIFICATION_REQUIRED", 0
+
+    # 5. Check if user contributed a credential whose billing verification is stale
+    for r in rows:
+        if (
+            r["sharing_scope"] == "community_shared"
+            and r["validation_status"] == "valid"
+            and r["billing_tier"] == "verified_free_only"
+        ):
+            verified_at = r["billing_verified_at"]
+            if verified_at:
+                if verified_at.tzinfo is None:
+                    verified_at = verified_at.replace(tzinfo=UTC)
+                if (now - verified_at).days > 30:
+                    return False, "BILLING_VERIFICATION_STALE", 0
+
+    # 6. Check if user has a valid key but hasn't consented or enabled community sharing
+    for r in rows:
+        if r["validation_status"] == "valid" and (
+            r["sharing_scope"] != "community_shared" or not r["shared_consent"]
+        ):
+            return False, "SHARING_CONSENT_REQUIRED", 0
+
+    # 7. Check if user has a key for a provider not approved for community sharing
+    for r in rows:
+        if not r["allows_community_sharing"]:
+            return False, "PROVIDER_NOT_ELIGIBLE_FOR_SHARING", 0
+
+    return False, "NO_QUALIFYING_CONTRIBUTION", 0
+

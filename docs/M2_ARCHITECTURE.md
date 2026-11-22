@@ -4,11 +4,45 @@
 
 RagBait M2 creates a **unified, multi-resource LLM Gateway** that decouples application features (such as future RAG retrieval and conversational study assistants) from physical inference providers. 
 
-Rather than relying primarily on expensive proprietary APIs, RagBait democratizes access by orchestrating four distinct tiers of compute:
+Rather than relying primarily on expensive proprietary APIs, RagBait democratizes access by orchestrating distinct tiers of compute:
 1. **Free-Tier Public AI APIs**: (Google Gemini, GroqCloud, OpenRouter `:free`, Cerebras).
 2. **Paid Public AI APIs**: (xAI / Grok, Administrator-Managed OpenAI Project Service Accounts).
-3. **Private Local Nodes (Mode A)**: Individual student computers hosting Ollama/vLLM for their own exclusive use.
-4. **Shared Community Nodes (Mode B)**: Contributed student compute voluntarily shared with the community under dual-consent privacy controls.
+3. **Private Local Nodes**: Individual student computers hosting Ollama for their own exclusive, private loopback use.
+4. **Shared Cloud API Credential Pool**: Contributed institutional and student free-tier API keys pooled with strict quota enforcement and admission control.
+
+> **Privacy Invariant & Authoritative Free-Tier Policy:**
+> - *RagBait shares only explicitly contributed cloud credentials that are verified to operate within approved free-tier usage limits without paid fallback. Local Ollama models and all paid API resources remain private.*
+> - *Every approved user must contribute at least one validated, provider-approved, verified free-tier cloud API credential (`billing_tier: "verified_free_only"`) to the RagBait shared pool before accessing AI Chat. This requirement applies even when using private local Ollama. Local models, unverified credentials, and paid API credentials do not count.*
+> - *RagBait allows students to use their own locally installed Ollama models privately. These models and their computing resources are never shared with other students. Shared inference pooling is restricted to explicitly consented, provider-eligible cloud API credentials.*
+> Peer local compute pooling (Mode B) has been permanently discontinued and disabled. All community node endpoints return HTTP 410 Gone.
+
+### 1.1 Provider Shared Pooling Eligibility Matrix
+
+| Provider | Runtime Type | Verified Account Billing API | `allows_community_sharing` | Shared Pool Eligibility | Reason / Status |
+| :--- | :--- | :--- | :--- | :--- | :--- |
+| **OpenRouter** | `cloud_api` | Yes (`/api/v1/auth/key` -> `is_free_tier`) | **true** | **Permitted** | Reliable non-generative inspection guarantees `is_free_tier: true` with zero-charge enforcement. |
+| **Google Gemini** | `cloud_api` | No | false | Excluded | AI Studio API cannot establish absence of linked GCP billing account without full GCP Billing APIs. |
+| **GroqCloud** | `cloud_api` | No | false (default) | Excluded | Groq lacks public non-generative account billing verification endpoint to prevent paid fallback. |
+| **Cerebras** | `cloud_api` | No | false (default) | Excluded | Lacks account billing verification endpoint to verify zero-charge guarantee. |
+| **OpenAI** | `cloud_api` | No | false | Excluded | Proprietary commercial service; paid billing risk. |
+| **xAI / Grok** | `cloud_api` | No | false | Excluded | Paid commercial API. |
+| **Ollama** | `local_runtime` | N/A (Local loopback) | false | Excluded (Strictly Private) | Never shared. Runs 100% locally on student hardware. |
+
+### 1.1 Unified AI Inference Workspace & Execution Preferences
+
+The workspace provides three distinct execution modes in a single unified conversation playground:
+
+1. **Automatic (Recommended)** (`credential_scope: "eligible_pool"`): Cloud inference routed via user credentials and the approved shared free-tier pool.
+2. **My API Keys Only** (`credential_scope: "owner_only"`): Cloud inference restricted strictly to the student's personal API keys.
+3. **Private Local (This Computer)**: Direct browser-to-loopback Ollama inference (`http://127.0.0.1:11434`), 100% private and on-device.
+
+### 1.2 Mandatory AI Chat Contribution Gate
+
+To eliminate free-riding and ensure sustainable shared infrastructure:
+- Every user (including administrators) must contribute $\ge 1$ active, validated, provider-approved, free-tier cloud credential (e.g. Gemini, Groq, OpenRouter).
+- Enforced at server level via `require_chat_entitled_user` dependency across `POST /api/v1/llm/chat/completions` and `POST /api/v1/routing/preview`.
+- Verified at client level before initiating direct private local loopback inference.
+- Status checked via `GET /api/v1/me/chat-entitlement`. Temporary quota exhaustion (`status = 'quota_exhausted'`) does NOT revoke contributor entitlement while the key remains valid and shared.
 
 ```
 ┌────────────────────────────────────────────────────────────────────────────────────────┐

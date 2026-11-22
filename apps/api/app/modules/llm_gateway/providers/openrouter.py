@@ -209,7 +209,7 @@ class OpenRouterAdapter(BaseProviderAdapter):
             )
 
         first = choices[0]
-        content = (first.get("message") or {}).get("content", "")
+        content = (first.get("message") or {}).get("content") or ""
         finish_reason = first.get("finish_reason") or "stop"
         resolved_model = body_data.get("model") or model_id
         upstream_gen_id = body_data.get("id")

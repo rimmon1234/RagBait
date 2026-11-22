@@ -30,6 +30,7 @@ class RoutingCandidate(BaseModel):
     # Cloud Properties (Safe Metadata ONLY - NO Secrets!)
     credential_id: UUID | None = None
     credential_owner_id: UUID | None = None
+    credential_billing_tier: str | None = None
     is_shared_credential: bool = False
     pricing_input_cents_per_million: int | None = None
     pricing_output_cents_per_million: int | None = None

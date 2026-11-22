@@ -1,163 +1,34 @@
-"""WebSocket endpoint handling outbound connections from Ollama Node Agents."""
+"""WebSocket endpoint for Ollama Node Agents (DISCONTINUED).
 
-import asyncio
-import json
+Authoritative Product Policy:
+A student's local Ollama models and computing resources are strictly private.
+Community Node Agents are no longer permitted to connect or receive dispatch work.
+"""
+
 import logging
-import time
-from datetime import UTC, datetime, timedelta
-from typing import Any
-from uuid import UUID
 
-from fastapi import APIRouter, WebSocket, WebSocketDisconnect, status
+from fastapi import APIRouter, WebSocket, status
 
-from app.core.config import settings
-from app.modules.community import crypto, repository, streams
-from app.modules.community.schemas import (
-    SignedJobAuthorization,
-    WSAuthMessage,
-    WSAuthSuccessMessage,
-    WSChallengeMessage,
-    WSErrorMessage,
-    WSHeartbeatAckMessage,
-    WSHeartbeatMessage,
-    WSJobAcceptedMessage,
-    WSJobChunkMessage,
-    WSJobCompletedMessage,
-    WSJobDispatchMessage,
-)
+from app.modules.community.schemas import WSErrorMessage
 
 logger = logging.getLogger("ragbait.community.ws")
 ws_router = APIRouter()
 
-# In-memory tracking for session fencing: node_id -> (session_id, websocket, [tasks])
-ACTIVE_CONNECTIONS: dict[UUID, tuple[str, WebSocket, list[asyncio.Task[Any]]]] = {}
-
 
 @ws_router.websocket("/ws")
 async def community_node_websocket(websocket: WebSocket) -> None:
-    """Handle authenticated outbound WebSocket connection from an Ollama Node Agent."""
+    """Immediately reject outbound WebSocket connection from any Ollama Node Agent."""
     await websocket.accept()
-
-    node_id_str = websocket.headers.get("x-node-id")
-    if not node_id_str:
-        # Check query params as secondary
-        node_id_str = websocket.query_params.get("node_id")
-
-    if not node_id_str:
-        await websocket.send_text(
-            WSErrorMessage(
-                code="MISSING_NODE_ID", message="X-Node-ID header is required"
-            ).model_dump_json()
-        )
-        await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
-        return
-
-    try:
-        node_id = UUID(node_id_str)
-    except ValueError:
-        await websocket.send_text(
-            WSErrorMessage(
-                code="INVALID_NODE_ID", message="Invalid node UUID format"
-            ).model_dump_json()
-        )
-        await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
-        return
-
-    # Fetch node from DB
-    node = await repository.get_node_by_id(node_id)
-    if not node or node["status"] == "revoked":
-        await websocket.send_text(
-            WSErrorMessage(
-                code="NODE_NOT_FOUND", message="Node does not exist or has been revoked"
-            ).model_dump_json()
-        )
-        await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
-        return
-
-    # 1. Issue fresh challenge nonce
-    nonce = await streams.create_challenge_nonce(node_id, ttl_seconds=60)
-    session_id = f"sess-{time.time_ns()}"
-    now_ts = int(time.time())
-
-    challenge = WSChallengeMessage(
-        nonce=nonce,
-        session_id=session_id,
-        timestamp=now_ts,
-    )
-    await websocket.send_text(challenge.model_dump_json())
-
-    # 2. Wait for auth response
-    try:
-        raw_auth = await asyncio.wait_for(websocket.receive_text(), timeout=15.0)
-        auth_data = json.loads(raw_auth)
-        auth_msg = WSAuthMessage(**auth_data)
-    except (TimeoutError, Exception) as e:
-        logger.warning(f"Handshake failed for node {node_id}: {e}")
-        await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
-        return
-
-    # 3. Verify challenge nonce and timestamp
-    if abs(int(time.time()) - auth_msg.timestamp) > 60:
-        await websocket.send_text(
-            WSErrorMessage(
-                code="EXPIRED_TIMESTAMP", message="Handshake timestamp clock skew exceeds 60s"
-            ).model_dump_json()
-        )
-        await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
-        return
-
-    nonce_valid = await streams.consume_challenge_nonce(nonce, node_id)
-    if not nonce_valid:
-        await websocket.send_text(
-            WSErrorMessage(
-                code="INVALID_NONCE", message="Challenge nonce is invalid or already consumed"
-            ).model_dump_json()
-        )
-        await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
-        return
-
-    # 4. Verify Ed25519 signature
-    sig_valid = crypto.verify_node_challenge_signature(
-        signature_hex=auth_msg.signature,
-        node_id=node_id,
-        nonce_hex=nonce,
-        session_id=session_id,
-        timestamp=auth_msg.timestamp,
-        node_public_key_hex=node["public_key"],
-    )
-
-    if not sig_valid:
-        await websocket.send_text(
-            WSErrorMessage(
-                code="INVALID_SIGNATURE", message="Ed25519 challenge signature verification failed"
-            ).model_dump_json()
-        )
-        await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
-        return
-
-    # 5. Authoritative Session Registration (PostgreSQL transaction + row lock)
-    if node_id in ACTIVE_CONNECTIONS:
-        old_sess, old_ws, old_tasks = ACTIVE_CONNECTIONS[node_id]
-        logger.info(f"Terminating local superseded session {old_sess} for node {node_id}")
-        try:
-            await old_ws.close(code=4001, reason="Session superseded")
-        except Exception:
-            pass
-        for t in old_tasks:
-            t.cancel()
-
-    # Authoritatively advance session epoch and set active_session_id in PostgreSQL
-    epoch, authoritative_session_id = await repository.register_node_session(node_id, session_id)
-    # Project to dedicated volatile Redis for low-latency verification
-    await streams.set_node_session_fencing(node_id, authoritative_session_id, epoch)
-    await repository.update_node_heartbeat(node_id)
-
     await websocket.send_text(
-        WSAuthSuccessMessage(
-            session_id=authoritative_session_id,
-            heartbeat_interval_sec=settings.COMMUNITY_HEARTBEAT_INTERVAL_SECONDS,
+        WSErrorMessage(
+            code="COMMUNITY_LOCAL_INFERENCE_DISCONTINUED",
+            message=(
+                "Community local inference and Ollama node sharing have been discontinued. "
+                "A student's local Ollama models and computing resources remain strictly private."
+            ),
         ).model_dump_json()
     )
+<<<<<<< HEAD
 
     # 6. Active connection loop
     consumer_id = f"cons-{authoritative_session_id}"
@@ -460,3 +331,6 @@ async def _receive_loop(
             break
         except Exception as e:
             logger.warning(f"Error handling frame from node {node_id}: {e}")
+=======
+    await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
+>>>>>>> 32cabfcfacede0a2b543f06e7083707ae399a44d

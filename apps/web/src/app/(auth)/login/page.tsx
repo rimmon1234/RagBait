@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { AlertCircle, ArrowRight, Loader2 } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 import { fetchWithAuth } from "@/lib/api";
@@ -14,6 +14,37 @@ export default function LoginPage() {
   const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  // Auto-redirect if already authenticated
+  useEffect(() => {
+    const supabase = createClient();
+    supabase.auth.getSession().then(async ({ data: { session } }) => {
+      if (session) {
+        try {
+          const apiBase = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000";
+          const res = await fetch(`${apiBase.replace(/\/$/, "")}/api/v1/me/access`, {
+            headers: {
+              Authorization: `Bearer ${session.access_token}`,
+            },
+          });
+          if (res.ok) {
+            const stateData = await res.json();
+            if (stateData.effective_state === "admin") {
+              router.push("/admin");
+            } else if (stateData.effective_state === "active") {
+              router.push("/local-inference");
+            } else if (stateData.effective_state === "contribution_required") {
+              router.push("/access/contribution-required");
+            } else if (stateData.effective_state === "pending") {
+              router.push("/access/pending");
+            }
+          }
+        } catch {
+          // ignore
+        }
+      }
+    });
+  }, [router]);
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -46,7 +77,7 @@ export default function LoginPage() {
       // Check user effective access state authoritatively using fresh token
       try {
         const apiBase = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000";
-        const res = await fetch(`${apiBase}/api/v1/me/access`, {
+        const res = await fetch(`${apiBase.replace(/\/$/, "")}/api/v1/me/access`, {
           headers: {
             "Content-Type": "application/json",
             Authorization: `Bearer ${data.session.access_token}`,
@@ -57,7 +88,12 @@ export default function LoginPage() {
           const stateData: AccessStateResponse = await res.json();
           if (stateData.effective_state === "admin") {
             router.push("/admin");
+<<<<<<< HEAD
             return;
+=======
+          } else if (stateData.effective_state === "active") {
+            router.push("/local-inference");
+>>>>>>> 32cabfcfacede0a2b543f06e7083707ae399a44d
           } else if (stateData.effective_state === "pending") {
             router.push("/access/pending");
             return;

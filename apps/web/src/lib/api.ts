@@ -40,6 +40,17 @@ export async function fetchWithAuth<T>(
   });
 
   if (!res.ok) {
+    if (res.status === 401 && typeof window !== "undefined") {
+      try {
+        await supabase.auth.signOut();
+      } catch {
+        // ignore
+      }
+      const currentPath = window.location.pathname;
+      if (!currentPath.startsWith("/login") && !currentPath.startsWith("/register")) {
+        window.location.href = `/login?redirectedFrom=${encodeURIComponent(currentPath)}`;
+      }
+    }
     let errCode = "HTTP_ERROR";
     let errMsg = `Request failed with status ${res.status}`;
     let errDetails: unknown = null;

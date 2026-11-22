@@ -14,8 +14,8 @@ SELECT has_column(
 -- 2. Verify approved community providers
 SELECT is(
   (SELECT allows_community_sharing FROM public.llm_providers WHERE id = 'groq'),
-  true,
-  'Groq provider should have allows_community_sharing = true'
+  false,
+  'Groq provider operates in Owner-Only mode (allows_community_sharing = false)'
 );
 SELECT is(
   (SELECT allows_community_sharing FROM public.llm_providers WHERE id = 'openrouter'),

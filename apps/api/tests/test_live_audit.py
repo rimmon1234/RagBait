@@ -23,6 +23,7 @@ from app.core.errors import RateLimitError
 from app.core.redis import check_rate_limit, close_redis, init_redis
 from app.main import app
 from app.modules.admin.service import update_user_role
+from app.modules.credentials.vault import close_vault_pool, init_vault_pool
 
 DATABASE_URL = settings.DATABASE_URL
 SUPABASE_URL = settings.SUPABASE_URL
@@ -32,10 +33,12 @@ JWT_SECRET = settings.SUPABASE_JWT_SECRET
 
 @pytest.fixture(autouse=True)
 async def setup_live_connections() -> AsyncGenerator[None, None]:
-    """Ensure database pool and redis are initialized and cleanly closed per test loop."""
+    """Ensure database pool, vault pool, and redis are initialized and cleanly closed per test loop."""
     await init_db_pool()
+    await init_vault_pool()
     await init_redis()
     yield
+    await close_vault_pool()
     await close_db_pool()
     await close_redis()
 
