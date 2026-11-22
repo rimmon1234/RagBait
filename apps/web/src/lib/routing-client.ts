@@ -146,6 +146,7 @@ export async function streamChatCompletion(
 
   const decoder = new TextDecoder("utf-8");
   let buffer = "";
+  let currentEvent = "message";
 
   try {
     while (true) {
@@ -160,6 +161,11 @@ export async function streamChatCompletion(
         const trimmed = line.trim();
         if (!trimmed || trimmed.startsWith(":")) continue;
 
+        if (trimmed.startsWith("event:")) {
+          currentEvent = trimmed.slice(6).trim();
+          continue;
+        }
+
         if (trimmed.startsWith("data:")) {
           const dataStr = trimmed.slice(5).trim();
           if (dataStr === "[DONE]") {
@@ -169,8 +175,31 @@ export async function streamChatCompletion(
 
           try {
             const parsed = JSON.parse(dataStr);
-            const delta = parsed.choices?.[0]?.delta?.content;
-            if (delta) {
+
+            // Handle server-emitted error events (e.g. generation_error from backend router)
+            if (
+              currentEvent === "generation_error" ||
+              currentEvent === "error" ||
+              parsed.error_code ||
+              parsed.error
+            ) {
+              const errorMsg =
+                parsed.message ||
+                (typeof parsed.error === "string" ? parsed.error : parsed.error?.message) ||
+                parsed.error_code ||
+                "Generation error";
+              callbacks.onError?.(new Error(errorMsg));
+              return;
+            }
+
+            // Extract text delta across RagBait native format and standard OpenAI choices format
+            const delta =
+              parsed.delta ??
+              parsed.choices?.[0]?.delta?.content ??
+              parsed.choices?.[0]?.text ??
+              parsed.content;
+
+            if (typeof delta === "string" && delta.length > 0) {
               callbacks.onDelta(delta);
             }
           } catch {
@@ -179,6 +208,44 @@ export async function streamChatCompletion(
         }
       }
     }
+
+    // Flush any remaining buffer line
+    if (buffer.trim()) {
+      const remainingLine = buffer.trim();
+      if (remainingLine.startsWith("data:")) {
+        const dataStr = remainingLine.slice(5).trim();
+        if (dataStr !== "[DONE]") {
+          try {
+            const parsed = JSON.parse(dataStr);
+            if (
+              currentEvent === "generation_error" ||
+              currentEvent === "error" ||
+              parsed.error_code ||
+              parsed.error
+            ) {
+              const errorMsg =
+                parsed.message ||
+                (typeof parsed.error === "string" ? parsed.error : parsed.error?.message) ||
+                parsed.error_code ||
+                "Generation error";
+              callbacks.onError?.(new Error(errorMsg));
+              return;
+            }
+            const delta =
+              parsed.delta ??
+              parsed.choices?.[0]?.delta?.content ??
+              parsed.choices?.[0]?.text ??
+              parsed.content;
+            if (typeof delta === "string" && delta.length > 0) {
+              callbacks.onDelta(delta);
+            }
+          } catch {
+            // Ignore partial non-JSON line
+          }
+        }
+      }
+    }
+
     callbacks.onComplete?.();
   } catch (err) {
     if (options?.signal?.aborted) return;

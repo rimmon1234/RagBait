@@ -96,6 +96,11 @@
     - Reconciled chat completion validation: automatically trimmed and normalized message roles and contents, pruned empty/whitespace-only messages, and normalized empty string model parameters to `None`.
     - Formatted structured FastAPI `RequestValidationError` (`error.details`) into client error strings so exact field-level validation errors are visible instead of generic "Input validation failed".
 
+13. **`apps/web/src/lib/routing-client.ts`, `apps/web/src/app/(protected)/local-inference/page.tsx` (BUG-14)**
+    - Fixed empty assistant block during streaming: `streamChatCompletion` previously looked exclusively for OpenAI-specific `parsed.choices?.[0]?.delta?.content` and ignored RagBait's native `parsed.delta` payload, causing all streamed text tokens to be dropped and leaving an empty response bubble.
+    - Added parsing for SSE `event: generation_error` and `error_code`, properly dispatching `callbacks.onError` so upstream failures render descriptive alerts in the chat bubble instead of silently closing the stream.
+    - Updated `local-inference/page.tsx` onComplete handler to render a fallback label if zero tokens were produced.
+
 ### Database Tests (`supabase`)
 
 1. **`supabase/tests/m3_1_knowledge_base_test.sql`**
@@ -115,7 +120,7 @@ Backend Ruff Lint & Format             146 files clean, 0 errors
 Backend Mypy Strict Mode               96 files clean, 0 errors
 Frontend Typecheck (tsc)               0 errors
 Frontend Lint (next lint)              0 errors / 0 warnings
-Frontend Vitest (21 files)             120 / 120 passed (100%)
+Frontend Vitest (21 files)             122 / 122 passed (100%)
 Frontend Production Build (next build) 25 / 25 routes compiled successfully
 Live LLM Routed Streaming (SSE)        Verified HTTP 200 via OpenRouter
 ========================================================================

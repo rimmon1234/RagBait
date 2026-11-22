@@ -188,4 +188,91 @@ describe("M2.9 Routing Client", () => {
     expect(capturedError).toBeDefined();
     expect(capturedError?.message).toContain("Input validation failed: messages.0.content: String should have at least 1 character");
   });
+
+  it("streams chat completion with native RagBait text_delta SSE events", async () => {
+    const ssePayload = [
+      'event: generation_started\n',
+      'data: {"request_id":"req-1","model_id":"openrouter/free"}\n\n',
+      'event: text_delta\n',
+      'data: {"request_id":"req-1","delta":"Hello "}\n\n',
+      'event: text_delta\n',
+      'data: {"request_id":"req-1","delta":"from native RagBait!"}\n\n',
+      'event: generation_completed\n',
+      'data: {"request_id":"req-1","finish_reason":"stop"}\n\n',
+    ].join("");
+
+    const stream = new ReadableStream({
+      start(controller) {
+        controller.enqueue(new TextEncoder().encode(ssePayload));
+        controller.close();
+      },
+    });
+
+    globalThis.fetch = vi.fn().mockResolvedValue(
+      new Response(stream, {
+        status: 200,
+        headers: new Headers({ "Content-Type": "text/event-stream" }),
+      })
+    );
+
+    const deltas: string[] = [];
+    let completed = false;
+
+    await streamChatCompletion(
+      {
+        messages: [{ role: "user", content: "Hi" }],
+        routing_mode: "auto",
+      },
+      {
+        onDelta: (d) => deltas.push(d),
+        onComplete: () => {
+          completed = true;
+        },
+      }
+    );
+
+    expect(deltas.join("")).toBe("Hello from native RagBait!");
+    expect(completed).toBe(true);
+  });
+
+  it("handles server-emitted generation_error event in SSE stream", async () => {
+    const ssePayload = [
+      'event: generation_started\n',
+      'data: {"request_id":"req-2","model_id":"openrouter/free"}\n\n',
+      'event: generation_error\n',
+      'data: {"request_id":"req-2","error_code":"PROVIDER_INVALID_CREDENTIALS","message":"The configured provider credential was rejected as invalid or unauthorized"}\n\n',
+    ].join("");
+
+    const stream = new ReadableStream({
+      start(controller) {
+        controller.enqueue(new TextEncoder().encode(ssePayload));
+        controller.close();
+      },
+    });
+
+    globalThis.fetch = vi.fn().mockResolvedValue(
+      new Response(stream, {
+        status: 200,
+        headers: new Headers({ "Content-Type": "text/event-stream" }),
+      })
+    );
+
+    let capturedError: Error | undefined;
+
+    await streamChatCompletion(
+      {
+        messages: [{ role: "user", content: "Hi" }],
+        routing_mode: "auto",
+      },
+      {
+        onDelta: vi.fn(),
+        onError: (err) => {
+          capturedError = err;
+        },
+      }
+    );
+
+    expect(capturedError).toBeDefined();
+    expect(capturedError?.message).toContain("The configured provider credential was rejected as invalid or unauthorized");
+  });
 });
