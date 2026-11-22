@@ -18,9 +18,9 @@ import asyncpg  # type: ignore[import-untyped]
 from app.core.errors import NotFoundError
 from app.modules.knowledge_base.extractor_exceptions import (
     ChecksumMismatchError,
-    CorruptedFileError,
     FileSizeMismatchError,
     PermanentExtractionError,
+    StorageObjectMissingError,
     StorageStreamError,
     TransientExtractionError,
 )
@@ -238,7 +238,7 @@ class KnowledgeBaseExtractionWorker:
                             hasher.update(chunk)
                             f.write(chunk)
             except NotFoundError as e:
-                raise CorruptedFileError(f"Storage object not found: {e.message}") from e
+                raise StorageObjectMissingError(f"Storage object not found: {e.message}") from e
             except Exception as e:
                 if isinstance(e, PermanentExtractionError):
                     raise

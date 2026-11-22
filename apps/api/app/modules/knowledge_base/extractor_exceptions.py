@@ -79,6 +79,13 @@ class FileSizeMismatchError(PermanentExtractionError):
         super().__init__(message, code="FILE_SIZE_MISMATCH")
 
 
+class StorageObjectMissingError(PermanentExtractionError):
+    """Raised when the document file cannot be found in private Supabase Storage."""
+
+    def __init__(self, message: str = "Storage object not found.") -> None:
+        super().__init__(message, code="STORAGE_OBJECT_MISSING")
+
+
 # Transient error specializations
 class ExtractionTimeoutError(TransientExtractionError):
     """Raised when parsing exceeds the allocated wall-clock deadline."""

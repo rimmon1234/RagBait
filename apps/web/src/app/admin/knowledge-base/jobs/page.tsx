@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   AlertTriangle,
   Clock,
@@ -52,30 +52,33 @@ export default function ExtractionJobsAdminPage() {
     job: null,
   });
 
-  const loadJobs = async (silent = false) => {
-    try {
-      if (!silent) setLoading(true);
-      setError(null);
-      const data = await getAdminJobs({
-        limit,
-        offset,
-        status: statusFilter || undefined,
-        search: search.trim() || undefined,
-      });
-      setJobs(data.items);
-      setTotal(data.total);
-    } catch (err) {
-      if (!silent) {
-        setError(err instanceof Error ? err.message : "Failed to load extraction jobs.");
+  const loadJobs = useCallback(
+    async (silent = false) => {
+      try {
+        if (!silent) setLoading(true);
+        setError(null);
+        const data = await getAdminJobs({
+          limit,
+          offset,
+          status: statusFilter || undefined,
+          search: search.trim() || undefined,
+        });
+        setJobs(data.items);
+        setTotal(data.total);
+      } catch (err) {
+        if (!silent) {
+          setError(err instanceof Error ? err.message : "Failed to load extraction jobs.");
+        }
+      } finally {
+        if (!silent) setLoading(false);
       }
-    } finally {
-      if (!silent) setLoading(false);
-    }
-  };
+    },
+    [limit, offset, statusFilter, search]
+  );
 
   useEffect(() => {
     loadJobs();
-  }, [offset, statusFilter]);
+  }, [loadJobs]);
 
   // Live Bounded Polling (every 5 seconds, pauses when tab is hidden)
   useEffect(() => {
@@ -105,7 +108,7 @@ export default function ExtractionJobsAdminPage() {
         document.removeEventListener("visibilitychange", handleVisibilityChange);
       }
     };
-  }, [offset, statusFilter, search]);
+  }, [loadJobs]);
 
   const openDrawer = async (jobId: string) => {
     try {

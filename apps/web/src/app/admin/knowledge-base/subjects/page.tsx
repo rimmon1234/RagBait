@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import {
   AlertTriangle,
   Archive,
@@ -75,7 +75,7 @@ export default function SubjectsAdminPage() {
     onConfirm: async () => {},
   });
 
-  const loadSubjects = async () => {
+  const loadSubjects = useCallback(async () => {
     try {
       setLoading(true);
       setError(null);
@@ -86,11 +86,11 @@ export default function SubjectsAdminPage() {
     } finally {
       setLoading(false);
     }
-  };
+  }, [includeInactive, search]);
 
   useEffect(() => {
     loadSubjects();
-  }, [includeInactive]);
+  }, [loadSubjects]);
 
   const loadTopicsForSubject = async (subjectId: string) => {
     try {

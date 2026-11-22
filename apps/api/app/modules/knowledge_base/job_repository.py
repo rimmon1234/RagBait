@@ -181,7 +181,11 @@ async def complete_job_success(
             """
             SELECT id
             FROM public.kb_extraction_jobs
-            WHERE id = $1 AND lease_token = $2 AND worker_id = $3 AND status = 'processing'
+            WHERE id = $1
+              AND lease_token = $2
+              AND worker_id = $3
+              AND status = 'processing'
+              AND locked_until > timezone('utc'::text, now())
             FOR UPDATE;
             """,
             job_id,

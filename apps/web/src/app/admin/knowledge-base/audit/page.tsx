@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import {
   AlertTriangle,
   FileText,
@@ -27,7 +27,7 @@ export default function KnowledgeBaseAuditPage() {
   const [actionFilter, setActionFilter] = useState<string>("");
   const [targetTypeFilter, setTargetTypeFilter] = useState<string>("");
 
-  const loadAuditLogs = async () => {
+  const loadAuditLogs = useCallback(async () => {
     try {
       setLoading(true);
       setError(null);
@@ -44,11 +44,11 @@ export default function KnowledgeBaseAuditPage() {
     } finally {
       setLoading(false);
     }
-  };
+  }, [limit, offset, actionFilter, targetTypeFilter]);
 
   useEffect(() => {
     loadAuditLogs();
-  }, [offset, actionFilter, targetTypeFilter]);
+  }, [loadAuditLogs]);
 
   const renderPayload = (payload: Record<string, unknown>) => {
     if (!payload || Object.keys(payload).length === 0) return null;

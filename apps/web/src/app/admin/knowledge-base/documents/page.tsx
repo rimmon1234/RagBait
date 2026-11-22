@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import {
   AlertTriangle,
   Archive,
@@ -98,7 +98,7 @@ export default function DocumentModerationPage() {
     }
   }, [selectedSubjectId]);
 
-  const loadDocuments = async () => {
+  const loadDocuments = useCallback(async () => {
     try {
       setLoading(true);
       setError(null);
@@ -125,11 +125,20 @@ export default function DocumentModerationPage() {
     } finally {
       setLoading(false);
     }
-  };
+  }, [
+    limit,
+    offset,
+    search,
+    selectedSubjectId,
+    selectedTopicId,
+    statusFilter,
+    extractionFilter,
+    archivedFilter,
+  ]);
 
   useEffect(() => {
     loadDocuments();
-  }, [offset, selectedSubjectId, selectedTopicId, statusFilter, extractionFilter, archivedFilter]);
+  }, [loadDocuments]);
 
   const openDrawer = async (docId: string) => {
     try {
