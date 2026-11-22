@@ -6,27 +6,34 @@ export default function HomePage() {
     <div className="mx-auto max-w-7xl px-4 py-16 sm:px-6 lg:px-8">
       <div className="text-center">
         <span className="rounded-full bg-blue-100 px-3 py-1 text-xs font-semibold uppercase tracking-wider text-blue-700">
-          Production Foundation — Milestones M0 & M1
+          Phase 3 Active — Academic Knowledge Base & Document Ingestion
         </span>
         <h1 className="mt-4 text-4xl font-extrabold tracking-tight text-gray-900 sm:text-5xl">
           Welcome to <span className="text-blue-600">RagBait</span>
         </h1>
         <p className="mx-auto mt-4 max-w-2xl text-lg text-gray-600">
-          A secure, collaborative, multi-user RAG platform for college study groups and classrooms.
+          A secure, collaborative, multi-user academic library and study assistant platform for college students.
         </p>
 
-        <div className="mt-8 flex justify-center gap-4">
+        <div className="mt-8 flex flex-wrap justify-center gap-4">
           <Link
-            href="/register"
-            className="rounded-lg bg-blue-600 px-6 py-3 font-semibold text-white shadow hover:bg-blue-700"
+            href="/knowledge-base"
+            className="inline-flex items-center gap-2 rounded-lg bg-blue-600 px-6 py-3 font-semibold text-white shadow hover:bg-blue-700"
           >
-            Create an Account
+            <BookOpen className="h-5 w-5" />
+            Explore Knowledge Base
           </Link>
           <Link
             href="/login"
             className="rounded-lg border border-gray-300 bg-white px-6 py-3 font-semibold text-gray-700 shadow-sm hover:bg-gray-50"
           >
             Sign In
+          </Link>
+          <Link
+            href="/register"
+            className="rounded-lg border border-transparent bg-gray-100 px-6 py-3 font-semibold text-gray-700 hover:bg-gray-200"
+          >
+            Create Account
           </Link>
         </div>
       </div>

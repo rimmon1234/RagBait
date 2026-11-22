@@ -12,6 +12,7 @@ import {
   Search,
   Trash2,
   Undo2,
+  UploadCloud,
 } from "lucide-react";
 import {
   archiveAdminDocument,
@@ -32,6 +33,7 @@ import { AdminConfirmModal } from "@/components/knowledge-base/admin/AdminConfir
 import { AdminKnowledgeBaseNavigation } from "@/components/knowledge-base/admin/AdminKnowledgeBaseNavigation";
 import { DocumentModerationDrawer } from "@/components/knowledge-base/admin/DocumentModerationDrawer";
 import { KnowledgeBaseAdminHeader } from "@/components/knowledge-base/admin/KnowledgeBaseAdminHeader";
+import { DocumentUploadModal } from "@/components/knowledge-base/DocumentUploadModal";
 import { ExtractionStatusBadge } from "@/components/knowledge-base/ExtractionStatusBadge";
 
 export default function DocumentModerationPage() {
@@ -39,6 +41,7 @@ export default function DocumentModerationPage() {
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [isUploadModalOpen, setIsUploadModalOpen] = useState(false);
 
   // Filters
   const [limit] = useState(20);
@@ -216,15 +219,25 @@ export default function DocumentModerationPage() {
         title="Document Moderation"
         description="Inspect shared student study documents, review extraction outcomes, archive, and delete materials."
         actions={
-          <button
-            type="button"
-            onClick={loadDocuments}
-            disabled={loading}
-            className="inline-flex items-center gap-1.5 rounded-lg border border-gray-300 bg-white px-3 py-1.5 text-xs font-medium text-gray-700 shadow-sm hover:bg-gray-50 disabled:opacity-50"
-          >
-            <RefreshCw className={`h-3.5 w-3.5 ${loading ? "animate-spin" : ""}`} />
-            Refresh
-          </button>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => setIsUploadModalOpen(true)}
+              className="inline-flex items-center gap-1.5 rounded-lg bg-blue-600 px-3 py-1.5 text-xs font-semibold text-white shadow-sm hover:bg-blue-700"
+            >
+              <UploadCloud className="h-3.5 w-3.5" />
+              Upload Document
+            </button>
+            <button
+              type="button"
+              onClick={loadDocuments}
+              disabled={loading}
+              className="inline-flex items-center gap-1.5 rounded-lg border border-gray-300 bg-white px-3 py-1.5 text-xs font-medium text-gray-700 shadow-sm hover:bg-gray-50 disabled:opacity-50"
+            >
+              <RefreshCw className={`h-3.5 w-3.5 ${loading ? "animate-spin" : ""}`} />
+              Refresh
+            </button>
+          </div>
         }
       />
 
@@ -538,6 +551,16 @@ export default function DocumentModerationPage() {
         reasonPlaceholder={confirmDialog.reasonPlaceholder}
         onConfirm={confirmDialog.onConfirm}
         onClose={() => setConfirmDialog((prev) => ({ ...prev, isOpen: false }))}
+      />
+
+      {/* Admin Document Upload Modal */}
+      <DocumentUploadModal
+        isOpen={isUploadModalOpen}
+        onClose={() => setIsUploadModalOpen(false)}
+        onSuccess={() => {
+          setIsUploadModalOpen(false);
+          loadDocuments();
+        }}
       />
     </div>
   );

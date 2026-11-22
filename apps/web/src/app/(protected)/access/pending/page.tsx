@@ -17,7 +17,7 @@ export default function PendingAccessPage() {
     try {
       const res = await fetchWithAuth<AccessStateResponse>("/api/v1/me/access");
       if (res.effective_state === "contribution_required") {
-        router.push("/access/contribution-required");
+        router.push("/knowledge-base");
       } else if (res.effective_state === "admin") {
         router.push("/admin");
       } else if (res.effective_state === "rejected") {

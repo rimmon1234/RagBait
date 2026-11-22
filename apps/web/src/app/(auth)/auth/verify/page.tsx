@@ -4,6 +4,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { Suspense, useState } from "react";
 import { AlertCircle, CheckCircle2, KeyRound, Loader2, Mail } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
+import { fetchWithAuth } from "@/lib/api";
 
 function VerifyContent() {
   const router = useRouter();
@@ -39,11 +40,7 @@ function VerifyContent() {
     if (data.session) {
       // Authoritatively trigger access request creation
       try {
-        await fetch("/api/v1/me/access", {
-          headers: {
-            Authorization: `Bearer ${data.session.access_token}`,
-          },
-        });
+        await fetchWithAuth("/api/v1/me/access");
       } catch {
         // Ignored
       }

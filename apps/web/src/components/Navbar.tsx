@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import { BookOpen, Cpu, Key, LogOut, Network, Shield, User } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
+import { fetchWithAuth } from "@/lib/api";
 import type { UserProfile } from "@/types";
 
 export function Navbar() {
@@ -26,17 +27,10 @@ export function Navbar() {
       }
 
       try {
-        const res = await fetch("/api/v1/me", {
-          headers: {
-            Authorization: `Bearer ${session.access_token}`,
-          },
-        });
-        if (res.ok) {
-          const data = await res.json();
-          setProfile(data);
-        }
+        const data = await fetchWithAuth<UserProfile>("/api/v1/me");
+        setProfile(data);
       } catch {
-        // Ignored
+        setProfile(null);
       } finally {
         setLoading(false);
       }

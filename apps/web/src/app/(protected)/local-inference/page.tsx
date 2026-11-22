@@ -28,6 +28,8 @@ import {
   Zap,
 } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
+import { fetchWithAuth } from "@/lib/api";
+import type { UserProfile } from "@/types";
 import { isSecureLoopbackContext, queryLoopbackPermission } from "@/lib/local-inference/lna-permissions";
 import { ollamaClient } from "@/lib/local-inference/ollama-client";
 import { isAbortError } from "@/lib/local-inference/ollama-errors";
@@ -158,22 +160,14 @@ export default function LocalInferencePage() {
       }
 
       try {
-        const res = await fetch("/api/v1/me", {
-          headers: {
-            Authorization: `Bearer ${session.access_token}`,
-          },
-        });
-
-        if (res.ok) {
-          const profile = await res.json();
-          if (profile.approval_status === "pending") {
-            router.push("/access/pending");
-            return;
-          }
-          if (profile.approval_status === "rejected") {
-            router.push("/access/rejected");
-            return;
-          }
+        const profile = await fetchWithAuth<UserProfile>("/api/v1/me");
+        if (profile.approval_status === "pending") {
+          router.push("/access/pending");
+          return;
+        }
+        if (profile.approval_status === "rejected") {
+          router.push("/access/rejected");
+          return;
         }
       } catch {
         // Continue if profile check fails temporarily

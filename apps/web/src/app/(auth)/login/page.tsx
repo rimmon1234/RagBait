@@ -5,6 +5,8 @@ import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { AlertCircle, ArrowRight, Loader2 } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
+import { fetchWithAuth } from "@/lib/api";
+import type { AccessStateResponse } from "@/types";
 
 export default function LoginPage() {
   const router = useRouter();
@@ -33,32 +35,25 @@ export default function LoginPage() {
     if (data.session) {
       // Check user effective access state
       try {
-        const res = await fetch("/api/v1/me/access", {
-          headers: {
-            Authorization: `Bearer ${data.session.access_token}`,
-          },
-        });
-        if (res.ok) {
-          const stateData = await res.json();
-          if (stateData.effective_state === "admin") {
-            router.push("/admin");
-          } else if (stateData.effective_state === "pending") {
-            router.push("/access/pending");
-          } else if (stateData.effective_state === "rejected") {
-            router.push("/access/rejected");
-          } else if (stateData.effective_state === "contribution_required") {
-            router.push("/access/contribution-required");
-          } else if (stateData.effective_state === "unverified") {
-            router.push(`/auth/verify?email=${encodeURIComponent(email)}`);
-          } else {
-            router.push("/access/pending");
-          }
-          return;
+        const stateData = await fetchWithAuth<AccessStateResponse>("/api/v1/me/access");
+        if (stateData.effective_state === "admin") {
+          router.push("/admin");
+        } else if (stateData.effective_state === "contribution_required") {
+          // In Phase 3, approved students have full access to Knowledge Base!
+          router.push("/knowledge-base");
+        } else if (stateData.effective_state === "pending") {
+          router.push("/access/pending");
+        } else if (stateData.effective_state === "rejected") {
+          router.push("/access/rejected");
+        } else if (stateData.effective_state === "unverified") {
+          router.push(`/auth/verify?email=${encodeURIComponent(email)}`);
+        } else {
+          router.push("/knowledge-base");
         }
+        return;
       } catch {
-        // Fallback
+        router.push("/knowledge-base");
       }
-      router.push("/access/pending");
     }
   };
 
