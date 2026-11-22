@@ -15,7 +15,7 @@ class SubjectRead(BaseModel):
     name: str
     slug: str
     description: str | None = None
-    icon_name: str
+    icon_name: str = "BookOpen"
     display_order: int
     is_active: bool
     topic_count: int = 0

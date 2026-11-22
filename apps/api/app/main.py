@@ -71,6 +71,13 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         pass
 
     try:
+        from app.modules.credentials.vault import init_vault_pool
+
+        await init_vault_pool()
+    except Exception as exc:
+        logger.warning(f"Failed to initialize vault pool: {exc}")
+
+    try:
         await init_redis()
     except Exception:
         pass
@@ -118,6 +125,12 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         pass
 
     await close_db_pool()
+    try:
+        from app.modules.credentials.vault import close_vault_pool
+
+        await close_vault_pool()
+    except Exception:
+        pass
     await close_redis()
     await close_community_redis()
     try:

@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useMemo, useState } from "react";
 import { BookOpen, Plus, UploadCloud } from "lucide-react";
 import { useKnowledgeSubjects } from "@/lib/knowledge-base/useKnowledgeSubjects";
@@ -39,18 +40,27 @@ export default function KnowledgeBaseCataloguePage() {
           </h1>
           <p className="mt-1.5 text-sm text-gray-600 max-w-2xl">
             Browse peer-curated lecture notes, syllabus materials, and past papers organized by subject.
-            Approved students can contribute notes directly.
+            Students and faculty administrators can contribute study materials directly.
           </p>
         </div>
 
-        <button
-          type="button"
-          onClick={() => setIsUploadModalOpen(true)}
-          className="inline-flex items-center gap-2 rounded-xl bg-blue-600 px-4 py-2.5 text-sm font-semibold text-white shadow-sm hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 self-start sm:self-auto"
-        >
-          <UploadCloud className="h-4 w-4" />
-          <span>Upload Material</span>
-        </button>
+        <div className="flex flex-wrap items-center gap-2 self-start sm:self-auto">
+          <Link
+            href="/admin/knowledge-base/subjects"
+            className="inline-flex items-center gap-1.5 rounded-xl border border-gray-300 bg-white px-3.5 py-2.5 text-sm font-semibold text-gray-700 shadow-sm hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2"
+          >
+            <Plus className="h-4 w-4 text-blue-600" />
+            <span>Manage / Add Subjects</span>
+          </Link>
+          <button
+            type="button"
+            onClick={() => setIsUploadModalOpen(true)}
+            className="inline-flex items-center gap-2 rounded-xl bg-blue-600 px-4 py-2.5 text-sm font-semibold text-white shadow-sm hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2"
+          >
+            <UploadCloud className="h-4 w-4" />
+            <span>Upload Material</span>
+          </button>
+        </div>
       </div>
 
       {/* Search Bar */}

@@ -11,7 +11,9 @@ import {
   History,
   ListTodo,
   Loader2,
+  Plus,
   RefreshCw,
+  UploadCloud,
 } from "lucide-react";
 import { getAdminOverview } from "@/lib/knowledge-base/knowledge-base-admin-api";
 import type { AdminOverviewMetrics } from "@/lib/knowledge-base/knowledge-base-admin-types";
@@ -19,11 +21,13 @@ import { AdminKnowledgeBaseNavigation } from "@/components/knowledge-base/admin/
 import { AdminOverviewCards } from "@/components/knowledge-base/admin/AdminOverviewCards";
 import { KnowledgeBaseAdminHeader } from "@/components/knowledge-base/admin/KnowledgeBaseAdminHeader";
 import { ExtractionStatusBadge } from "@/components/knowledge-base/ExtractionStatusBadge";
+import { DocumentUploadModal } from "@/components/knowledge-base/DocumentUploadModal";
 
 export default function KnowledgeBaseAdminOverviewPage() {
   const [metrics, setMetrics] = useState<AdminOverviewMetrics | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [isUploadModalOpen, setIsUploadModalOpen] = useState(false);
 
   const loadData = async () => {
     try {
@@ -48,15 +52,32 @@ export default function KnowledgeBaseAdminOverviewPage() {
         title="Knowledge Base Administration"
         description="Academic taxonomy management, document moderation, extraction queue monitoring, and audit trails."
         actions={
-          <button
-            type="button"
-            onClick={loadData}
-            disabled={loading}
-            className="inline-flex items-center gap-1.5 rounded-lg border border-gray-300 bg-white px-3 py-1.5 text-xs font-medium text-gray-700 shadow-sm hover:bg-gray-50 disabled:opacity-50"
-          >
-            <RefreshCw className={`h-3.5 w-3.5 ${loading ? "animate-spin" : ""}`} />
-            Refresh
-          </button>
+          <div className="flex items-center gap-2">
+            <Link
+              href="/admin/knowledge-base/subjects"
+              className="inline-flex items-center gap-1.5 rounded-lg bg-blue-600 px-3 py-1.5 text-xs font-semibold text-white shadow-sm hover:bg-blue-700"
+            >
+              <Plus className="h-3.5 w-3.5" />
+              <span>Add Subject</span>
+            </Link>
+            <button
+              type="button"
+              onClick={() => setIsUploadModalOpen(true)}
+              className="inline-flex items-center gap-1.5 rounded-lg border border-gray-300 bg-white px-3 py-1.5 text-xs font-semibold text-gray-700 shadow-sm hover:bg-gray-50"
+            >
+              <UploadCloud className="h-3.5 w-3.5 text-blue-600" />
+              <span>Upload Document</span>
+            </button>
+            <button
+              type="button"
+              onClick={loadData}
+              disabled={loading}
+              className="inline-flex items-center gap-1.5 rounded-lg border border-gray-300 bg-white px-3 py-1.5 text-xs font-medium text-gray-700 shadow-sm hover:bg-gray-50 disabled:opacity-50"
+            >
+              <RefreshCw className={`h-3.5 w-3.5 ${loading ? "animate-spin" : ""}`} />
+              Refresh
+            </button>
+          </div>
         }
       />
 
@@ -237,6 +258,16 @@ export default function KnowledgeBaseAdminOverviewPage() {
           </div>
         </div>
       ) : null}
+
+      {/* Admin Document Upload Modal */}
+      <DocumentUploadModal
+        isOpen={isUploadModalOpen}
+        onClose={() => setIsUploadModalOpen(false)}
+        onSuccess={() => {
+          setIsUploadModalOpen(false);
+          loadData();
+        }}
+      />
     </div>
   );
 }

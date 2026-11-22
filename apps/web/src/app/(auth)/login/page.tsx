@@ -33,27 +33,51 @@ export default function LoginPage() {
     }
 
     if (data.session) {
-      // Check user effective access state
+      // Check user effective access state authoritatively using fresh token
       try {
-        const stateData = await fetchWithAuth<AccessStateResponse>("/api/v1/me/access");
-        if (stateData.effective_state === "admin") {
-          router.push("/admin");
-        } else if (stateData.effective_state === "contribution_required") {
-          // In Phase 3, approved students have full access to Knowledge Base!
-          router.push("/knowledge-base");
-        } else if (stateData.effective_state === "pending") {
-          router.push("/access/pending");
-        } else if (stateData.effective_state === "rejected") {
-          router.push("/access/rejected");
-        } else if (stateData.effective_state === "unverified") {
-          router.push(`/auth/verify?email=${encodeURIComponent(email)}`);
-        } else {
-          router.push("/knowledge-base");
+        const apiBase = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000";
+        const res = await fetch(`${apiBase}/api/v1/me/access`, {
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${data.session.access_token}`,
+          },
+        });
+
+        if (res.ok) {
+          const stateData: AccessStateResponse = await res.json();
+          if (stateData.effective_state === "admin") {
+            router.push("/admin");
+            return;
+          } else if (stateData.effective_state === "pending") {
+            router.push("/access/pending");
+            return;
+          } else if (stateData.effective_state === "rejected") {
+            router.push("/access/rejected");
+            return;
+          } else if (stateData.effective_state === "unverified") {
+            router.push(`/auth/verify?email=${encodeURIComponent(email)}`);
+            return;
+          } else {
+            // Approved students have full access to Knowledge Base in Phase 3
+            router.push("/knowledge-base");
+            return;
+          }
         }
-        return;
-      } catch {
+      } catch (err) {
+        console.warn("Failed to fetch authoritative access state, checking token claims:", err);
+      }
+
+      // Safe fallback if /me/access was unreachable:
+      const userMeta = data.session.user.user_metadata || {};
+      const appMeta = data.session.user.app_metadata || {};
+      const userRole = appMeta.role || userMeta.role;
+
+      if (userRole === "admin" || userRole === "super_admin") {
+        router.push("/admin");
+      } else {
         router.push("/knowledge-base");
       }
+      return;
     }
   };
 

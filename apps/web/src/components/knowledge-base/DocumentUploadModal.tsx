@@ -155,6 +155,18 @@ export function DocumentUploadModal({
         </div>
 
         <form onSubmit={handleSubmit} className="mt-4 space-y-4">
+          {subjects.length === 0 && (
+            <div className="rounded-lg bg-amber-50 p-3 text-xs text-amber-800 flex items-center justify-between">
+              <span>No subjects exist yet. Please create a subject before uploading notes.</span>
+              <a
+                href="/admin/knowledge-base/subjects"
+                className="font-semibold text-blue-600 hover:underline shrink-0 ml-2"
+              >
+                + Add Subject
+              </a>
+            </div>
+          )}
+
           {/* Subject & Topic Selectors */}
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
             <div>
@@ -171,14 +183,18 @@ export function DocumentUploadModal({
                   setSelectedSubjectId(e.target.value);
                   setSelectedTopicId("");
                 }}
-                disabled={isUploading || Boolean(initialSubjectId)}
+                disabled={isUploading || Boolean(initialSubjectId) || subjects.length === 0}
                 className="mt-1 block w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 shadow-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 disabled:bg-gray-100"
               >
-                {subjects.map((sub) => (
-                  <option key={sub.id} value={sub.id}>
-                    {sub.name}
-                  </option>
-                ))}
+                {subjects.length === 0 ? (
+                  <option value="">No subjects available</option>
+                ) : (
+                  subjects.map((sub) => (
+                    <option key={sub.id} value={sub.id}>
+                      {sub.name}
+                    </option>
+                  ))
+                )}
               </select>
             </div>
 

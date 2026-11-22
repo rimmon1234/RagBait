@@ -1,5 +1,7 @@
 "use client";
 
+import Link from "next/link";
+import { FolderTree, Plus } from "lucide-react";
 import { SubjectCard } from "./SubjectCard";
 import type { SubjectRead } from "@/lib/knowledge-base/knowledge-base-types";
 
@@ -37,11 +39,21 @@ export function SubjectGrid({ subjects, loading }: SubjectGridProps) {
 
   if (subjects.length === 0) {
     return (
-      <div className="rounded-xl border border-dashed border-gray-300 p-12 text-center">
-        <p className="text-base font-medium text-gray-900">No subjects found</p>
-        <p className="mt-1 text-sm text-gray-500">
-          Try adjusting your search query or check back later.
+      <div className="rounded-xl border border-dashed border-gray-300 p-12 text-center bg-gray-50/50">
+        <FolderTree className="mx-auto h-12 w-12 text-gray-400" />
+        <p className="mt-3 text-base font-semibold text-gray-900">No subjects found</p>
+        <p className="mt-1 text-sm text-gray-500 max-w-md mx-auto">
+          Create academic subjects to organize syllabi, topics, and lecture materials.
         </p>
+        <div className="mt-6 flex justify-center">
+          <Link
+            href="/admin/knowledge-base/subjects"
+            className="inline-flex items-center gap-1.5 rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-blue-700"
+          >
+            <Plus className="h-4 w-4" />
+            <span>Add Academic Subject</span>
+          </Link>
+        </div>
       </div>
     );
   }

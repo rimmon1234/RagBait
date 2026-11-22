@@ -1,7 +1,21 @@
+"use client";
+
+import { useEffect } from "react";
+import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { BookOpen, CheckCircle2, Key, Sparkles } from "lucide-react";
 
 export default function ContributionRequiredPage() {
+  const router = useRouter();
+
+  useEffect(() => {
+    // Automatically redirect approved students to the Knowledge Base in Phase 3
+    const timer = setTimeout(() => {
+      router.push("/knowledge-base");
+    }, 1200);
+    return () => clearTimeout(timer);
+  }, [router]);
+
   return (
     <div className="flex min-h-[80vh] items-center justify-center px-4 py-12">
       <div className="w-full max-w-lg rounded-xl border border-gray-200 bg-white p-8 text-center shadow-sm">

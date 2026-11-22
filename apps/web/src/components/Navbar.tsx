@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
-import { BookOpen, Cpu, Key, LogOut, Network, Shield, User } from "lucide-react";
+import { BookOpen, Cpu, Key, LogOut, Shield, User } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 import { fetchWithAuth } from "@/lib/api";
 import type { UserProfile } from "@/types";
@@ -26,11 +26,26 @@ export function Navbar() {
         return;
       }
 
+      // Populate initial profile from session user metadata to prevent "Sign in" flickering
+      const email = session.user.email || "";
+      const metaRole = session.user.app_metadata?.role || session.user.user_metadata?.role;
+      const initialRole = metaRole === "admin" || metaRole === "super_admin" ? metaRole : "user";
+      const fallbackProfile: UserProfile = {
+        id: session.user.id,
+        email,
+        display_name: session.user.user_metadata?.display_name || email.split("@")[0] || "User",
+        role: initialRole as UserProfile["role"],
+        approval_status: "approved",
+        created_at: session.user.created_at,
+        updated_at: session.user.updated_at || session.user.created_at,
+      };
+
       try {
         const data = await fetchWithAuth<UserProfile>("/api/v1/me");
         setProfile(data);
       } catch {
-        setProfile(null);
+        // Retain fallback profile so the user remains authenticated in the UI
+        setProfile((prev) => prev || fallbackProfile);
       } finally {
         setLoading(false);
       }
@@ -40,8 +55,13 @@ export function Navbar() {
 
     const {
       data: { subscription },
-    } = supabase.auth.onAuthStateChange(() => {
-      loadUser();
+    } = supabase.auth.onAuthStateChange((_event, newSession) => {
+      if (newSession) {
+        loadUser();
+      } else {
+        setProfile(null);
+        setLoading(false);
+      }
     });
 
     return () => {
@@ -86,13 +106,6 @@ export function Navbar() {
               >
                 <Cpu className="h-4 w-4" />
                 Local Inference
-              </Link>
-              <Link
-                href="/community-nodes"
-                className="flex items-center gap-1.5 text-sm font-medium text-gray-700 hover:text-blue-600"
-              >
-                <Network className="h-4 w-4" />
-                Community Nodes
               </Link>
             </>
           )}
