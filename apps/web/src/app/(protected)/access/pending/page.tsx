@@ -1,7 +1,7 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { Clock, RefreshCw } from "lucide-react";
 import { fetchWithAuth } from "@/lib/api";
 import type { AccessStateResponse } from "@/types";
@@ -11,17 +11,17 @@ export default function PendingAccessPage() {
   const [checking, setChecking] = useState(false);
   const [statusText, setStatusText] = useState<string | null>(null);
 
-  const checkStatus = async () => {
+  const checkStatus = useCallback(async () => {
     setChecking(true);
     setStatusText(null);
     try {
       const res = await fetchWithAuth<AccessStateResponse>("/api/v1/me/access");
-      if (res.effective_state === "contribution_required") {
-        router.push("/knowledge-base");
-      } else if (res.effective_state === "admin") {
-        router.push("/admin");
+      if (res.effective_state === "admin") {
+        router.replace("/admin");
+      } else if (res.effective_state === "contribution_required" || res.approval_status === "approved") {
+        router.replace("/knowledge-base");
       } else if (res.effective_state === "rejected") {
-        router.push("/access/rejected");
+        router.replace("/access/rejected");
       } else {
         setStatusText("Your request is still pending administrator review.");
       }
@@ -31,7 +31,14 @@ export default function PendingAccessPage() {
     } finally {
       setChecking(false);
     }
-  };
+  }, [router]);
+
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      checkStatus();
+    }, 100);
+    return () => clearTimeout(timer);
+  }, [checkStatus]);
 
   return (
     <div className="flex min-h-[80vh] items-center justify-center px-4 py-12">

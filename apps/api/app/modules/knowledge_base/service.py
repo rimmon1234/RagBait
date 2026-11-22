@@ -3,6 +3,7 @@
 import json
 import logging
 from datetime import UTC, datetime, timedelta
+from typing import Any
 from uuid import UUID, uuid4
 
 from app.core.config import settings
@@ -466,7 +467,7 @@ async def _log_kb_audit(
     actor_id: UUID,
     action: str,
     document_id: UUID,
-    details: dict | None = None,
+    details: dict[str, Any] | None = None,
 ) -> None:
     """Record immutable audit log entry for Knowledge Base operations."""
     try:

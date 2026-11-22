@@ -130,7 +130,9 @@ rate_limit_general = rate_limiter("api", settings.RATE_LIMIT_DEFAULT, 60)
 rate_limit_heartbeat = rate_limiter("heartbeat", settings.RATE_LIMIT_HEARTBEAT, 45)
 rate_limit_admin_read = rate_limiter("admin_read", settings.RATE_LIMIT_ADMIN_READ, 60)
 rate_limit_admin_mutate = rate_limiter("admin_mutate", settings.RATE_LIMIT_ADMIN_MUTATE, 60)
-rate_limit_pair_code_create = rate_limiter("pair_code_create", settings.RATE_LIMIT_PAIR_CODE_CREATE, 3600)
+rate_limit_pair_code_create = rate_limiter(
+    "pair_code_create", settings.RATE_LIMIT_PAIR_CODE_CREATE, 3600
+)
 
 
 def get_trusted_client_ip(request: Request) -> str:

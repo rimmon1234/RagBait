@@ -4,7 +4,7 @@ from datetime import datetime
 from typing import Any
 from uuid import UUID
 
-import asyncpg  # type: ignore[import-untyped]
+import asyncpg
 
 
 async def get_active_subjects(conn: asyncpg.Connection) -> list[dict[str, Any]]:

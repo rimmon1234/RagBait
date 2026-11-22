@@ -32,11 +32,18 @@ async def get_admin_overview() -> OverviewResponse:
             """
             SELECT
                 count(*) AS total_users,
-                count(*) FILTER (WHERE approval_status = 'pending') AS pending_requests,
                 count(*) FILTER (WHERE approval_status = 'approved') AS approved_users,
                 count(*) FILTER (WHERE approval_status = 'suspended') AS suspended_users,
                 count(*) FILTER (WHERE approval_status = 'rejected') AS rejected_users
             FROM public.profiles
+            """
+        )
+
+        pending_req_count = await conn.fetchval(
+            """
+            SELECT count(*)
+            FROM public.access_requests
+            WHERE status = 'pending'
             """
         )
 
@@ -51,7 +58,7 @@ async def get_admin_overview() -> OverviewResponse:
 
     return OverviewResponse(
         total_users=counts["total_users"] if counts else 0,
-        pending_requests=counts["pending_requests"] if counts else 0,
+        pending_requests=pending_req_count or 0,
         approved_users=counts["approved_users"] if counts else 0,
         suspended_users=counts["suspended_users"] if counts else 0,
         rejected_users=counts["rejected_users"] if counts else 0,

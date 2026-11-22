@@ -150,35 +150,22 @@ DECLARE
   v_doc_s2_fail uuid := gen_random_uuid();
   v_page uuid := gen_random_uuid();
 BEGIN
-  -- Look up existing profiles or create fresh in auth.users
-  SELECT id INTO v_admin FROM public.profiles WHERE email = 'rimmon.bhowmick.cse28@heritageit.edu.in';
-  SELECT id INTO v_stud_app FROM public.profiles WHERE email = 'student.approved@heritageit.edu.in';
-  SELECT id INTO v_stud_app2 FROM public.profiles WHERE email = 'student.nocreds@heritageit.edu.in';
-  SELECT id INTO v_stud_unapp FROM public.profiles WHERE email = 'rimmonbhowmick@gmail.com';
+  -- Create isolated dedicated test users for this transaction
+  v_admin := gen_random_uuid();
+  INSERT INTO auth.users (id, email) VALUES (v_admin, 'test_kb_admin_' || v_admin || '@test.edu');
+  UPDATE public.profiles SET role = 'admin', approval_status = 'approved' WHERE id = v_admin;
 
-  IF v_admin IS NULL THEN
-    v_admin := gen_random_uuid();
-    INSERT INTO auth.users (id, email) VALUES (v_admin, 'test_admin_pgtap@test.edu');
-    UPDATE public.profiles SET role = 'admin', approval_status = 'approved' WHERE id = v_admin;
-  END IF;
+  v_stud_app := gen_random_uuid();
+  INSERT INTO auth.users (id, email) VALUES (v_stud_app, 'test_kb_app1_' || v_stud_app || '@test.edu');
+  UPDATE public.profiles SET role = 'user', approval_status = 'approved' WHERE id = v_stud_app;
 
-  IF v_stud_app IS NULL THEN
-    v_stud_app := gen_random_uuid();
-    INSERT INTO auth.users (id, email) VALUES (v_stud_app, 'test_stud_app_pgtap@test.edu');
-    UPDATE public.profiles SET role = 'user', approval_status = 'approved' WHERE id = v_stud_app;
-  END IF;
+  v_stud_app2 := gen_random_uuid();
+  INSERT INTO auth.users (id, email) VALUES (v_stud_app2, 'test_kb_app2_' || v_stud_app2 || '@test.edu');
+  UPDATE public.profiles SET role = 'user', approval_status = 'approved' WHERE id = v_stud_app2;
 
-  IF v_stud_app2 IS NULL THEN
-    v_stud_app2 := gen_random_uuid();
-    INSERT INTO auth.users (id, email) VALUES (v_stud_app2, 'test_stud_app2_pgtap@test.edu');
-    UPDATE public.profiles SET role = 'user', approval_status = 'approved' WHERE id = v_stud_app2;
-  END IF;
-
-  IF v_stud_unapp IS NULL THEN
-    v_stud_unapp := gen_random_uuid();
-    INSERT INTO auth.users (id, email) VALUES (v_stud_unapp, 'test_stud_unapp_pgtap@test.edu');
-    UPDATE public.profiles SET role = 'user', approval_status = 'pending' WHERE id = v_stud_unapp;
-  END IF;
+  v_stud_unapp := gen_random_uuid();
+  INSERT INTO auth.users (id, email) VALUES (v_stud_unapp, 'test_kb_unapp_' || v_stud_unapp || '@test.edu');
+  UPDATE public.profiles SET role = 'user', approval_status = 'pending' WHERE id = v_stud_unapp;
 
   -- Insert subjects
   INSERT INTO public.kb_subjects (id, name, slug, description, display_order, is_active, created_by)
@@ -308,14 +295,14 @@ END $$;
 
 -- Approved student sees active subject, but NOT inactive subject
 SELECT results_eq(
-  'SELECT slug FROM public.kb_subjects ORDER BY slug',
+  'SELECT slug FROM public.kb_subjects WHERE id IN (SELECT subject_active_id FROM test_vars UNION ALL SELECT subject_inactive_id FROM test_vars) ORDER BY slug',
   $$VALUES ('dbms')$$,
   'Approved student should see ONLY active subjects'
 );
 
 -- Approved student sees active topics under active subject, NOT inactive or under inactive subject
 SELECT results_eq(
-  'SELECT slug FROM public.kb_topics ORDER BY slug',
+  'SELECT slug FROM public.kb_topics WHERE subject_id IN (SELECT subject_active_id FROM test_vars UNION ALL SELECT subject_inactive_id FROM test_vars) ORDER BY slug',
   $$VALUES ('relational-model'), ('transactions')$$,
   'Approved student should see ONLY active topics under active subjects'
 );
@@ -331,7 +318,7 @@ SELECT results_eq(
 --  - DBMS Pending (S2)         [other student pending]
 --  - DBMS Failed (S2)          [other student failed]
 SELECT results_eq(
-  'SELECT title FROM public.kb_documents ORDER BY title',
+  'SELECT title FROM public.kb_documents WHERE subject_id = (SELECT subject_active_id FROM test_vars) ORDER BY title',
   $$VALUES ('DBMS Failed (S1)'), ('DBMS Pending (S1)'), ('DBMS Shared Uploaded (S1)')$$,
   'Student 1 should see shared uploaded docs + own pending and failed uploads ONLY'
 );
@@ -343,7 +330,7 @@ BEGIN
 END $$;
 
 SELECT results_eq(
-  'SELECT title FROM public.kb_documents ORDER BY title',
+  'SELECT title FROM public.kb_documents WHERE subject_id = (SELECT subject_active_id FROM test_vars) ORDER BY title',
   $$VALUES ('DBMS Failed (S2)'), ('DBMS Pending (S2)'), ('DBMS Shared Uploaded (S1)')$$,
   'Student 2 should see shared uploaded docs + own pending and failed uploads ONLY'
 );
@@ -356,7 +343,7 @@ END $$;
 
 -- Approved student can read pages of accessible uploaded document
 SELECT isnt_empty(
-  'SELECT * FROM public.kb_document_pages',
+  'SELECT * FROM public.kb_document_pages WHERE document_id = (SELECT doc_s1_uploaded_id FROM test_vars)',
   'Approved student can read pages of accessible uploaded document'
 );
 
@@ -379,21 +366,21 @@ END $$;
 
 -- Admin sees ALL subjects (including inactive)
 SELECT results_eq(
-  'SELECT slug FROM public.kb_subjects ORDER BY slug',
+  'SELECT slug FROM public.kb_subjects WHERE id IN (SELECT subject_active_id FROM test_vars UNION ALL SELECT subject_inactive_id FROM test_vars) ORDER BY slug',
   $$VALUES ('dbms'), ('physics-old')$$,
   'Admin should see all subjects including inactive'
 );
 
 -- Admin sees ALL topics
 SELECT results_eq(
-  'SELECT slug FROM public.kb_topics ORDER BY slug',
+  'SELECT slug FROM public.kb_topics WHERE subject_id IN (SELECT subject_active_id FROM test_vars UNION ALL SELECT subject_inactive_id FROM test_vars) ORDER BY slug',
   $$VALUES ('normalization-draft'), ('quantum-basics'), ('relational-model'), ('transactions')$$,
   'Admin should see all topics including inactive'
 );
 
 -- Admin sees ALL documents (all 8 across all statuses and users)
 SELECT results_eq(
-  'SELECT title FROM public.kb_documents ORDER BY title',
+  'SELECT title FROM public.kb_documents WHERE subject_id = (SELECT subject_active_id FROM test_vars) ORDER BY title',
   $$VALUES 
     ('DBMS Archived (S1)'), 
     ('DBMS Deleted (S1)'), 

@@ -24,11 +24,11 @@ from app.modules.admission.service import (
 from app.modules.community import crypto as comm_crypto
 from app.modules.community import repository as comm_repo
 from app.modules.community import streams as comm_streams
-from app.modules.credentials.service import retrieve_decrypted_credential
+from app.modules.credentials.repository import retrieve_decrypted_credential
 from app.modules.llm_gateway import service as gateway_service
 from app.modules.llm_gateway.interfaces import NormalizedUsage, UsageSourceType
 from app.modules.llm_gateway.schemas import ChatCompletionRequest, ChatCompletionResponse
-from app.modules.llm_gateway.service import format_sse_event
+from app.modules.llm_gateway.streaming import format_sse_event
 from app.modules.llm_gateway.token_estimation import TokenEstimate, estimate_text_tokens
 from app.modules.routing.schemas import RoutingCandidate
 

@@ -89,8 +89,19 @@ async def get_vault_session() -> AsyncGenerator[asyncpg.Connection, None]:
 
     Guarantees that vault operations execute within an atomic transaction.
     Any failure triggers an automatic rollback to prevent partial writes.
+    Lazily initializes the pool if it has not yet been initialized or was closed.
     """
-    pool = get_vault_pool()
+    global _vault_pool
+    if (
+        _vault_pool is None
+        or _vault_pool._closed
+        or getattr(_vault_pool, "_loop", None) is None
+        or _vault_pool._loop.is_closed()
+    ):
+        await init_vault_pool()
+    pool = _vault_pool
+    if pool is None:
+        raise VaultDatabaseError("Vault connection pool is not initialized")
     async with pool.acquire() as conn:
         async with conn.transaction():
             yield conn

@@ -504,8 +504,9 @@ async def test_dual_consent_and_job_submission(client: httpx.AsyncClient):
 
 def test_signing_key_pair_validation():
     """Verify SEC-06: Server validates cryptographic match between signing and verifying keys."""
-    from app.core.config import Settings
     from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+
+    from app.core.config import Settings
 
     # 1. Matching pair passes
     priv_key = Ed25519PrivateKey.generate()
@@ -588,32 +589,43 @@ async def test_nonce_fail_closed_and_replay_prevention(monkeypatch):
 
 def test_trusted_proxy_client_ip_resolution():
     """Verify SEC-02: get_trusted_client_ip ignores untrusted X-Forwarded-For headers."""
-    from app.core.config import settings
-    from app.core.dependencies import get_trusted_client_ip
     from starlette.requests import Request
 
+    from app.core.config import settings
+    from app.core.dependencies import get_trusted_client_ip
+
     # Case 1: No trusted proxies configured -> uses client.host directly
-    req1 = Request({"type": "http", "client": ("198.51.100.10", 12345), "headers": [(b"x-forwarded-for", b"203.0.113.195")]})
+    req1 = Request(
+        {
+            "type": "http",
+            "client": ("198.51.100.10", 12345),
+            "headers": [(b"x-forwarded-for", b"203.0.113.195")],
+        }
+    )
     assert get_trusted_client_ip(req1) == "198.51.100.10"
 
     # Case 2: Direct peer is in TRUSTED_PROXY_IPS -> parses rightmost untrusted hop
     orig_trusted = settings.TRUSTED_PROXY_IPS
     try:
         settings.TRUSTED_PROXY_IPS = ["10.0.0.1", "10.0.0.2"]
-        req2 = Request({
-            "type": "http",
-            "client": ("10.0.0.1", 12345),
-            "headers": [(b"x-forwarded-for", b"203.0.113.50, 198.51.100.22, 10.0.0.2")],
-        })
+        req2 = Request(
+            {
+                "type": "http",
+                "client": ("10.0.0.1", 12345),
+                "headers": [(b"x-forwarded-for", b"203.0.113.50, 198.51.100.22, 10.0.0.2")],
+            }
+        )
         # 10.0.0.2 is trusted, so rightmost untrusted is 198.51.100.22
         assert get_trusted_client_ip(req2) == "198.51.100.22"
 
         # Case 3: Direct peer is NOT in TRUSTED_PROXY_IPS -> ignores header completely
-        req3 = Request({
-            "type": "http",
-            "client": ("192.168.1.100", 12345),
-            "headers": [(b"x-forwarded-for", b"8.8.8.8")],
-        })
+        req3 = Request(
+            {
+                "type": "http",
+                "client": ("192.168.1.100", 12345),
+                "headers": [(b"x-forwarded-for", b"8.8.8.8")],
+            }
+        )
         assert get_trusted_client_ip(req3) == "192.168.1.100"
     finally:
         settings.TRUSTED_PROXY_IPS = orig_trusted
@@ -672,22 +684,28 @@ async def test_sse_stream_authentication_and_authorization(client: httpx.AsyncCl
     assert other_resp.status_code == 403
 
     # 5. Node owner request to SSE stream -> 403 Forbidden (node owner must NOT have access to requester stream)
-    owner_stream_resp = await client.get(f"/api/v1/community/jobs/{job_id}/stream", headers=headers_owner)
+    owner_stream_resp = await client.get(
+        f"/api/v1/community/jobs/{job_id}/stream", headers=headers_owner
+    )
     assert owner_stream_resp.status_code == 403
 
     # 6. Non-existent job with requester auth -> 404 Not Found
     non_existent = str(uuid4())
-    not_found_resp = await client.get(f"/api/v1/community/jobs/{non_existent}/stream", headers=headers_req)
+    not_found_resp = await client.get(
+        f"/api/v1/community/jobs/{non_existent}/stream", headers=headers_req
+    )
     assert not_found_resp.status_code == 404
 
     # 7. Authorized requester receives 200 StreamingResponse and chunks
     headers_req = setup_auth_context(requester_id)
     await streams.append_job_chunk(job_id=UUID(job_id), seq_id=1, delta="Done", done=True)
-    async with client.stream("GET", f"/api/v1/community/jobs/{job_id}/stream", headers=headers_req) as sse_stream:
+    async with client.stream(
+        "GET", f"/api/v1/community/jobs/{job_id}/stream", headers=headers_req
+    ) as sse_stream:
         assert sse_stream.status_code == 200
         assert "text/event-stream" in sse_stream.headers.get("content-type", "")
         lines = [line async for line in sse_stream.aiter_lines()]
-        assert any("Done" in l for l in lines)
+        assert any("Done" in line_text for line_text in lines)
 
 
 @pytest.mark.asyncio
@@ -697,7 +715,10 @@ async def test_terminal_job_status_guard_cas():
     node = await repository.create_node(
         owner_id=user_id,
         display_name="Guard Test Node",
-        public_key=ed25519.Ed25519PrivateKey.generate().public_key().public_bytes(Encoding.Raw, PublicFormat.Raw).hex(),
+        public_key=ed25519.Ed25519PrivateKey.generate()
+        .public_key()
+        .public_bytes(Encoding.Raw, PublicFormat.Raw)
+        .hex(),
     )
     node_id = node["id"]
     job = await repository.create_job(
@@ -744,7 +765,10 @@ async def test_sweeper_recovers_queued_sent_jobs_and_releases_zset_concurrency()
     node = await repository.create_node(
         owner_id=user_id,
         display_name="Sweeper Test Node",
-        public_key=ed25519.Ed25519PrivateKey.generate().public_key().public_bytes(Encoding.Raw, PublicFormat.Raw).hex(),
+        public_key=ed25519.Ed25519PrivateKey.generate()
+        .public_key()
+        .public_bytes(Encoding.Raw, PublicFormat.Raw)
+        .hex(),
     )
     node_id = node["id"]
     past_deadline = datetime.now(UTC) - timedelta(seconds=10)
@@ -842,7 +866,10 @@ async def test_distributed_session_fencing_cross_instance():
     node = await repository.create_node(
         owner_id=user_id,
         display_name="Fenced Node",
-        public_key=ed25519.Ed25519PrivateKey.generate().public_key().public_bytes(Encoding.Raw, PublicFormat.Raw).hex(),
+        public_key=ed25519.Ed25519PrivateKey.generate()
+        .public_key()
+        .public_bytes(Encoding.Raw, PublicFormat.Raw)
+        .hex(),
     )
     node_id = node["id"]
 
@@ -932,7 +959,10 @@ async def test_volatile_redis_restart_recovery():
     node = await repository.create_node(
         owner_id=user_id,
         display_name="Restart Test Node",
-        public_key=ed25519.Ed25519PrivateKey.generate().public_key().public_bytes(Encoding.Raw, PublicFormat.Raw).hex(),
+        public_key=ed25519.Ed25519PrivateKey.generate()
+        .public_key()
+        .public_bytes(Encoding.Raw, PublicFormat.Raw)
+        .hex(),
     )
     node_id = node["id"]
 
@@ -995,7 +1025,9 @@ async def test_volatile_redis_restart_recovery():
     )
 
     # Trigger recovery with current run_id = new_generation_run_id
-    reconciled_count = await service.recover_expired_community_jobs(current_run_id=new_generation_run_id)
+    reconciled_count = await service.recover_expired_community_jobs(
+        current_run_id=new_generation_run_id
+    )
     assert reconciled_count >= 2
 
     # Verify Job 1 (QUEUED) transitioned to EXPIRED with failure code REDIS_RESTART_PAYLOAD_LOST
@@ -1025,7 +1057,7 @@ async def test_volatile_redis_restart_recovery():
 async def test_dedicated_community_redis_isolation():
     """Verify Blocker B: Dedicated volatile Redis is strictly isolated from shared persistent Redis."""
     from app.core.config import settings
-    from app.core.redis import get_community_redis, get_redis
+    from app.core.redis import get_community_redis
     from app.modules.community.schemas import SignedJobAuthorization
 
     # 1. Verify configuration separates the two endpoints

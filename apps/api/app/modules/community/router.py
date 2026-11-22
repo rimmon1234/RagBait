@@ -243,7 +243,9 @@ async def stream_community_job_results(
 
     # Authorize requester: strictly requester only (node owner cannot view content)
     if job["requester_id"] != current_user.id:
-        raise AuthorizationError("Access denied: You do not have permission to view this inference stream")
+        raise AuthorizationError(
+            "Access denied: You do not have permission to view this inference stream"
+        )
 
     start_seq = 1
     if last_event_id:

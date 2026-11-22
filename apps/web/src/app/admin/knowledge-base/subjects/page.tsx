@@ -90,6 +90,13 @@ export default function SubjectsAdminPage() {
 
   useEffect(() => {
     loadSubjects();
+    if (typeof window !== "undefined") {
+      const params = new URLSearchParams(window.location.search);
+      if (params.get("action") === "new") {
+        setEditingSubject(null);
+        setIsSubjectModalOpen(true);
+      }
+    }
   }, [loadSubjects]);
 
   const loadTopicsForSubject = async (subjectId: string) => {

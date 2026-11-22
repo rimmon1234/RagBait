@@ -33,6 +33,16 @@ export default function LoginPage() {
     }
 
     if (data.session) {
+      // Check roles from token metadata immediately for instant admin entry
+      const userMeta = data.session.user.user_metadata || {};
+      const appMeta = data.session.user.app_metadata || {};
+      const userRole = appMeta.role || userMeta.role;
+
+      if (userRole === "admin" || userRole === "super_admin") {
+        router.push("/admin");
+        return;
+      }
+
       // Check user effective access state authoritatively using fresh token
       try {
         const apiBase = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000";
@@ -68,15 +78,7 @@ export default function LoginPage() {
       }
 
       // Safe fallback if /me/access was unreachable:
-      const userMeta = data.session.user.user_metadata || {};
-      const appMeta = data.session.user.app_metadata || {};
-      const userRole = appMeta.role || userMeta.role;
-
-      if (userRole === "admin" || userRole === "super_admin") {
-        router.push("/admin");
-      } else {
-        router.push("/knowledge-base");
-      }
+      router.push("/knowledge-base");
       return;
     }
   };

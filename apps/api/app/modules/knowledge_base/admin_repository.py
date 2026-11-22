@@ -5,7 +5,7 @@ import logging
 from typing import Any
 from uuid import UUID
 
-import asyncpg  # type: ignore[import-untyped]
+import asyncpg
 
 logger = logging.getLogger("ragbait.kb.admin_repository")
 
@@ -155,7 +155,7 @@ async def create_subject(
         display_order,
         created_by,
     )
-    return dict(row)  # type: ignore[arg-type]
+    return dict(row)
 
 
 async def update_subject(
@@ -310,7 +310,7 @@ async def create_topic(
         display_order,
         created_by,
     )
-    return dict(row)  # type: ignore[arg-type]
+    return dict(row)
 
 
 async def update_topic(

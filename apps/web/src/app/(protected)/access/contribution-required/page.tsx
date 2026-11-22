@@ -9,11 +9,8 @@ export default function ContributionRequiredPage() {
   const router = useRouter();
 
   useEffect(() => {
-    // Automatically redirect approved students to the Knowledge Base in Phase 3
-    const timer = setTimeout(() => {
-      router.push("/knowledge-base");
-    }, 1200);
-    return () => clearTimeout(timer);
+    // Automatically redirect approved students immediately to Knowledge Base in Phase 3
+    router.replace("/knowledge-base");
   }, [router]);
 
   return (

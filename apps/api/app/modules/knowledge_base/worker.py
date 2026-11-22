@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import Any
 from uuid import UUID
 
-import asyncpg  # type: ignore[import-untyped]
+import asyncpg
 
 from app.core.errors import NotFoundError
 from app.modules.knowledge_base.extractor_exceptions import (

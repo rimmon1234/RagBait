@@ -153,6 +153,7 @@ async def acquire_node_concurrency(
         return True
 
     import time
+
     now = time.time()
     key = f"ragbait:comm:node:{node_id}:reservations"
     res = await r.eval(
@@ -164,7 +165,7 @@ async def acquire_node_concurrency(
         now,
         lease_expires_at,
     )
-    return res == 1
+    return bool(res == 1)
 
 
 async def renew_node_concurrency(
@@ -185,7 +186,7 @@ async def renew_node_concurrency(
         str(job_id),
         lease_expires_at,
     )
-    return res == 1
+    return bool(res == 1)
 
 
 async def release_node_concurrency(node_id: UUID, job_id: UUID) -> bool:

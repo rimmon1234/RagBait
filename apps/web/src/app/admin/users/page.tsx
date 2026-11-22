@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useEffect, useState } from "react";
 import { AlertCircle, ArrowLeft, ArrowRight, Loader2, RefreshCw, Search, Shield, UserX } from "lucide-react";
 import { fetchWithAuth } from "@/lib/api";
@@ -257,7 +258,7 @@ export default function AdminUsersPage() {
                         >
                           Reactivate
                         </button>
-                      ) : (
+                      ) : u.approval_status === "approved" ? (
                         <button
                           onClick={() => {
                             setSelectedUser(u);
@@ -268,7 +269,14 @@ export default function AdminUsersPage() {
                         >
                           Suspend
                         </button>
-                      )}
+                      ) : u.approval_status === "pending" ? (
+                        <Link
+                          href="/admin/requests"
+                          className="rounded bg-amber-50 px-2 py-1 text-xs font-medium text-amber-700 hover:bg-amber-100"
+                        >
+                          Review
+                        </Link>
+                      ) : null}
                     </div>
                   </td>
                 </tr>

@@ -5,6 +5,7 @@ import ContributionRequiredPage from "@/app/(protected)/access/contribution-requ
 vi.mock("next/navigation", () => ({
   useRouter: () => ({
     push: vi.fn(),
+    replace: vi.fn(),
   }),
 }));
 

@@ -5,6 +5,7 @@ import json
 import logging
 import time
 from datetime import UTC, datetime, timedelta
+from typing import Any
 from uuid import UUID
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect, status
@@ -29,7 +30,7 @@ logger = logging.getLogger("ragbait.community.ws")
 ws_router = APIRouter()
 
 # In-memory tracking for session fencing: node_id -> (session_id, websocket, [tasks])
-ACTIVE_CONNECTIONS: dict[UUID, tuple[str, WebSocket, list[asyncio.Task]]] = {}
+ACTIVE_CONNECTIONS: dict[UUID, tuple[str, WebSocket, list[asyncio.Task[Any]]]] = {}
 
 
 @ws_router.websocket("/ws")
@@ -454,11 +455,6 @@ async def _receive_loop(
                         "tokens_per_second": comp.tokens_per_second,
                     },
                 )
-
-        except (WebSocketDisconnect, asyncio.CancelledError):
-            break
-        except Exception as e:
-            logger.warning(f"Error handling frame from node {node_id}: {e}")
 
         except (WebSocketDisconnect, asyncio.CancelledError):
             break

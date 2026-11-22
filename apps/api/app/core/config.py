@@ -225,7 +225,7 @@ class Settings(BaseSettings):
 
         try:
             priv_bytes = bytes.fromhex(self.COMMUNITY_SERVER_SIGNING_KEY_HEX)
-            pub_bytes = bytes.fromhex(self.COMMUNITY_SERVER_VERIFYING_KEY_HEX)
+            bytes.fromhex(self.COMMUNITY_SERVER_VERIFYING_KEY_HEX)
             from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
             priv_key = Ed25519PrivateKey.from_private_bytes(priv_bytes)

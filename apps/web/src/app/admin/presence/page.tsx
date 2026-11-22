@@ -15,7 +15,7 @@ export default function AdminPresencePage() {
     setLoading(true);
     setError(null);
     try {
-      const res = await fetchWithAuth<PresenceListResponse>("/api/v1/admin/presence?threshold_seconds=120");
+      const res = await fetchWithAuth<PresenceListResponse>("/api/v1/admin/presence?threshold_seconds=900");
       setActiveUsers(res.active_users);
       setTotalActive(res.total_active);
     } catch (err: unknown) {

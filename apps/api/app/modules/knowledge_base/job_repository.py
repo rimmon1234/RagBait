@@ -4,7 +4,7 @@ import logging
 from typing import Any
 from uuid import UUID
 
-import asyncpg  # type: ignore[import-untyped]
+import asyncpg
 
 logger = logging.getLogger("ragbait.kb.job_repository")
 

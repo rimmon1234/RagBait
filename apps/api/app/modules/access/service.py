@@ -75,13 +75,12 @@ async def resolve_effective_access_state(
     effective_state: EffectiveState
     if profile.approval_status == "suspended":
         effective_state = "suspended"
+    elif profile.role in ("admin", "super_admin"):
+        effective_state = "admin"
     elif profile.approval_status == "rejected":
         effective_state = "rejected"
     elif profile.approval_status == "approved":
-        if profile.role in ("admin", "super_admin"):
-            effective_state = "admin"
-        else:
-            effective_state = "contribution_required"
+        effective_state = "contribution_required"
     else:
         effective_state = "pending"
 

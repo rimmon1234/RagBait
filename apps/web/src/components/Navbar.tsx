@@ -26,7 +26,7 @@ export function Navbar() {
         return;
       }
 
-      // Populate initial profile from session user metadata to prevent "Sign in" flickering
+      // Populate initial profile immediately from session metadata to prevent "Sign in" flickering
       const email = session.user.email || "";
       const metaRole = session.user.app_metadata?.role || session.user.user_metadata?.role;
       const initialRole = metaRole === "admin" || metaRole === "super_admin" ? metaRole : "user";
@@ -40,14 +40,15 @@ export function Navbar() {
         updated_at: session.user.updated_at || session.user.created_at,
       };
 
+      setProfile((prev) => prev || fallbackProfile);
+      setLoading(false);
+
       try {
         const data = await fetchWithAuth<UserProfile>("/api/v1/me");
         setProfile(data);
       } catch {
         // Retain fallback profile so the user remains authenticated in the UI
         setProfile((prev) => prev || fallbackProfile);
-      } finally {
-        setLoading(false);
       }
     };
 
