@@ -20,6 +20,7 @@
 | **BUG-08** | Metrics / Admin | `admin/service.py`, `admin/presence/page.tsx`, `admin/users/page.tsx` | Fixed dashboard metric discrepancies: `pending_requests` now queries `access_requests WHERE status = 'pending'`; presence window corrected to 900s; contextual user actions refined. | **RESOLVED** |
 | **BUG-09** | Testing / Database | `supabase/tests/m3_1_knowledge_base_test.sql` | Fixed 11 failing pgTAP subtests caused by test fixture collisions against pre-existing seed data. Scoped test assertions to isolated test fixture UUIDs. | **RESOLVED** |
 | **BUG-10** | Code Quality | `apps/api/app`, `apps/web` | Cleaned up Mypy strict type diagnostics (0 errors across 96 backend files) and TypeScript compiler diagnostics (0 errors). | **RESOLVED** |
+| **BUG-11** | Frontend / API | `credentials/page.tsx`, `credentials/schemas.py`, `types/index.ts` | Fixed credentials page crash caused by JSON schema key divergence: backend returned `items` while frontend expected `credentials`, making state `undefined` and throwing `Cannot read properties of undefined (reading 'length')`. Added dual-compatibility computed fields and resilient array unpacking. | **RESOLVED** |
 
 ---
 

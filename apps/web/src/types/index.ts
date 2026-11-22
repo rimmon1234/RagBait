@@ -155,7 +155,8 @@ export interface ApiKeyCredential {
 }
 
 export interface CredentialListResponse {
-  credentials: ApiKeyCredential[];
+  items?: ApiKeyCredential[];
+  credentials?: ApiKeyCredential[];
   total: number;
 }
 
@@ -182,12 +183,17 @@ export interface CredentialUpdateInput {
 }
 
 export interface ValidationResult {
-  is_valid: boolean;
-  outcome: "valid" | "invalid_key" | "quota_exhausted" | "rate_limited" | "network_error" | "unsupported_provider";
+  is_valid?: boolean;
+  outcome: string;
   http_status?: number | null;
   error_code?: string | null;
-  diagnostic_message: string;
-  probed_at: string;
+  safe_code?: string;
+  message?: string;
+  diagnostic_message?: string;
+  probed_at?: string;
+  validated_at?: string;
+  credential_id?: string;
+  provider_id?: string;
 }
 
 export interface ReservationView {

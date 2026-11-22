@@ -78,8 +78,8 @@ async def require_not_suspended(
 async def require_approved_user(
     profile: UserProfile = Depends(require_not_suspended),
 ) -> UserProfile:
-    """Require approved user status."""
-    if profile.approval_status != "approved":
+    """Require approved user status (or administrator)."""
+    if profile.approval_status != "approved" and profile.role not in ("admin", "super_admin"):
         raise AuthorizationError(
             f"Account approval status is {profile.approval_status}, expected approved",
             code="ACCOUNT_NOT_APPROVED",

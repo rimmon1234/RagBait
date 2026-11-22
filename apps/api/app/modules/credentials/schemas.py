@@ -4,7 +4,7 @@ from datetime import datetime
 from typing import Literal
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, computed_field
 
 CredentialStatus = Literal["active", "disabled", "revoked", "rate_limited", "quota_exhausted"]
 CredentialSharingScope = Literal["owner_only", "community_shared"]
@@ -226,6 +226,12 @@ class CredentialListResponse(BaseModel):
     items: list[CredentialResponse]
     total: int
 
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def credentials(self) -> list[CredentialResponse]:
+        """Backward-compatibility alias for clients expecting credentials."""
+        return self.items
+
 
 class ValidationResultResponse(BaseModel):
     """Result of an on-demand provider authentication probe."""
@@ -236,3 +242,23 @@ class ValidationResultResponse(BaseModel):
     safe_code: str
     message: str
     validated_at: datetime
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def is_valid(self) -> bool:
+        return self.outcome == "valid"
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def diagnostic_message(self) -> str:
+        return self.message
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def error_code(self) -> str:
+        return self.safe_code
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def probed_at(self) -> str:
+        return self.validated_at.isoformat()

@@ -84,7 +84,9 @@ export default function CredentialsPage() {
       ]);
 
       if (credsRes.status === "fulfilled") {
-        setCredentials(credsRes.value.credentials);
+        const raw = credsRes.value as { items?: ApiKeyCredential[]; credentials?: ApiKeyCredential[] };
+        const list = raw?.items ?? raw?.credentials ?? (Array.isArray(raw) ? raw : []);
+        setCredentials(Array.isArray(list) ? list : []);
       } else {
         throw credsRes.reason;
       }
@@ -174,15 +176,19 @@ export default function CredentialsPage() {
       });
 
       setValidationFeedback((prev) => ({ ...prev, [cred.id]: res }));
+      const isValid = res.is_valid ?? res.outcome === "valid";
+      const probedAt = res.validated_at ?? res.probed_at ?? new Date().toISOString();
+      const code = res.safe_code ?? res.error_code ?? null;
+
       // Update local item validation status
       setCredentials((prev) =>
         prev.map((c) =>
           c.id === cred.id
             ? {
                 ...c,
-                validation_status: res.is_valid ? "valid" : "invalid",
-                last_validated_at: res.probed_at,
-                validation_error_code: res.error_code,
+                validation_status: isValid ? "valid" : "invalid",
+                last_validated_at: probedAt,
+                validation_error_code: code,
               }
             : c
         )
@@ -472,8 +478,11 @@ export default function CredentialsPage() {
                         <div className="flex flex-col gap-1 items-start">
                           {getValidationBadge(cred.validation_status)}
                           {feedback && (
-                            <span className="text-[11px] text-gray-500 max-w-xs truncate" title={feedback.diagnostic_message}>
-                              {feedback.diagnostic_message}
+                            <span
+                              className="text-[11px] text-gray-500 max-w-xs truncate"
+                              title={feedback.message || feedback.diagnostic_message || feedback.safe_code || ""}
+                            >
+                              {feedback.message || feedback.diagnostic_message || feedback.safe_code}
                             </span>
                           )}
                           {!feedback && cred.last_validated_at && (
