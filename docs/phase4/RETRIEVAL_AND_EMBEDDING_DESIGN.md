@@ -1,6 +1,6 @@
 # RagBait Phase 4 — Retrieval and Embedding Design
 
-**Document Version:** 1.0.0  
+**Document Version:** 1.1.0 (Remediated Baseline)  
 **Phase:** Phase 4 — AI Study Assistant and Retrieval-Augmented Generation (RAG)  
 **Date:** November 22, 2026  
 **Status:** Approved Technical Design  
@@ -11,26 +11,55 @@
 
 Text extraction in Phase 3 produced structured records in `public.kb_document_pages`, each containing `page_number`, `raw_text`, `character_count`, and `has_text`. Phase 4 transforms these pages into dense semantic chunks with physical page provenance.
 
-### 1.1 Chunking Specifications
-- **Target Chunk Size**: 500–600 tokens ($\approx 2,000 - 2,400$ characters).
-- **Target Overlap**: 80–100 tokens ($\approx 350 - 400$ characters).
-- **Boundary Preservation**: Paragraph and sentence boundaries are strictly prioritized. A chunk is never broken mid-sentence unless a single paragraph exceeds the maximum token ceiling.
-- **Physical Page Boundary Tracking**:
-  - Chunks track `page_number_start` and `page_number_end`.
-  - If a paragraph flows across physical pages (e.g., end of page 12 into top of page 13), the chunk records `page_number_start = 12` and `page_number_end = 13`.
-- **Document Boundary Fencing**: A chunk **never** spans across different documents.
-- **Empty / Short Page Handling**: Pages with `has_text = false` or whitespace are skipped. Very short pages (e.g. title pages $< 150$ characters) are prepended to the subsequent chunk.
-- **Content Hashing**: Every chunk computes `content_hash = sha256(raw_text)` to support idempotent re-indexing.
+### 1.1 Chunk Sizing & Tokenizer Overhead Accounting
+
+The selected embedding model, `intfloat/multilingual-e5-small`, enforces a **hard maximum input ceiling of 512 tokens** using an XLM-RoBERTa SentencePiece tokenizer. In this tokenizer:
+- The required document passage prefix `"passage: "` consumes **2 tokens** (`"passage"` + `": "`).
+- Special tokens `<s>` (beginning of sequence, ID 0) and `</s>` (end of sequence, ID 2) consume **2 tokens**.
+- Total prefix and framing overhead = **4 tokens**.
+
+```
++----------------------------------------------------------------------------------------------------+
+| 512-TOKEN INPUT BUDGET ALLOCATION                                                                  |
+| [<s>] [passage: ] [----------------- Clean Chunk Body (Max 420 tokens) -----------------] [</s>]    |
+|   1       2                                 350 - 400 Target                                 1     |
+| <---------------- Total Tokens: 404 - 424 <= 512 (Guaranteed Safety Margin: 88 tokens) ----------> |
++----------------------------------------------------------------------------------------------------+
+```
+
+### 1.2 Authoritative Chunking Rules
+1. **Target Chunk Size**: **350–400 tokens** ($\approx 1,400 - 1,600$ characters).
+2. **Hard Chunk Token Ceiling**: **420 tokens**.
+   $$\text{Max Total Tokens} = 420 \text{ (chunk body)} + 4 \text{ (prefix/framing)} = 424 \le 512$$
+   This guarantees a safety margin of $512 - 424 = 88$ tokens, mathematically ensuring that **no indexed chunk is ever silently truncated** by the embedding model's 512-token limit.
+3. **Target Overlap**: **50–70 tokens** ($\approx 200 - 300$ characters).
+4. **Boundary Preservation**: Paragraph and sentence boundaries are strictly prioritized. A chunk is never broken mid-sentence unless an individual sentence exceeds the 420-token ceiling.
+5. **Handling Exceptionally Long Paragraphs**:
+   - If a single paragraph exceeds 420 tokens, the chunker splits at sentence terminators (`. `, `? `, `! `, `\n`).
+   - If an individual sentence exceeds 420 tokens (e.g. unformatted raw code, large mathematical tables, or long semicolon lists), it splits at clause delimiters (`;`, `,`) with token verification.
+6. **Query Token Budget**:
+   - Query prefix `"query: "` consumes 2 tokens.
+   - Student questions are bounded to a maximum of **128 tokens**. Total query tokens: $2 + 128 = 130 \le 512$. Questions exceeding 128 tokens receive clear client-side validation feedback.
+7. **Clean Storage Invariant**:
+   - `public.kb_document_chunks.raw_text` stores the clean text excerpt **without** the `"passage: "` prefix.
+   - When generating embeddings, the indexing worker passes `"passage: " + raw_text` to the embedding engine.
+   - `token_count` on `kb_document_chunks` records the clean text token count, while embedding metadata records the total input tokens.
+8. **Physical Page Boundary Tracking**:
+   - Chunks track `page_number_start` and `page_number_end`.
+   - If a paragraph flows across physical pages (e.g., end of page 12 into top of page 13), the chunk records `page_number_start = 12` and `page_number_end = 13`.
+9. **Document Boundary Fencing**: A chunk **never** spans across different documents.
+10. **Empty / Short Page Handling**: Pages with `has_text = false` or whitespace are skipped. Very short pages (e.g. title pages $< 150$ characters) are prepended to the subsequent chunk.
+11. **Content Hashing**: Every chunk computes `content_hash = sha256(raw_text)` to support idempotent re-indexing.
 
 ---
 
-## 2. Embedding Model Research & Selection
+## 2. Embedding Model Research & FastEmbed / ONNX Integration
 
 ### 2.1 Model Evaluation Matrix
 
 | Metric | Candidate 1: `bge-small-en-v1.5` | Candidate 2: `multilingual-e5-small` | Candidate 3: `bge-m3` | Candidate 4: OpenAI `text-embedding-3-small` |
 | :--- | :--- | :--- | :--- | :--- |
-| **Model Size** | 133 MB | 470 MB (ONNX quantized: 118 MB) | 2.2 GB | Remote API (0 MB) |
+| **Model Size** | 133 MB | ONNX INT8: 118 MB / FP32: 470 MB | 2.2 GB | Remote API (0 MB) |
 | **Embedding Dims** | 384 | 384 | 1,024 | 1,536 (or 512 reduced) |
 | **Max Input Tokens** | 512 | 512 | 8,192 | 8,191 |
 | **License** | MIT | MIT | MIT | Proprietary |
@@ -39,15 +68,22 @@ Text extraction in Phase 3 produced structured records in `public.kb_document_pa
 | **Cost / Limits** | Free / Local | Free / Local | Free / High Server Memory | Paid (\$0.02 / 1M tokens) |
 | **Privacy Boundary** | 100% On-Premise | 100% On-Premise | 100% On-Premise | Transmits text to OpenAI |
 
-### 2.2 Recommended Selection: `intfloat/multilingual-e5-small`
-**Decision:** Adopt **`intfloat/multilingual-e5-small`** as RagBait's primary embedding model.
-- **Justification**:
-  1. **Academic Demographics**: University study materials in the local context include English textbooks interspersed with bilingual explanations, terminology, and slides in regional languages. `multilingual-e5-small` exhibits state-of-the-art multilingual retrieval performance.
-  2. **Compact Dimensions (384)**: 384 dimensions consume $< 50\%$ of the vector memory of 768/1536-dim models. At 20,000 chunks, the entire vector dataset fits in $\approx 30\text{MB}$ of RAM, allowing blazingly fast pgvector queries.
-  3. **Zero External API Cost / Zero Rate Limits**: Runs locally on the backend server CPU via ONNX Runtime / `fastembed`, generating embeddings at $> 25\text{ chunks/sec}$ on standard multi-core hardware.
-  4. **Strict Model Prefixing**:
-     - Document Chunks: `passage: <chunk_text>`
-     - Search Queries: `query: <student_question>`
+### 2.2 FastEmbed & ONNX Runtime Integration Path
+- **Library**: `fastembed` (Qdrant) running with `onnxruntime` on CPU.
+- **Model Identifier**: Supported natively in FastEmbed as `intfloat/multilingual-e5-small` (or `qdrant/multilingual-e5-small-onnx`).
+- **Artifact Specifications**:
+  - **Default Production Artifact**: ONNX INT8 quantized (`model_quantized.onnx`), size $\approx \mathbf{118\text{ MB}}$. Achieves $\approx 12\text{ms}$ CPU inference latency per batch of 8 chunks.
+  - **Unquantized Fallback**: ONNX FP32 (`model.onnx`), size $\approx \mathbf{470\text{ MB}}$.
+  - **Pooling Method**: **Mean Pooling** over token representations with attention mask filtering.
+  - **Normalization**: $L_2$ unit normalization ($\|v\|_2 = 1.0$).
+  - **Model Cache Directory**: Cached locally in `~/.cache/ragbait/models/` (configured via `settings.RAG_MODEL_CACHE_DIR`).
+
+### 2.3 Reproducible Offline Benchmark Plan (M4.3)
+During M4.3, before enabling production indexing, a local benchmark script will execute against a sample corpus of 100 academic chunks to verify:
+1. Exact output dimension = 384.
+2. Unit vector norm: $|\|v\|_2 - 1.0| < 10^{-5}$.
+3. Monotonic equivalence: $\text{CosineDistance}(u, v) = 1.0 - \text{InnerProduct}(u, v)$.
+4. Throughput $\ge 25\text{ chunks/sec}$ on 4 CPU cores.
 
 ---
 
@@ -58,6 +94,7 @@ Text extraction in Phase 3 produced structured records in `public.kb_document_pa
   `CREATE EXTENSION IF NOT EXISTS vector WITH SCHEMA extensions;`
 - Column definition: `embedding extensions.vector(384) NOT NULL`.
 - All vectors are $L_2$-normalized to unit length ($\|v\|_2 = 1.0$) upon generation. Under unit normalization, **cosine distance (`<=>`) is monotonically equivalent to inner product (`<#>`)**, enabling maximal vector math optimization.
+- **Extension Clarification**: `pg_trgm` is **NOT required** for Phase 4 MVP. PostgreSQL full-text search uses the native `tsvector` data type and `GIN` indexing, which are built into PostgreSQL core without extra extension dependencies.
 
 ### 3.2 Indexing Strategy: Scale-Aware Progression
 ```
@@ -96,7 +133,7 @@ flowchart TD
     Query --> FTS
     
     subgraph Rank Fusion
-        RRF["Reciprocal Rank Fusion (RRF k=60):
+        RRF["Candidate Baseline RRF (k=60):
         Score = 0.6 / (60 + rank_vec) + 0.4 / (60 + rank_fts)"]
     end
     
@@ -111,9 +148,9 @@ flowchart TD
 $$RRF(d) = \frac{w_{vec}}{k + \text{rank}_{vec}(d)} + \frac{w_{fts}}{k + \text{rank}_{fts}(d)}$$
 
 Where:
-- $k = 60$ (smoothing constant preventing high ranks from dominating)
-- $w_{vec} = 0.60$ (weight for semantic retrieval)
-- $w_{fts} = 0.40$ (weight for exact keyword retrieval)
+- $k = 60$ (**Candidate Baseline Value**; to be tuned in M4.4 / M4.8 via grid search over $k \in [20, 60, 100]$)
+- $w_{vec} = 0.60$ (Candidate baseline weight for semantic retrieval)
+- $w_{fts} = 0.40$ (Candidate baseline weight for exact keyword retrieval)
 
 ### 4.2 Database Search Function (`match_subject_chunks`)
 ```sql
@@ -142,9 +179,14 @@ WITH vector_matches AS (
     FROM public.kb_document_chunks c
     JOIN public.kb_chunk_embeddings e ON e.chunk_id = c.id
     JOIN public.kb_documents d ON d.id = c.document_id
+    JOIN public.kb_topics t ON t.id = d.topic_id
+    JOIN public.kb_subjects s ON s.id = d.subject_id
     WHERE d.subject_id = p_subject_id
       AND d.is_archived = false
-      AND d.upload_status != 'deleted'
+      AND d.upload_status = 'uploaded'
+      AND d.extraction_status IN ('completed', 'completed_no_text')
+      AND t.is_active = true
+      AND s.is_active = true
     LIMIT p_limit * 2
 ),
 fts_matches AS (
@@ -153,9 +195,14 @@ fts_matches AS (
         ROW_NUMBER() OVER (ORDER BY ts_rank(to_tsvector('english', c.raw_text), plainto_tsquery('english', p_query_text)) DESC) AS rank
     FROM public.kb_document_chunks c
     JOIN public.kb_documents d ON d.id = c.document_id
+    JOIN public.kb_topics t ON t.id = d.topic_id
+    JOIN public.kb_subjects s ON s.id = d.subject_id
     WHERE d.subject_id = p_subject_id
       AND d.is_archived = false
-      AND d.upload_status != 'deleted'
+      AND d.upload_status = 'uploaded'
+      AND d.extraction_status IN ('completed', 'completed_no_text')
+      AND t.is_active = true
+      AND s.is_active = true
       AND to_tsvector('english', c.raw_text) @@ plainto_tsquery('english', p_query_text)
     LIMIT p_limit * 2
 )

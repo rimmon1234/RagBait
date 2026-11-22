@@ -1,9 +1,9 @@
 # RagBait Phase 4 — RAG Quality Evaluation Specification
 
-**Document Version:** 1.0.0  
+**Document Version:** 1.1.0  
 **Phase:** Phase 4 — AI Study Assistant and Retrieval-Augmented Generation (RAG)  
 **Date:** November 22, 2026  
-**Status:** Approved Benchmark Specification  
+**Status:** Approved Benchmark Specification (Remediated Baseline)  
 
 ---
 
@@ -17,10 +17,10 @@ The RagBait Phase 4 evaluation framework relies on a **Manually Verified 50-Ques
 
 ```mermaid
 flowchart LR
-    Dataset["50-Question Golden Dataset"]
+    Dataset["50-Question Golden Dataset (English & Bengali)"]
     
     subgraph Retrieval Evaluation
-        Search["Hybrid Search (RRF k=60)"]
+        Search["Hybrid Search (Candidate Baseline RRF k=60, w_vec=0.6, w_fts=0.4)"]
         RetMetrics["Retrieval Metrics:
         - Recall@5 (>= 80%)
         - MRR (>= 0.70)
@@ -45,11 +45,11 @@ flowchart LR
 
 ## 2. The 50-Question Golden Dataset Composition
 
-The dataset is partitioned across actual university curriculum subjects (e.g. Operating Systems, Database Management Systems, Computer Networks):
+The dataset is partitioned across actual university curriculum subjects (e.g. Operating Systems, Database Management Systems, Computer Networks) and includes both English and Bengali technical questions:
 
 | Category ID | Query Type | Question Count | Description & Test Objective |
 | :--- | :--- | :--- | :--- |
-| **CAT-01** | Direct Factual | 10 | Explicit, single-sentence facts directly stated in textbook text. |
+| **CAT-01** | Direct Factual | 10 | Explicit, single-sentence facts directly stated in textbook text (includes English & Bengali items). |
 | **CAT-02** | Formal Definitions | 5 | Precise definitions of standard computer science concepts. |
 | **CAT-03** | Conceptual Explanations | 8 | Deep technical explanations requiring synthesis of 2–3 paragraphs. |
 | **CAT-04** | Exact Values & Terminology | 5 | Queries testing exact numbers, formulas, constants, and acronyms. |
@@ -64,7 +64,7 @@ The dataset is partitioned across actual university curriculum subjects (e.g. Op
 
 ---
 
-## 3. Authoritative Metric Definitions
+## 3. Authoritative Metric Definitions & Threshold Formulas
 
 ### 3.1 Retrieval Metrics
 - **Recall@K (K=5)**:
@@ -82,9 +82,16 @@ The dataset is partitioned across actual university curriculum subjects (e.g. Op
 - **Citation Completeness**: Percentage of factual assertions in the answer accompanied by at least one valid citation token `[Sn]`.
 - **Abstention Correctness**: When presented with CAT-09 (out-of-syllabus questions), does the assistant correctly refuse to answer rather than hallucinating from general parametric memory?
 
+### 3.3 Boundary Length Regression Tests
+To guarantee that chunks never exceed the model's 512-token input limit:
+- Automated tests assert that for every generated chunk in the corpus:
+  $$\text{token\_count}(\text{raw\_text}) \le 420$$
+  $$\text{token\_count}(\text{"passage: "} + \text{raw\_text}) + 2 \le 424 \le 512$$
+- Chunks at boundary lengths (e.g. 415–420 tokens) are explicitly verified to generate valid embeddings without truncation errors.
+
 ---
 
-## 4. Phase 4 Acceptance Thresholds
+## 4. Phase 4 Acceptance Thresholds & Baseline Parameter Tuning
 
 The following quantitative targets define the release criteria for Milestone M4.8:
 
@@ -99,3 +106,10 @@ The following quantitative targets define the release criteria for Milestone M4.
 | **Unauthorized Source Retrieval** | **$0$** | Security test verifying 0 chunks retrieved from other subjects |
 | **Duplicate Indexing Chunks** | **$0$** | Database integrity query verifying zero duplicate chunks on re-index |
 | **Cross-User Data Leakage** | **$0$** | Multi-tenant RLS test asserting zero cross-user conversation access |
+
+### 4.1 RRF Parameter Optimization Notice
+- The candidate baseline values:
+  - RRF smoothing factor: $k = 60$
+  - Vector similarity weight: $w_{vec} = 0.6$
+  - Full-text search weight: $w_{fts} = 0.4$
+- These are designated as **Candidate Baseline Values**. In Milestone M4.4 and M4.8, an automated grid search script will evaluate variations of $k \in \{20, 40, 60, 80\}$ and $w_{vec} \in [0.4, 0.8]$ against the 50-question golden dataset to lock in the optimal production weights.

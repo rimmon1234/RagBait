@@ -1,6 +1,6 @@
 # RagBait Phase 4 — Data Model and Migration Design
 
-**Document Version:** 1.0.0  
+**Document Version:** 1.1.0 (Remediated Baseline)  
 **Phase:** Phase 4 — AI Study Assistant and Retrieval-Augmented Generation (RAG)  
 **Date:** November 22, 2026  
 **Status:** Approved Schema Design (Planning Only — No Active Migrations Executed in M4.0)  
@@ -37,7 +37,8 @@ erDiagram
 ### 2.1 Domain 1: RAG Indexing & Chunking
 
 #### `public.kb_document_chunks`
-Stores deterministic text chunks created from extracted document pages, preserving exact physical page provenance.
+Stores deterministic text chunks created from extracted document pages, preserving physical page provenance.
+- **Sizing Invariant**: Target 350–400 tokens; hard ceiling $\le 420$ tokens (guaranteeing $\le 424$ tokens total embedding input with `"passage: "` prefix and special tokens).
 ```sql
 CREATE TABLE public.kb_document_chunks (
     id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -51,12 +52,13 @@ CREATE TABLE public.kb_document_chunks (
     content_hash text NOT NULL,
     chunking_version integer NOT NULL DEFAULT 1,
     created_at timestamptz NOT NULL DEFAULT timezone('utc'::text, now()),
-    CONSTRAINT uq_document_chunk_index UNIQUE (document_id, chunk_index, chunking_version)
+    CONSTRAINT uq_document_chunk_index UNIQUE (document_id, chunk_index, chunking_version),
+    CONSTRAINT chk_chunk_token_ceiling CHECK (token_count <= 420)
 );
 
 CREATE INDEX idx_kb_chunks_doc_id ON public.kb_document_chunks (document_id);
 CREATE INDEX idx_kb_chunks_pages ON public.kb_document_chunks (document_id, page_number_start, page_number_end);
--- GIN Index for PostgreSQL Full-Text Search in Hybrid Retrieval
+-- GIN Index for PostgreSQL Full-Text Search in Hybrid Retrieval (native PostgreSQL core)
 CREATE INDEX idx_kb_chunks_fts ON public.kb_document_chunks USING gin (to_tsvector('english', raw_text));
 ```
 
@@ -75,7 +77,7 @@ CREATE TABLE public.kb_chunk_embeddings (
 );
 
 CREATE INDEX idx_kb_embeddings_chunk_id ON public.kb_chunk_embeddings (chunk_id);
--- HNSW Cosine Index for pgvector 0.8.2 (enabled in M4.3)
+-- HNSW Cosine Index for pgvector 0.8.2 (evaluated against exact scan in M4.3)
 CREATE INDEX idx_kb_embeddings_hnsw ON public.kb_chunk_embeddings 
 USING hnsw (embedding extensions.vector_cosine_ops) 
 WITH (m = 16, ef_construction = 64);
@@ -188,6 +190,9 @@ WHERE idempotency_key IS NOT NULL;
 
 #### `public.chat_message_sources`
 Immutable evidence snapshot capturing the exact chunks and physical pages supplied to the LLM.
+- **Evidence State Distinction**:
+  - `included_in_context = true`: The passage was selected by the context budget manager and included in the `<study_context_evidence>` block.
+  - `referenced_in_answer = true`: The assistant explicitly referenced this source using an inline citation token like `[S1]`.
 ```sql
 CREATE TABLE public.chat_message_sources (
     id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -212,7 +217,7 @@ CREATE INDEX idx_msg_sources_doc_id ON public.chat_message_sources (document_id)
 ```
 
 #### `public.chat_conversation_summaries`
-Asynchronous map-reduce summary representing older conversation context.
+Asynchronous map-reduce summary representing older conversation context with optimistic concurrency sequence control.
 ```sql
 CREATE TABLE public.chat_conversation_summaries (
     id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -230,7 +235,7 @@ CREATE INDEX idx_conv_summaries_conv_id ON public.chat_conversation_summaries (c
 
 ---
 
-## 3. Row-Level Security (RLS) & Grant Policies
+## 3. Row-Level Security (RLS) & Authoritative Grant Policies
 
 All user-facing tables are protected with strict PostgreSQL Row-Level Security policies.
 
@@ -310,7 +315,7 @@ CREATE POLICY p_chat_sources_select ON public.chat_message_sources
 | Milestone | Migration Filename | Description |
 | :--- | :--- | :--- |
 | **M4.1** | `20260301000000_m4_1_chat_persistence.sql` | Creates `chat_conversations`, `chat_messages`, enums, indexes, and RLS policies. |
-| **M4.2** | `20260302000000_m4_2_chunking_and_indexing.sql` | Creates `kb_document_chunks`, `kb_indexing_jobs`, FTS index, and extraction hook. |
-| **M4.3** | `20260303000000_m4_3_pgvector_storage.sql` | Activates `extensions.vector` and `extensions.pg_trgm`, creates `kb_chunk_embeddings`, HNSW index. |
+| **M4.2** | `20260302000000_m4_2_chunking_and_indexing.sql` | Creates `kb_document_chunks` (with 420-token ceiling check), `kb_indexing_jobs`, FTS index, and extraction hook. |
+| **M4.3** | `20260303000000_m4_3_pgvector_storage.sql` | Activates `extensions.vector` (without pg_trgm), creates `kb_chunk_embeddings`, HNSW index. |
 | **M4.4** | `20260304000000_m4_4_hybrid_search.sql` | Creates `match_subject_chunks` hybrid search SQL function with subject filtering and RRF ranking. |
 | **M4.5** | `20260305000000_m4_5_chat_evidence.sql` | Creates `chat_message_sources`, `chat_conversation_summaries`, and citation integrity constraints. |

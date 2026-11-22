@@ -1,9 +1,9 @@
 # RagBait Phase 4 — Generation Reliability and Load Plan
 
-**Document Version:** 1.0.0  
+**Document Version:** 1.1.0  
 **Phase:** Phase 4 — AI Study Assistant and Retrieval-Augmented Generation (RAG)  
 **Date:** November 22, 2026  
-**Status:** Approved Operational Specification  
+**Status:** Approved Operational Specification (Remediated Baseline)  
 
 ---
 
@@ -14,7 +14,11 @@ Every assistant generation request transitions through an explicit, auditable st
 ```mermaid
 stateDiagram-v2
     [*] --> accepted: Client POST /messages
-    accepted --> retrieving: Idempotency & Auth passed
+    accepted --> waiting_admission: Concurrency slots full
+    waiting_admission --> retrieving: Slot acquired within 30s
+    waiting_admission --> rejected: Wait timeout > 30s
+    
+    accepted --> retrieving: Idempotency & Auth passed, slot acquired
     retrieving --> preparing_context: Hybrid search finished
     preparing_context --> streaming: Context budgeted & LLM stream opened
     
@@ -33,19 +37,20 @@ stateDiagram-v2
 
 ### 1.1 State Definitions
 - `accepted`: Request payload validated, idempotency key checked, concurrency lease claimed.
+- `waiting_admission`: Concurrency slots saturated; request is waiting in a bounded Redis polling loop (max 30s).
 - `retrieving`: Hybrid semantic and keyword queries executing against PostgreSQL.
 - `preparing_context`: Prompt context budget calculated, evidence selected, XML prompt assembled.
 - `streaming`: Upstream provider connection established, emitting SSE `text_delta` events.
 - `completed`: Upstream finish reason `stop` received, citations reconciled, message updated.
 - `cancelled`: Client explicitly cancelled or browser disconnected; partial text preserved.
 - `failed`: Upstream error, context overflow, or timeout encountered with normalized error logged.
-- `rejected`: Inadmissible request (e.g. concurrent generation already active in thread).
+- `rejected`: Inadmissible request (e.g. concurrent generation already active in thread, or wait timeout).
 
 ---
 
-## 2. Concurrency Governance & Redis Semaphores
+## 2. Concurrency Governance & Redis Distributed Semaphores
 
-In a multi-user college environment, multiple students query the assistant simultaneously. RagBait enforces bounded concurrency using **Redis Distributed Semaphores**:
+In a multi-user college environment, multiple students query the assistant simultaneously. RagBait enforces bounded concurrency using **Redis Distributed Semaphores with Unique Lease Tokens and Atomic Lua Scripts**:
 
 ```mermaid
 flowchart TD
@@ -56,14 +61,15 @@ flowchart TD
     UserLock{"2. Per-User Semaphore:
     Does student have < 2 concurrent generations?"}
     GlobalLock{"3. Global Provider Semaphore:
-    Are total cloud generations < 10?"}
+    Are total cloud generations < 10?
+    (Bypassed for Private Local Ollama)"}
     
     Proceed["Claim Leases (TTL 60s) & Execute Generation"]
     RejectConv["HTTP 409 Conflict:
     'Generation already active in this thread'"]
     RejectUser["HTTP 429 Too Many Requests:
     'Maximum 2 concurrent chats per student'"]
-    QueueWait["Enter Bounded Wait Queue (Max 30s)"]
+    QueueWait["Enter Bounded Admission Wait (Max 30s, emit SSE admission_waiting)"]
     
     Req --> ConvLock
     ConvLock -- Yes --> RejectConv
@@ -82,7 +88,42 @@ flowchart TD
 1. **Per-Conversation Mutex**: **1 active generation** per conversation. Enforces strict message sequence numbering and prevents interleaved assistant responses.
 2. **Per-User Concurrency**: **2 simultaneous generations** per student account. Prevents a single student from consuming platform capacity across multiple browser tabs.
 3. **Global Cloud Concurrency**: **10 simultaneous cloud API calls**. Prevents upstream rate limit cascades (`HTTP 429`) against shared free-tier credentials.
-4. **Lease TTL**: Every Redis lease has a strict 60-second TTL. If a server worker crashes or power fails, the lock automatically self-clears, preventing permanent deadlocks.
+4. **Private Local Bypass**: Private Local Ollama requests **bypass the global cloud semaphore** (`sem:global:cloud`) entirely, because they execute against the student's own loopback hardware and consume zero cloud API quotas.
+
+### 2.2 Atomic Lua Semaphore Scripts & Stale Release Protection
+
+To prevent a slow or timed-out generation from inadvertently releasing a lock that has already been re-acquired by a subsequent generation, all locks and semaphore slots are associated with a unique UUID4 **Lease Permit Token**.
+
+#### Acquisition Script
+```lua
+-- KEYS[1]: lock key (e.g. lock:chat:conversation:{id})
+-- ARGV[1]: lease_token (UUID4)
+-- ARGV[2]: ttl_seconds (e.g. 60)
+local current = redis.call('get', KEYS[1])
+if not current then
+    redis.call('set', KEYS[1], ARGV[1], 'EX', ARGV[2])
+    return 1
+else
+    return 0
+end
+```
+
+#### Safe Token Release Script
+```lua
+-- KEYS[1]: lock key (e.g. lock:chat:conversation:{id})
+-- ARGV[1]: lease_token (UUID4)
+if redis.call('get', KEYS[1]) == ARGV[1] then
+    return redis.call('del', KEYS[1])
+else
+    -- Token does not match: Lock expired and was re-claimed by another request!
+    return 0
+end
+```
+
+#### Lease Heartbeat & Expiration
+- Every Redis lease has a strict 60-second TTL.
+- Active streaming requests maintain a background heartbeat task that extends the TTL every 15 seconds as long as tokens are actively flowing.
+- If a server worker crashes or power fails, the lock automatically self-clears after 60s, preventing permanent deadlocks.
 
 ---
 
@@ -100,7 +141,7 @@ flowchart TD
   3. The backend sets an internal `asyncio.Event` cancellation flag.
   4. The upstream provider HTTP stream is closed via HTTP transport abort.
   5. The assistant message in `chat_messages` is updated to `status = 'cancelled'` with whatever partial text was emitted up to the abort point.
-  6. The Redis conversation lock and concurrency semaphores are released immediately.
+  6. The Redis conversation lock and concurrency semaphores are released immediately via the safe Lua release script.
 
 ---
 

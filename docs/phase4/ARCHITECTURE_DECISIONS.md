@@ -1,9 +1,9 @@
 # RagBait Phase 4 — Architectural Decision Records (ADRs 01 – 22)
 
-**Document Version:** 1.0.0  
+**Document Version:** 1.1.0  
 **Phase:** Phase 4 — AI Study Assistant and Retrieval-Augmented Generation (RAG)  
 **Date:** November 22, 2026  
-**Status:** Approved Architectural Decisions  
+**Status:** Approved Architectural Decisions (Remediated Baseline)  
 
 ---
 
@@ -49,29 +49,29 @@
 ---
 
 ### ADR 04: Page-Aware Chunking Strategy
-- **Context**: Extracted document pages in `kb_document_pages` must be chunked for vector indexing without losing sentence coherence or physical page provenance.
+- **Context**: Extracted document pages in `kb_document_pages` must be chunked for vector indexing without losing sentence coherence or physical page provenance, while respecting the 512-token input limit of `intfloat/multilingual-e5-small`.
 - **Options**:
-  1. *Deterministic Page-Aware Sentence/Paragraph Windowing*: 500–600 tokens per chunk with 80–100 tokens overlap, preserving page boundaries.
-  2. *Fixed-Character Slicing*: Splitting every 1,500 characters arbitrarily.
-  3. *Hierarchical Parent-Child Chunking*.
-- **Decision**: **Option 1 (Deterministic Page-Aware Windowing)**.
-- **Reasoning**: Paragraph/sentence windowing prevents broken mathematical equations and truncated definitions. Tracking `page_number_start` and `page_number_end` enables exact physical page navigation in the document reader.
-- **Trade-offs**: Slightly more complex chunking logic than naive character splitting.
-- **Risks**: Very long unbroken paragraphs; mitigated by sentence-boundary fallback.
-- **Revisiting Conditions**: If tabular data extraction requires table-aware markdown chunking.
+  1. *Deterministic Page-Aware Sentence/Paragraph Windowing (350–400 tokens, ceiling 420 tokens)*: Overlap 60–80 tokens, tracking `page_number_start` and `page_number_end`. Sentence/clause fallback for long paragraphs.
+  2. *Legacy 500–600 Token Windowing*: Conflicts with 512-token model limit and prefix overhead.
+  3. *Fixed-Character Slicing*: Splitting every 1,500 characters arbitrarily.
+- **Decision**: **Option 1 (Deterministic Page-Aware Windowing with 420-token ceiling)**.
+- **Reasoning**: `multilingual-e5-small` has a 512-token ceiling. Embedding requires `"passage: "` (2 tokens) and `<s>`/`</s>` (2 tokens). Capping raw chunk text at 420 tokens yields an exact maximum embedding input of 424 tokens, preserving an 88-token safety margin.
+- **Trade-offs**: Slightly more chunks per document than 600-token chunks.
+- **Risks**: Exceptionally long unbroken paragraphs; solved via sentence and clause punctuation boundary fallback.
+- **Revisiting Conditions**: If a model with native 8,192-token context is adopted.
 
 ---
 
 ### ADR 05: Primary Embedding Model Selection
 - **Context**: Need an accurate, low-latency, cost-effective embedding model for university textbooks and notes.
 - **Options**:
-  1. *`intfloat/multilingual-e5-small`*: 384 dimensions, 512 tokens, MIT license, 133MB (ONNX).
+  1. *`intfloat/multilingual-e5-small`*: 384 dimensions, 512 tokens, MIT license, FastEmbed ONNX INT8 (118MB) and FP32 (470MB).
   2. *`BAAI/bge-small-en-v1.5`*: 384 dimensions, English only.
   3. *`BAAI/bge-m3`*: 1024 dimensions, 2.2GB RAM.
   4. *OpenAI / Google Remote Embedding APIs*.
 - **Decision**: **Option 1 (`intfloat/multilingual-e5-small`)**.
-- **Reasoning**: Superior handling of bilingual and non-English technical university materials. 384-dim keeps pgvector memory minimal. Runs at $>25\text{ chunks/sec}$ on CPU via ONNX Runtime without external API costs or rate limits.
-- **Trade-offs**: Requires `query: ` and `passage: ` prefixing.
+- **Reasoning**: Superior handling of bilingual (English and Bengali) technical university materials. 384-dim keeps pgvector memory minimal. Runs at $>25\text{ chunks/sec}$ on CPU via FastEmbed ONNX Runtime without external API costs or rate limits.
+- **Trade-offs**: Requires `"query: "` prefix for queries and `"passage: "` for chunks.
 - **Risks**: Model drift if upgraded; mitigated by storing `model_id` and `model_version` on embeddings.
 - **Revisiting Conditions**: If campus corpus requires native 8,000-token long-context embedding.
 
@@ -80,7 +80,7 @@
 ### ADR 06: Embedding Execution Environment
 - **Context**: Where should embedding vectors be computed?
 - **Options**:
-  1. *Backend Host Local Worker (ONNX Runtime / fastembed)*.
+  1. *Backend Host Local Worker (FastEmbed ONNX Runtime)*.
   2. *Remote Embedding API (OpenAI/Gemini)*.
   3. *Peer Community Pooling (Student laptops)*.
 - **Decision**: **Option 1 (Backend Host Local Worker)**.
@@ -95,10 +95,10 @@
 - **Context**: Vector persistence and indexing in PostgreSQL 17.12.
 - **Options**:
   1. *Option A: Standalone Vector Database (e.g. Pinecone, Qdrant)*.
-  2. *Option B: In-Database pgvector 0.8.2 in Supabase (`kb_chunk_embeddings`)*.
-  3. *Option C: Embedding column directly on `kb_document_chunks`*.
-- **Decision**: **Option B (pgvector in normalized `kb_chunk_embeddings` table)**.
-- **Reasoning**: Supabase PostgreSQL 17 already includes `vector 0.8.2`. Normalizing embeddings into a separate table allows re-indexing with a newer model without touching raw chunk text. Keeping vectors in PostgreSQL provides ACID transactions with document deletions.
+  2. *Option B: In-Database pgvector 0.8.2 in Supabase (`kb_chunk_embeddings`) with native core FTS*.
+  3. *Option C: Embedding column directly on `kb_document_chunks` with `pg_trgm`*.
+- **Decision**: **Option B (pgvector in normalized `kb_chunk_embeddings` table + native FTS)**.
+- **Reasoning**: Supabase PostgreSQL 17 already includes `vector 0.8.2`. Normalizing embeddings into a separate table allows re-indexing with a newer model without touching raw chunk text. Native PostgreSQL full-text search (`tsvector` + GIN) eliminates unnecessary third-party extensions like `pg_trgm`.
 - **Trade-offs**: Requires 1:1 join between chunks and embeddings.
 - **Risks**: Index building overhead; mitigated by HNSW scale threshold ($N \ge 20,000$).
 - **Revisiting Conditions**: If vector count exceeds 2 million records.
@@ -108,11 +108,11 @@
 ### ADR 08: Hybrid Search & Ranking Strategy
 - **Context**: Pure vector similarity search frequently misses exact algorithm acronyms, formulas, and course codes.
 - **Options**:
-  1. *Reciprocal Rank Fusion (RRF, $k=60$) combining pgvector and Full-Text Search*.
+  1. *Reciprocal Rank Fusion (RRF, candidate baseline $k=60, w_{vec}=0.6, w_{fts}=0.4$) combining pgvector and Full-Text Search*.
   2. *Pure Vector Search*.
   3. *Cross-Encoder Re-ranker (e.g. BGE-Reranker-Large)*.
 - **Decision**: **Option 1 (RRF with pgvector + FTS)**.
-- **Reasoning**: RRF combines semantic similarity with exact keyword matching scale-invariantly without requiring score calibration. Cross-encoders add $>200\text{ms}$ latency and high CPU load, which is unnecessary for university note retrieval.
+- **Reasoning**: RRF combines semantic similarity with exact keyword matching scale-invariantly without requiring score calibration. Baseline weights provide balanced recall, and will be fine-tuned via grid search in M4.4/M4.8.
 - **Trade-offs**: Executes two parallel queries in PostgreSQL.
 - **Risks**: None; executes in a single SQL function (`match_subject_chunks`) in $<25\text{ms}$.
 - **Revisiting Conditions**: If keyword retrieval precision drops below 75%.
@@ -136,11 +136,11 @@
 ### ADR 10: Citation & Evidence Snapshot Persistence
 - **Context**: How should evidence cited in assistant answers be stored?
 - **Options**:
-  1. *Immutable Snapshot Table (`chat_message_sources`)*.
+  1. *Immutable Snapshot Table (`chat_message_sources`) with 4-stage evidence taxonomy*.
   2. *Dynamic lookup of current chunks at render time*.
   3. *JSON blob embedded in message row*.
 - **Decision**: **Option 1 (Immutable Snapshot Table `chat_message_sources`)**.
-- **Reasoning**: Documents can be edited, re-indexed, or removed. A student viewing a 2-month-old answer must see the exact excerpt and page number that generated that answer. Relational rows allow individual source status inspection and access revocation filtering.
+- **Reasoning**: Documents can be edited, re-indexed, or removed. Storing explicit snapshots with `included_in_context` and `referenced_in_answer` booleans allows precise UI tab filtering ("Referenced in Answer" vs "All Considered Context") and preserves historical study integrity.
 - **Trade-offs**: Consumes additional relational storage ($\approx 1\text{KB}$ per citation).
 - **Risks**: Database growth; negligible for text excerpts.
 - **Revisiting Conditions**: Never.
@@ -150,12 +150,12 @@
 ### ADR 11: Source Access Revalidation & Revocation Fencing
 - **Context**: What happens when a student opens an old chat message citing a document that an administrator later archived or deleted?
 - **Options**:
-  1. *Server-Side Revalidation with Excerpt Masking*: Inspect document status; if archived/deleted, return masked placeholder.
+  1. *Server-Side Live Join Revalidation with Excerpt Masking*: Check live catalog status; if archived/deleted, return masked placeholder.
   2. *Permanent Unconditional Display*: Always show cached excerpt.
   3. *Delete entire historical chat message*.
-- **Decision**: **Option 1 (Server-Side Revalidation with Excerpt Masking)**.
-- **Reasoning**: Protects academic copyright and administrative moderation. Prevents students from using old chat logs as an unauthorized backdoor to view purged materials, while preserving conversation readability.
-- **Trade-offs**: Endpoint must join `kb_documents` to verify `is_archived = false`.
+- **Decision**: **Option 1 (Server-Side Live Join Revalidation with Excerpt Masking)**.
+- **Reasoning**: Protects academic copyright and administrative moderation. Uses an authoritative join predicate against `kb_documents`, `kb_topics`, and `kb_subjects`. Prevents unauthorized backdoors to purged materials while preserving conversation readability.
+- **Trade-offs**: Endpoint must join catalog tables.
 - **Risks**: None.
 - **Revisiting Conditions**: Never.
 
@@ -164,11 +164,11 @@
 ### ADR 12: Context-Window Budgeting Algorithm
 - **Context**: Models have finite context windows; chat history and retrieved passages must not overflow the provider limit.
 - **Options**:
-  1. *Deterministic Floor-and-Ceiling Formula with Priority Allocation*.
+  1. *Deterministic Server-Side Formula: $B_{avail} = C_{model} - (T_{out} + T_{sys} + T_{guard} + T_{safe})$*.
   2. *Frontend-supplied context budget*.
   3. *Naive arbitrary truncation*.
 - **Decision**: **Option 1 (Deterministic Server-Side Formula)**.
-- **Reasoning**: Server calculates $B_{avail} = C_{model} - (T_{out} + T_{sys} + T_{safe})$. Allocates user prompt first, caps evidence at 60% of remainder, and fits summary and sliding history into the rest. Prevents provider 422/context overflow errors.
+- **Reasoning**: Server calculates exact available budget, allocates prompt first, caps evidence at 60%, and fits summary and sliding history into remainder. Prevents provider 422/context overflow errors.
 - **Trade-offs**: When prompts are massive, older history is compacted.
 - **Risks**: Oversized prompts; rejected cleanly with HTTP 422.
 - **Revisiting Conditions**: If dynamic context compression models become viable.
@@ -178,13 +178,13 @@
 ### ADR 13: Long-History Compaction & Summarization
 - **Context**: Long academic study sessions exceed context windows if all turns are passed verbatim.
 - **Options**:
-  1. *Sliding Window ($K=6$) + Asynchronous Map-Reduce Summaries*.
+  1. *Sliding Window ($K=6$) + Concurrency-Safe Map-Reduce Summaries with Redis Mutex and Optimistic Versioning*.
   2. *Hard truncation (drop messages older than 5 turns)*.
   3. *Vector search over message history*.
-- **Decision**: **Option 1 (Sliding Window + Summaries)**.
-- **Reasoning**: Preserves immediate conversational flow (last 3 turns verbatim) while retaining historical context through a concise 250-word summary in `chat_conversation_summaries`. Original messages remain permanently preserved in `chat_messages`.
+- **Decision**: **Option 1 (Sliding Window + Concurrency-Safe Summaries)**.
+- **Reasoning**: Preserves immediate conversational flow (last 3 turns verbatim) while retaining historical context through a concise 250-word summary in `chat_conversation_summaries`. Optimistic version check on `compacted_through_sequence` prevents race conditions.
 - **Trade-offs**: Generates occasional background LLM summary requests.
-- **Risks**: Stale summaries; mitigated by versioned sequence tracking (`compacted_through_sequence`).
+- **Risks**: Stale summaries; eliminated by versioned sequence tracking and Redis mutex.
 - **Revisiting Conditions**: If conversations rarely exceed 6 turns.
 
 ---
@@ -192,10 +192,10 @@
 ### ADR 14: Message Generation State Machine
 - **Context**: Explicit lifecycle states for message generation.
 - **Options**:
-  1. *6-State Lifecycle*: `accepted` $\to$ `retrieving` $\to$ `preparing_context` $\to$ `streaming` $\to$ `completed` (or `cancelled` / `failed`).
+  1. *State Machine*: `accepted` $\to$ `waiting_admission` $\to$ `retrieving` $\to$ `preparing_context` $\to$ `streaming` $\to$ `completed` (or `cancelled` / `failed`).
   2. *Binary status*: `pending` / `completed`.
-- **Decision**: **Option 1 (6-State Lifecycle)**.
-- **Reasoning**: Allows granular observability, UI progress indicators (`Searching materials...`, `Generating answer...`), and distinct handling of client aborts (`cancelled`) vs system crashes (`failed`).
+- **Decision**: **Option 1 (State Machine)**.
+- **Reasoning**: Allows granular observability, UI progress indicators (`Waiting for slot...`, `Searching materials...`, `Generating answer...`), and distinct handling of client aborts (`cancelled`) vs system crashes (`failed`).
 - **Trade-offs**: Requires state updates across the generation lifecycle.
 - **Risks**: None.
 - **Revisiting Conditions**: Never.
@@ -216,15 +216,15 @@
 
 ---
 
-### ADR 16: Concurrency Governance & Rate Limiting
+### ADR 16: Concurrency Governance & Distributed Semaphores
 - **Context**: Preventing a single student or multiple tabs from monopolizing shared platform resources.
 - **Options**:
-  1. *Redis Distributed Semaphores (1 per conv, 2 per user, 10 global cloud)*.
+  1. *Redis Distributed Semaphores with UUID4 Lease Tokens and Atomic Lua Release Script*.
   2. *Unrestricted concurrent requests*.
   3. *PostgreSQL row locks*.
-- **Decision**: **Option 1 (Redis Distributed Semaphores)**.
-- **Reasoning**: Redis provides sub-millisecond atomic lease management with self-expiring TTLs (60s). Enforcing 1 active stream per conversation prevents race conditions in message sequence numbering.
-- **Trade-offs**: Requires active Redis connection (already running on port 6379).
+- **Decision**: **Option 1 (Redis Semaphores with Lua Release)**.
+- **Reasoning**: Redis provides sub-millisecond atomic lease management with self-expiring TTLs (60s). Checking token equality via Lua before deletion guarantees that a delayed worker will never accidentally delete a subsequent generation's lock.
+- **Trade-offs**: Requires active Redis connection (port 6379).
 - **Risks**: Redis failure; falls back to in-memory process locks.
 - **Revisiting Conditions**: If student user base expands past 1,000 active concurrent users.
 
@@ -233,25 +233,25 @@
 ### ADR 17: Generation Queue Architecture Selection
 - **Context**: Is a durable background queue (e.g. Celery / BullMQ) necessary for interactive chat?
 - **Options**:
-  1. *Bounded Direct Streaming with Redis Concurrency Semaphores*.
+  1. *Bounded Direct Streaming with Redis Admission Waiting (Max 30s)*.
   2. *Durable PostgreSQL / Celery Worker Queue*.
-- **Decision**: **Option 1 (Bounded Direct Streaming with Redis Semaphores)**.
-- **Reasoning**: Interactive AI chat requires instant Time-to-First-Token ($<1.5\text{s}$). Routing conversational requests through a durable asynchronous background queue adds IPC overhead, WebSocket synchronization complexity, and server cost for no benefit at the pilot scale of 30–100 students.
-- **Trade-offs**: Requests waiting $>30\text{s}$ for a slot are rejected with HTTP 429 rather than queued indefinitely.
-- **Risks**: None; college students prefer fast failover to waiting minutes in a queue.
+- **Decision**: **Option 1 (Bounded Direct Streaming with Admission Waiting)**.
+- **Reasoning**: Interactive AI chat requires instant Time-to-First-Token ($<1.5\text{s}$). When global capacity is saturated, the server emits `event: admission_waiting` and waits up to 30 seconds for a slot. If no slot frees, it fails fast with HTTP 429 rather than trapping students in an invisible backlog queue.
+- **Trade-offs**: Requests waiting $>30\text{s}$ are rejected cleanly.
+- **Risks**: None; students prefer actionable notices to silent delays.
 - **Revisiting Conditions**: If cloud providers impose strict 1-request-at-a-time rate limits.
 
 ---
 
-### ADR 18: Provider Fallback & Free-Tier Sharing Integrity
-- **Context**: Ensuring automatic provider fallback never violates RagBait's core privacy and sharing policy.
+### ADR 18: Provider Fallback & Private Local Ollama Bypass
+- **Context**: Ensuring automatic provider fallback respects user preferences and free-tier sharing integrity.
 - **Options**:
-  1. *Strict Preference Enclosure with Free-Tier Validation*: Fallback searches exclusively within matching verified credentials.
+  1. *Strict Preference Enclosure with Private Local Direct Loopback Bypass*.
   2. *Unrestricted Fallback (fallback to paid keys or local models)*.
-- **Decision**: **Option 1 (Strict Preference Enclosure)**.
-- **Reasoning**: Core project law: Paid keys and private local models are NEVER pooled or shared. In `auto` mode, fallback selects only from active, verified free-tier contributed credentials (`sharing_scope='community'`, `billing_tier='free_tier'`).
-- **Trade-offs**: If all contributed free-tier cloud keys are cooling down, generation fails rather than borrowing private keys.
-- **Risks**: None; absolute security boundary.
+- **Decision**: **Option 1 (Strict Preference Enclosure with Private Local Bypass)**.
+- **Reasoning**: Paid keys and private local models are NEVER pooled or shared. When `inference_preference = 'local'`, the browser streams directly from Ollama on `127.0.0.1:11434`, bypassing the global cloud concurrency semaphore completely and guaranteeing zero cloud API leakage.
+- **Trade-offs**: Cloud fallback selects only from active community free-tier credentials.
+- **Risks**: None; absolute security and privacy boundary.
 - **Revisiting Conditions**: Never.
 
 ---
@@ -273,7 +273,7 @@
 ### ADR 20: Golden Evaluation Dataset & Release Thresholds
 - **Context**: Establishing rigorous quantitative exit criteria for Phase 4.
 - **Options**:
-  1. *50-Question Manually Verified Golden Dataset across 11 Query Categories*.
+  1. *50-Question Manually Verified Golden Dataset across 11 Query Categories (Bilingual English/Bengali)*.
   2. *Ad-hoc manual smoke testing*.
 - **Decision**: **Option 1 (50-Question Golden Dataset)**.
 - **Reasoning**: Release certification requires empirical proof: Recall@5 $\ge 80\%$, Citation Validity = $100\%$, Abstention $\ge 90\%$, Zero cross-subject leakage.

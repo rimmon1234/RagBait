@@ -1,9 +1,9 @@
 # RagBait Phase 4 — API and Event Contracts
 
-**Document Version:** 1.0.0  
+**Document Version:** 1.1.0  
 **Phase:** Phase 4 — AI Study Assistant and Retrieval-Augmented Generation (RAG)  
 **Date:** November 22, 2026  
-**Status:** Approved API Specification  
+**Status:** Approved API Specification (Remediated Baseline)  
 
 ---
 
@@ -21,6 +21,8 @@ All Phase 4 conversational endpoints are mounted under `/api/v1/chat/` within th
 | `GET` | `/api/v1/chat/conversations/{id}/messages` | Paginated message history (cursor-based) | Conversation Owner |
 | `POST` | `/api/v1/chat/conversations/{id}/messages` | Post user prompt & stream assistant answer (SSE) | Conversation Owner + Entitled |
 | `POST` | `/api/v1/chat/conversations/{id}/messages/{msg_id}/cancel` | Abort active generation stream | Conversation Owner |
+| `POST` | `/api/v1/chat/conversations/{id}/messages/prepare-local` | Prepare prompt & hybrid context for local Ollama | Conversation Owner + Entitled |
+| `POST` | `/api/v1/chat/conversations/{id}/messages/finalize-local` | Reconcile citations & persist local completion | Conversation Owner |
 | `GET` | `/api/v1/chat/messages/{message_id}/sources` | Retrieve immutable Sources & Context evidence | Conversation Owner |
 | `POST` | `/api/v1/kb/admin/documents/{id}/reindex` | Trigger document re-chunking and re-embedding | Admin / Super Admin |
 
@@ -79,7 +81,7 @@ All Phase 4 conversational endpoints are mounted under `/api/v1/chat/` within th
 
 ## 3. Message & Streaming Endpoints
 
-### 3.1 Send Message and Stream Completion
+### 3.1 Send Message and Stream Completion (Cloud / Auto Mode)
 - **Route**: `POST /api/v1/chat/conversations/{id}/messages`
 - **Request Headers**:
   - `Accept: text/event-stream`
@@ -95,39 +97,99 @@ All Phase 4 conversational endpoints are mounted under `/api/v1/chat/` within th
 ```
 
 #### SSE Stream Protocol & Events
-The server opens an HTTP/1.1 or HTTP/2 Server-Sent Events stream emitting newline-delimited chunks:
+The server opens an HTTP Server-Sent Events stream emitting newline-delimited chunks:
 
-1. **`event: generation_started`**: Emitted when prompt validation, subject scoping, and admission reservation pass.
+1. **`event: admission_waiting`** (Emitted if global concurrency is saturated):
+```
+event: admission_waiting
+data: {"position":1,"estimated_wait_ms":3500,"message":"Platform concurrency reached. Waiting for next available generation slot..."}
+```
+
+2. **`event: generation_started`**: Emitted when prompt validation, subject scoping, and admission reservation pass.
 ```
 event: generation_started
 data: {"message_id":"m-8f7a6b5c","generation_request_id":"req-019283","model_id":"gemini-3.8-flash","provider_id":"gemini"}
 ```
 
-2. **`event: sources_identified`**: Emitted immediately upon hybrid search completion, alerting the UI to identified candidate sources before token generation begins.
+3. **`event: sources_identified`**: Emitted immediately upon hybrid search completion, alerting the UI to identified candidate sources before token generation begins.
 ```
 event: sources_identified
 data: {"sources":[{"citation_key":"S1","document_id":"d-123","document_title":"Silberschatz OS 10th Ed.pdf","page_number_start":142,"page_number_end":143}]}
 ```
 
-3. **`event: text_delta`**: Emitted repeatedly as completion tokens arrive from the upstream provider.
+4. **`event: text_delta`**: Emitted repeatedly as completion tokens arrive from the upstream provider.
 ```
 event: text_delta
 data: {"delta":"Round Robin (RR) is a preemptive CPU scheduling algorithm [S1]"}
 ```
 
-4. **`event: generation_completed`**: Emitted when generation finishes successfully.
+5. **`event: generation_completed`**: Emitted when generation finishes successfully.
 ```
 event: generation_completed
 data: {"message_id":"m-8f7a6b5c","finish_reason":"stop","token_usage":{"prompt_tokens":840,"completion_tokens":165,"total_tokens":1005}}
 ```
 
-5. **`event: generation_error`**: Emitted if generation fails mid-stream.
+6. **`event: generation_error`**: Emitted if generation fails mid-stream or times out.
 ```
 event: generation_error
 data: {"error_code":"PROVIDER_OVERLOADED","message":"Upstream provider rate limited; unable to complete response."}
 ```
 
-### 3.2 Cancel Generation
+### 3.2 Private Local Ollama Endpoints
+
+#### Prepare Local Generation
+- **Route**: `POST /api/v1/chat/conversations/{id}/messages/prepare-local`
+- **Request Body**:
+```json
+{
+  "content": "Explain paging and page faults with citations.",
+  "idempotency_key": "idem-local-01923"
+}
+```
+- **Success Response (200 OK)**:
+```json
+{
+  "message_id": "m-local-8f7a6b5c",
+  "conversation_id": "c1f88720-3b4c-4e89-8d75-8e7c10bcf22a",
+  "prompt": "<system_instructions>...</system_instructions>\n<study_context_evidence>...</study_context_evidence>\n<user_query>Explain paging and page faults with citations.</user_query>",
+  "sources": [
+    {
+      "citation_key": "S1",
+      "document_id": "d-1234-abcd",
+      "document_title": "Operating Systems Concepts.pdf",
+      "page_number_start": 180,
+      "page_number_end": 182,
+      "relevance_score": 0.892
+    }
+  ]
+}
+```
+
+#### Finalize Local Generation
+- **Route**: `POST /api/v1/chat/conversations/{id}/messages/finalize-local`
+- **Request Body**:
+```json
+{
+  "message_id": "m-local-8f7a6b5c",
+  "completion_text": "Paging is a memory management scheme that eliminates the need for contiguous allocation of physical memory [S1]...",
+  "finish_reason": "stop",
+  "token_usage": {
+    "prompt_tokens": 620,
+    "completion_tokens": 140,
+    "total_tokens": 760
+  }
+}
+```
+- **Success Response (200 OK)**:
+```json
+{
+  "message_id": "m-local-8f7a6b5c",
+  "status": "completed",
+  "citations_reconciled": 1
+}
+```
+
+### 3.3 Cancel Generation
 - **Route**: `POST /api/v1/chat/conversations/{id}/messages/{msg_id}/cancel`
 - **Success Response (200 OK)**:
 ```json
@@ -158,13 +220,15 @@ data: {"error_code":"PROVIDER_OVERLOADED","message":"Upstream provider rate limi
       "page_number_end": 143,
       "excerpt": "The Round-Robin (RR) scheduling algorithm is designed especially for timesharing systems. It is similar to FCFS scheduling, but preemption is added to enable the system to switch between processes. A small unit of time, called a time quantum or time slice, is defined...",
       "relevance_score": 0.884,
+      "included_in_context": true,
+      "referenced_in_answer": true,
       "is_available": true,
       "document_viewer_url": "/knowledge-base/document/d-1234-abcd?page=142"
     }
   ]
 }
 ```
-*Note on Access Revocation*: If the document has been archived by administrators since generation, `is_available` returns `false`, `excerpt` is masked with `"[Source Unavailable / Moderated by Admin]"`, and `document_viewer_url` returns `null`.
+*Note on Access Revocation*: If the document has been archived by administrators since generation, `is_available` returns `false`, `excerpt` is masked with `"[Source Unavailable — Document Archived or Moderated by Administrator]"`, and `document_viewer_url` returns `null`.
 
 ---
 
@@ -189,6 +253,8 @@ All Phase 4 API errors strictly adhere to the unified RagBait JSON error schema:
 - `SUBJECT_INACTIVE`: Subject is archived or disabled.
 - `CONVERSATION_NOT_FOUND`: Conversation does not exist or user lacks ownership.
 - `CONVERSATION_CONCURRENCY_LIMIT`: Active stream already in flight for this conversation (HTTP 409).
+- `USER_CONCURRENCY_LIMIT`: Student has reached maximum 2 concurrent streams across all tabs (HTTP 429).
+- `CONCURRENCY_TIMEOUT`: Request timed out waiting for a free generation slot after 30 seconds (HTTP 429).
 - `CHAT_CONTRIBUTION_REQUIRED`: Student account is approved but has not satisfied the M2 free-tier contribution policy (HTTP 403).
-- `PROMPT_BUDGET_EXCEEDED`: User prompt alone exceeds model context ceiling.
+- `PROMPT_BUDGET_EXCEEDED`: User prompt alone exceeds model context ceiling (HTTP 422).
 - `STREAM_CANCELLED_BY_CLIENT`: Client requested abortion.
