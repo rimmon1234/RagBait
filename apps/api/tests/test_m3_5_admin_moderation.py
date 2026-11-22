@@ -20,7 +20,7 @@ from app.core.config import settings
 from app.core.database import get_pool, init_db_pool
 from app.core.redis import init_redis
 from app.main import app
-from app.modules.knowledge_base import storage
+from app.modules.knowledge_base import job_repository, storage
 from tests.conftest import create_test_jwt
 
 CREATED_TEST_USERS: list[UUID] = []
@@ -760,3 +760,357 @@ async def test_admin_audit_history_recording():
         assert matching["actor_id"] == str(admin_id)
         assert matching["action"] == "kb.subject_create"
         assert matching["payload"]["name"] == sub_name
+
+
+# ==============================================================================
+# 8. Extraction Restoration Lifecycle & Worker Taxonomy Fencing Tests
+# ==============================================================================
+
+
+@pytest.mark.asyncio
+async def test_interrupted_extraction_archive_restore_and_retry_lifecycle():
+    """Verify archive -> interrupted job -> restore -> fresh job claim -> successful extraction."""
+    admin_id, admin_token = await create_user_helper(role="admin", status="approved")
+    student_id, student_token = await create_user_helper(role="user", status="approved")
+    transport = ASGITransport(app=app)
+
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        admin_headers = {"Authorization": f"Bearer {admin_token}"}
+        student_headers = {"Authorization": f"Bearer {student_token}"}
+
+        # 1. Setup taxonomy
+        sub_res = await client.post(
+            "/api/v1/kb/admin/subjects",
+            headers=admin_headers,
+            json={"name": "Lifecycle Subject", "slug": f"life-{uuid4().hex[:6]}", "icon_name": "BookOpen"},
+        )
+        assert sub_res.status_code == 201
+        sub_id = UUID(sub_res.json()["id"])
+        CREATED_TEST_SUBJECTS.append(sub_id)
+
+        top_res = await client.post(
+            f"/api/v1/kb/admin/subjects/{sub_id}/topics",
+            headers=admin_headers,
+            json={"name": "Lifecycle Topic", "slug": f"top-{uuid4().hex[:6]}"},
+        )
+        assert top_res.status_code == 201
+        top_id = UUID(top_res.json()["id"])
+
+        # 2. Setup document and job directly in DB
+        doc_id = uuid4()
+        job_id = uuid4()
+        storage_path = f"documents/{doc_id}/source.txt"
+        CREATED_STORAGE_PATHS.append(storage_path)
+
+        pool = get_pool()
+        async with pool.acquire() as conn:
+            await conn.execute(
+                """
+                INSERT INTO public.kb_documents (
+                    id, subject_id, topic_id, uploader_id, title, original_filename,
+                    storage_path, mime_type, file_size_bytes, upload_status, extraction_status, is_archived
+                )
+                VALUES ($1, $2, $3, $4, 'Lifecycle Doc', 'notes.txt', $5, 'text/plain', 500, 'uploaded', 'queued', false)
+                """,
+                doc_id,
+                sub_id,
+                top_id,
+                student_id,
+                storage_path,
+            )
+            await conn.execute(
+                """
+                INSERT INTO public.kb_extraction_jobs (
+                    id, document_id, status, scheduled_at, attempts, max_attempts, retry_count
+                )
+                VALUES ($1, $2, 'queued', timezone('utc'::text, now()), 0, 3, 0)
+                """,
+                job_id,
+                doc_id,
+            )
+
+        # 3. Worker claims job
+        worker_id = f"worker-{uuid4().hex[:6]}"
+        async with pool.acquire() as conn:
+            claimed = await job_repository.claim_next_job(conn, worker_id=worker_id, lease_ttl_seconds=60)
+            assert claimed is not None
+            assert claimed["job_id"] == job_id
+            assert claimed["lease_token"] is not None
+
+        # 4. Admin archives document while extraction was in-flight
+        archive_res = await client.post(
+            f"/api/v1/kb/admin/documents/{doc_id}/archive",
+            headers=admin_headers,
+            json={"reason": "Interrupted by moderation"},
+        )
+        assert archive_res.status_code == 200
+        archived_doc = archive_res.json()
+        assert archived_doc["is_archived"] is True
+        assert archived_doc["extraction_status"] == "failed"
+        assert archived_doc["error_code"] == "ARCHIVED_BY_ADMIN"
+
+        # Verify job was fenced and lease invalidated in DB
+        async with pool.acquire() as conn:
+            fenced_job = await conn.fetchrow(
+                "SELECT status, error_code, lease_token FROM public.kb_extraction_jobs WHERE id = $1",
+                job_id,
+            )
+            assert fenced_job["status"] == "failed"
+            assert fenced_job["error_code"] == "ARCHIVED_BY_ADMIN"
+            assert fenced_job["lease_token"] is None
+
+        # 5. Stale worker attempts to complete extraction -> MUST be rejected
+        async with pool.acquire() as conn:
+            stale_ok = await job_repository.complete_job_success(
+                conn=conn,
+                job_id=job_id,
+                document_id=doc_id,
+                worker_id=worker_id,
+                lease_token=claimed["lease_token"],
+                pages=[{"page_number": 1, "raw_text": "Lost", "character_count": 4, "word_count": 1, "has_text": True}],
+                has_any_text=True,
+            )
+            assert stale_ok is False
+
+        # 6. Admin restores document
+        restore_res = await client.post(
+            f"/api/v1/kb/admin/documents/{doc_id}/restore",
+            headers=admin_headers,
+            json={"reason": "Restoring after false positive"},
+        )
+        assert restore_res.status_code == 200
+        restored_doc = restore_res.json()
+        assert restored_doc["is_archived"] is False
+        assert restored_doc["extraction_status"] == "failed"
+
+        # 7. Admin retries the failed extraction job
+        retry_res = await client.post(
+            f"/api/v1/kb/admin/jobs/{job_id}/retry",
+            headers=admin_headers,
+            json={"reason": "Admin restarting extraction after restore"},
+        )
+        assert retry_res.status_code == 200
+        retried_job = retry_res.json()["job"]
+        assert retried_job["status"] == "queued"
+        assert retried_job["retry_count"] == 1
+        assert retried_job["retry_of_job_id"] == str(job_id)
+        new_job_id = UUID(retried_job["id"])
+
+        # 8. Worker claims fresh retried job
+        async with pool.acquire() as conn:
+            claimed_new = await job_repository.claim_next_job(conn, worker_id=worker_id, lease_ttl_seconds=60)
+            assert claimed_new is not None
+            assert claimed_new["job_id"] == new_job_id
+            assert claimed_new["lease_token"] is not None
+
+        # 9. Worker completes extraction successfully
+        async with pool.acquire() as conn:
+            completed_ok = await job_repository.complete_job_success(
+                conn=conn,
+                job_id=new_job_id,
+                document_id=doc_id,
+                worker_id=worker_id,
+                lease_token=claimed_new["lease_token"],
+                pages=[{"page_number": 1, "raw_text": "Extracted Content", "character_count": 17, "word_count": 2, "has_text": True}],
+                has_any_text=True,
+            )
+            assert completed_ok is True
+
+        # 10. Student can view pages
+        pages_res = await client.get(f"/api/v1/kb/documents/{doc_id}/pages", headers=student_headers)
+        assert pages_res.status_code == 200
+        assert pages_res.json()["total"] == 1
+        assert pages_res.json()["items"][0]["raw_text"] == "Extracted Content"
+
+
+@pytest.mark.asyncio
+async def test_worker_taxonomy_fencing_lifecycle():
+    """Verify worker does not claim or complete work under inactive taxonomy."""
+    admin_id, admin_token = await create_user_helper(role="admin", status="approved")
+    student_id, _ = await create_user_helper(role="user", status="approved")
+    transport = ASGITransport(app=app)
+
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        admin_headers = {"Authorization": f"Bearer {admin_token}"}
+
+        # Setup taxonomy
+        sub_res = await client.post(
+            "/api/v1/kb/admin/subjects",
+            headers=admin_headers,
+            json={"name": "Fence Subject", "slug": f"fence-{uuid4().hex[:6]}", "icon_name": "Layers"},
+        )
+        assert sub_res.status_code == 201
+        sub_id = UUID(sub_res.json()["id"])
+        CREATED_TEST_SUBJECTS.append(sub_id)
+
+        top_res = await client.post(
+            f"/api/v1/kb/admin/subjects/{sub_id}/topics",
+            headers=admin_headers,
+            json={"name": "Fence Topic", "slug": f"ftop-{uuid4().hex[:6]}"},
+        )
+        assert top_res.status_code == 201
+        top_id = UUID(top_res.json()["id"])
+
+        doc_id = uuid4()
+        job_id = uuid4()
+        storage_path = f"documents/{doc_id}/source.txt"
+        CREATED_STORAGE_PATHS.append(storage_path)
+
+        pool = get_pool()
+        async with pool.acquire() as conn:
+            await conn.execute(
+                """
+                INSERT INTO public.kb_documents (
+                    id, subject_id, topic_id, uploader_id, title, original_filename,
+                    storage_path, mime_type, file_size_bytes, upload_status, extraction_status, is_archived
+                )
+                VALUES ($1, $2, $3, $4, 'Fenced Doc', 'notes.txt', $5, 'text/plain', 500, 'uploaded', 'queued', false)
+                """,
+                doc_id,
+                sub_id,
+                top_id,
+                student_id,
+                storage_path,
+            )
+            await conn.execute(
+                """
+                INSERT INTO public.kb_extraction_jobs (
+                    id, document_id, status, scheduled_at, attempts, max_attempts, retry_count
+                )
+                VALUES ($1, $2, 'queued', timezone('utc'::text, now()), 0, 3, 0)
+                """,
+                job_id,
+                doc_id,
+            )
+
+        worker_id = f"fence-worker-{uuid4().hex[:6]}"
+
+        # 1. Archive topic -> Worker cannot claim
+        await client.post(f"/api/v1/kb/admin/topics/{top_id}/archive", headers=admin_headers)
+        async with pool.acquire() as conn:
+            claim_attempt = await job_repository.claim_next_job(conn, worker_id=worker_id, lease_ttl_seconds=60)
+            assert claim_attempt is None
+
+        # 2. Restore topic, archive subject -> Worker still cannot claim
+        await client.post(f"/api/v1/kb/admin/topics/{top_id}/restore", headers=admin_headers)
+        await client.post(f"/api/v1/kb/admin/subjects/{sub_id}/archive", headers=admin_headers)
+        async with pool.acquire() as conn:
+            claim_attempt = await job_repository.claim_next_job(conn, worker_id=worker_id, lease_ttl_seconds=60)
+            assert claim_attempt is None
+
+        # 3. Restore subject -> Worker can now claim
+        await client.post(f"/api/v1/kb/admin/subjects/{sub_id}/restore", headers=admin_headers)
+        async with pool.acquire() as conn:
+            claimed = await job_repository.claim_next_job(conn, worker_id=worker_id, lease_ttl_seconds=60)
+            assert claimed is not None
+            assert claimed["job_id"] == job_id
+
+        # 4. Inactivate topic while job is processing -> renew_job_lease fails
+        await client.post(f"/api/v1/kb/admin/topics/{top_id}/archive", headers=admin_headers)
+        async with pool.acquire() as conn:
+            renew_ok = await job_repository.renew_job_lease(
+                conn, job_id=job_id, worker_id=worker_id, lease_token=claimed["lease_token"], lease_ttl_seconds=60
+            )
+            assert renew_ok is False
+
+            # complete_job_success also fails
+            complete_ok = await job_repository.complete_job_success(
+                conn,
+                job_id=job_id,
+                document_id=doc_id,
+                worker_id=worker_id,
+                lease_token=claimed["lease_token"],
+                pages=[{"page_number": 1, "raw_text": "Fenced", "character_count": 6, "word_count": 1, "has_text": True}],
+                has_any_text=True,
+            )
+            assert complete_ok is False
+
+        # 5. Restore topic -> renew_job_lease and complete_job_success succeed
+        await client.post(f"/api/v1/kb/admin/topics/{top_id}/restore", headers=admin_headers)
+        async with pool.acquire() as conn:
+            renew_ok = await job_repository.renew_job_lease(
+                conn, job_id=job_id, worker_id=worker_id, lease_token=claimed["lease_token"], lease_ttl_seconds=60
+            )
+            assert renew_ok is True
+
+            complete_ok = await job_repository.complete_job_success(
+                conn,
+                job_id=job_id,
+                document_id=doc_id,
+                worker_id=worker_id,
+                lease_token=claimed["lease_token"],
+                pages=[{"page_number": 1, "raw_text": "Fenced Now Ok", "character_count": 13, "word_count": 3, "has_text": True}],
+                has_any_text=True,
+            )
+            assert complete_ok is True
+
+
+@pytest.mark.asyncio
+async def test_uploader_pending_visibility_and_taxonomy_enforcement():
+    """Verify approved uploader can view own pending document, other students cannot, and inactive taxonomy blocks."""
+    admin_id, admin_token = await create_user_helper(role="admin", status="approved")
+    uploader_id, uploader_token = await create_user_helper(role="user", status="approved")
+    other_id, other_token = await create_user_helper(role="user", status="approved")
+    transport = ASGITransport(app=app)
+
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        admin_headers = {"Authorization": f"Bearer {admin_token}"}
+        uploader_headers = {"Authorization": f"Bearer {uploader_token}"}
+        other_headers = {"Authorization": f"Bearer {other_token}"}
+
+        # Setup taxonomy
+        sub_res = await client.post(
+            "/api/v1/kb/admin/subjects",
+            headers=admin_headers,
+            json={"name": "Uploader Vis Subject", "slug": f"uvis-{uuid4().hex[:6]}", "icon_name": "Bookmark"},
+        )
+        assert sub_res.status_code == 201
+        sub_id = UUID(sub_res.json()["id"])
+        CREATED_TEST_SUBJECTS.append(sub_id)
+
+        top_res = await client.post(
+            f"/api/v1/kb/admin/subjects/{sub_id}/topics",
+            headers=admin_headers,
+            json={"name": "Uploader Vis Topic", "slug": f"utop-{uuid4().hex[:6]}"},
+        )
+        assert top_res.status_code == 201
+        top_id = UUID(top_res.json()["id"])
+
+        # Create upload intent by uploader
+        intent_res = await client.post(
+            "/api/v1/kb/documents/upload-intent",
+            headers=uploader_headers,
+            json={
+                "subject_id": str(sub_id),
+                "topic_id": str(top_id),
+                "title": "Pending Upload Note",
+                "original_filename": "note.txt",
+                "mime_type": "text/plain",
+                "file_size_bytes": 100,
+            },
+        )
+        assert intent_res.status_code == 201
+        doc_id = UUID(intent_res.json()["document_id"])
+
+        # 1. Uploader can view own pending_upload document
+        doc_res = await client.get(f"/api/v1/kb/documents/{doc_id}", headers=uploader_headers)
+        assert doc_res.status_code == 200
+        assert doc_res.json()["upload_status"] == "pending_upload"
+
+        # 2. Other student cannot view uploader's pending document -> 404
+        other_res = await client.get(f"/api/v1/kb/documents/{doc_id}", headers=other_headers)
+        assert other_res.status_code == 404
+
+        # 3. Inactivate topic -> uploader can no longer view own pending document -> 404
+        await client.post(f"/api/v1/kb/admin/topics/{top_id}/archive", headers=admin_headers)
+        doc_res_archived = await client.get(f"/api/v1/kb/documents/{doc_id}", headers=uploader_headers)
+        assert doc_res_archived.status_code == 404
+
+        # 4. Inactive taxonomy also prevents confirmation
+        confirm_res = await client.post(
+            f"/api/v1/kb/documents/{doc_id}/confirm-upload",
+            headers=uploader_headers,
+            json={"file_size_bytes": 100},
+        )
+        assert confirm_res.status_code == 404
+

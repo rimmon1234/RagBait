@@ -16,16 +16,16 @@ import pytest
 from pypdf import PdfReader, PdfWriter
 
 from app.core.config import settings
-from app.core.database import close_db_pool, get_pool, init_db_pool
+from app.core.database import get_pool, init_db_pool
 from app.core.dependencies import get_current_profile, get_current_user
-from app.core.redis import close_redis, init_redis
+from app.core.redis import init_redis
 from app.core.security import AuthenticatedUser
 from app.main import app
 from app.modules.knowledge_base import storage
 from app.modules.knowledge_base.worker import KnowledgeBaseExtractionWorker
 from app.modules.knowledge_base.worker_config import WorkerSettings
 from app.modules.users.schemas import ApprovalStatus, UserProfile, UserRole
-from tests.conftest import create_test_jwt, make_test_profile
+from tests.conftest import create_test_jwt
 
 CREATED_STORAGE_PATHS: list[str] = []
 CREATED_TEST_USERS: list[UUID] = []

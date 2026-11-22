@@ -40,12 +40,16 @@ async def claim_next_job(
                 d.extraction_version
             FROM public.kb_documents d
             JOIN public.kb_extraction_jobs j ON j.document_id = d.id
+            JOIN public.kb_topics t ON t.id = d.topic_id
+            JOIN public.kb_subjects s ON s.id = t.subject_id
             WHERE (
                 (j.status = 'queued' AND j.scheduled_at <= timezone('utc'::text, now()))
                 OR (j.status = 'processing' AND j.locked_until < timezone('utc'::text, now()))
             )
             AND d.upload_status = 'uploaded'
             AND d.is_archived = false
+            AND t.is_active = true
+            AND s.is_active = true
             AND j.attempts < j.max_attempts
             ORDER BY j.scheduled_at ASC
             LIMIT 1
@@ -106,6 +110,8 @@ async def renew_job_lease(
         SET locked_until = timezone('utc'::text, now()) + ($4 || ' seconds')::interval,
             updated_at = timezone('utc'::text, now())
         FROM public.kb_documents d
+        JOIN public.kb_topics t ON t.id = d.topic_id
+        JOIN public.kb_subjects s ON s.id = t.subject_id
         WHERE j.id = $1
           AND j.worker_id = $2
           AND j.lease_token = $3
@@ -113,6 +119,8 @@ async def renew_job_lease(
           AND j.document_id = d.id
           AND d.upload_status = 'uploaded'
           AND d.is_archived = false
+          AND t.is_active = true
+          AND s.is_active = true
         RETURNING j.id;
         """,
         job_id,
@@ -146,16 +154,25 @@ async def complete_job_success(
         # 1. Lock document first to maintain strict lock ordering with deletion
         doc = await conn.fetchrow(
             """
-            SELECT id, upload_status, is_archived, extraction_version
-            FROM public.kb_documents
-            WHERE id = $1
-            FOR UPDATE;
+            SELECT d.id, d.upload_status, d.is_archived, d.extraction_version,
+                   t.is_active AS topic_active, s.is_active AS subject_active
+            FROM public.kb_documents d
+            JOIN public.kb_topics t ON t.id = d.topic_id
+            JOIN public.kb_subjects s ON s.id = t.subject_id
+            WHERE d.id = $1
+            FOR UPDATE OF d;
             """,
             document_id,
         )
-        if not doc or doc["upload_status"] != "uploaded" or doc["is_archived"]:
+        if (
+            not doc
+            or doc["upload_status"] != "uploaded"
+            or doc["is_archived"]
+            or not doc["topic_active"]
+            or not doc["subject_active"]
+        ):
             logger.warning(
-                f"Document {document_id} was deleted/archived during processing. Aborting completion."
+                f"Document {document_id} was deleted/archived or taxonomy inactive during processing. Aborting completion."
             )
             return False
 

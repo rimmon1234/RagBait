@@ -190,6 +190,12 @@ class KBService:
 
         # 3. Taxonomy hierarchy integrity check
         async with get_admin_db_session() as conn:
+            subject = await repository.get_subject_by_id(conn, req.subject_id)
+            if not subject or not subject["is_active"]:
+                raise NotFoundError(
+                    f"Subject '{req.subject_id}' not found or inactive.",
+                    code="SUBJECT_NOT_FOUND",
+                )
             topic = await repository.get_topic_by_id(conn, req.topic_id)
             if not topic or not topic["is_active"]:
                 raise NotFoundError(
@@ -259,6 +265,25 @@ class KBService:
                 "You are not authorized to confirm this document.",
                 code="UNAUTHORIZED_CONFIRMATION",
             )
+
+        # Non-admin check: parent subject and topic must both be active
+        if not is_admin:
+            async with get_admin_db_session() as conn:
+                tax = await conn.fetchrow(
+                    """
+                    SELECT s.is_active AS subject_active, t.is_active AS topic_active
+                    FROM public.kb_topics t
+                    JOIN public.kb_subjects s ON s.id = t.subject_id
+                    WHERE t.id = $1 AND s.id = $2
+                    """,
+                    doc["topic_id"],
+                    doc["subject_id"],
+                )
+            if not tax or not tax["subject_active"] or not tax["topic_active"]:
+                raise NotFoundError(
+                    f"Document '{document_id}' belongs to an inactive topic or subject.",
+                    code="DOCUMENT_NOT_FOUND",
+                )
 
         # Idempotent confirmation if already uploaded
         if doc["upload_status"] == "uploaded":

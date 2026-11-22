@@ -44,6 +44,7 @@ RETRYABLE_ERROR_CODES = {
     "WORKER_CRASH",
     "INFRASTRUCTURE_ERROR",
     "EXTRACTION_FAILED",
+    "ARCHIVED_BY_ADMIN",
 }
 
 PERMANENT_ERROR_CODES = {
@@ -124,30 +125,31 @@ class KBAdminService:
                 )
 
             subject_id = uuid4()
-            created = await admin_repository.create_subject(
-                conn=conn,
-                subject_id=subject_id,
-                name=clean_name,
-                slug=req.slug,
-                description=req.description,
-                icon_name=req.icon_name,
-                display_order=req.display_order,
-                created_by=user.id,
-            )
+            async with conn.transaction():
+                created = await admin_repository.create_subject(
+                    conn=conn,
+                    subject_id=subject_id,
+                    name=clean_name,
+                    slug=req.slug,
+                    description=req.description,
+                    icon_name=req.icon_name,
+                    display_order=req.display_order,
+                    created_by=user.id,
+                )
 
-            await admin_repository.insert_admin_audit_log(
-                conn=conn,
-                actor_id=user.id,
-                action="kb.subject_create",
-                target_type="kb_subject",
-                target_id=subject_id,
-                payload={
-                    "name": clean_name,
-                    "slug": req.slug,
-                    "icon_name": req.icon_name,
-                    "display_order": req.display_order,
-                },
-            )
+                await admin_repository.insert_admin_audit_log(
+                    conn=conn,
+                    actor_id=user.id,
+                    action="kb.subject_create",
+                    target_type="kb_subject",
+                    target_id=subject_id,
+                    payload={
+                        "name": clean_name,
+                        "slug": req.slug,
+                        "icon_name": req.icon_name,
+                        "display_order": req.display_order,
+                    },
+                )
 
         return AdminSubjectItem.model_validate(created)
 
@@ -179,35 +181,36 @@ class KBAdminService:
                         code="SUBJECT_SLUG_EXISTS",
                     )
 
-            updated = await admin_repository.update_subject(
-                conn=conn,
-                subject_id=subject_id,
-                name=clean_name,
-                slug=req.slug,
-                description=req.description,
-                icon_name=req.icon_name,
-                display_order=req.display_order,
-            )
+            async with conn.transaction():
+                updated = await admin_repository.update_subject(
+                    conn=conn,
+                    subject_id=subject_id,
+                    name=clean_name,
+                    slug=req.slug,
+                    description=req.description,
+                    icon_name=req.icon_name,
+                    display_order=req.display_order,
+                )
 
-            await admin_repository.insert_admin_audit_log(
-                conn=conn,
-                actor_id=user.id,
-                action="kb.subject_update",
-                target_type="kb_subject",
-                target_id=subject_id,
-                payload={
-                    "changes": {
-                        k: v
-                        for k, v in {
-                            "name": clean_name,
-                            "slug": req.slug,
-                            "icon_name": req.icon_name,
-                            "display_order": req.display_order,
-                        }.items()
-                        if v is not None
-                    }
-                },
-            )
+                await admin_repository.insert_admin_audit_log(
+                    conn=conn,
+                    actor_id=user.id,
+                    action="kb.subject_update",
+                    target_type="kb_subject",
+                    target_id=subject_id,
+                    payload={
+                        "changes": {
+                            k: v
+                            for k, v in {
+                                "name": clean_name,
+                                "slug": req.slug,
+                                "icon_name": req.icon_name,
+                                "display_order": req.display_order,
+                            }.items()
+                            if v is not None
+                        }
+                    },
+                )
 
         return AdminSubjectItem.model_validate(updated)
 
@@ -219,17 +222,18 @@ class KBAdminService:
             if not existing:
                 raise NotFoundError(f"Subject '{subject_id}' not found.", code="SUBJECT_NOT_FOUND")
 
-            updated = await admin_repository.set_subject_active_status(
-                conn, subject_id, is_active=False
-            )
-            await admin_repository.insert_admin_audit_log(
-                conn=conn,
-                actor_id=user.id,
-                action="kb.subject_archive",
-                target_type="kb_subject",
-                target_id=subject_id,
-                payload={"name": existing["name"], "slug": existing["slug"]},
-            )
+            async with conn.transaction():
+                updated = await admin_repository.set_subject_active_status(
+                    conn, subject_id, is_active=False
+                )
+                await admin_repository.insert_admin_audit_log(
+                    conn=conn,
+                    actor_id=user.id,
+                    action="kb.subject_archive",
+                    target_type="kb_subject",
+                    target_id=subject_id,
+                    payload={"name": existing["name"], "slug": existing["slug"]},
+                )
 
         return AdminSubjectItem.model_validate(updated)
 
@@ -241,17 +245,18 @@ class KBAdminService:
             if not existing:
                 raise NotFoundError(f"Subject '{subject_id}' not found.", code="SUBJECT_NOT_FOUND")
 
-            updated = await admin_repository.set_subject_active_status(
-                conn, subject_id, is_active=True
-            )
-            await admin_repository.insert_admin_audit_log(
-                conn=conn,
-                actor_id=user.id,
-                action="kb.subject_restore",
-                target_type="kb_subject",
-                target_id=subject_id,
-                payload={"name": existing["name"], "slug": existing["slug"]},
-            )
+            async with conn.transaction():
+                updated = await admin_repository.set_subject_active_status(
+                    conn, subject_id, is_active=True
+                )
+                await admin_repository.insert_admin_audit_log(
+                    conn=conn,
+                    actor_id=user.id,
+                    action="kb.subject_restore",
+                    target_type="kb_subject",
+                    target_id=subject_id,
+                    payload={"name": existing["name"], "slug": existing["slug"]},
+                )
 
         return AdminSubjectItem.model_validate(updated)
 
@@ -298,30 +303,31 @@ class KBAdminService:
                 )
 
             topic_id = uuid4()
-            await admin_repository.create_topic(
-                conn=conn,
-                topic_id=topic_id,
-                subject_id=subject_id,
-                name=clean_name,
-                slug=req.slug,
-                description=req.description,
-                display_order=req.display_order,
-                created_by=user.id,
-            )
+            async with conn.transaction():
+                await admin_repository.create_topic(
+                    conn=conn,
+                    topic_id=topic_id,
+                    subject_id=subject_id,
+                    name=clean_name,
+                    slug=req.slug,
+                    description=req.description,
+                    display_order=req.display_order,
+                    created_by=user.id,
+                )
 
-            await admin_repository.insert_admin_audit_log(
-                conn=conn,
-                actor_id=user.id,
-                action="kb.topic_create",
-                target_type="kb_topic",
-                target_id=topic_id,
-                payload={
-                    "subject_id": str(subject_id),
-                    "name": clean_name,
-                    "slug": req.slug,
-                    "display_order": req.display_order,
-                },
-            )
+                await admin_repository.insert_admin_audit_log(
+                    conn=conn,
+                    actor_id=user.id,
+                    action="kb.topic_create",
+                    target_type="kb_topic",
+                    target_id=topic_id,
+                    payload={
+                        "subject_id": str(subject_id),
+                        "name": clean_name,
+                        "slug": req.slug,
+                        "display_order": req.display_order,
+                    },
+                )
 
         # Re-fetch full item with subject metadata
         return await KBAdminService.get_topic_detail(topic_id)
@@ -357,33 +363,34 @@ class KBAdminService:
                         code="TOPIC_SLUG_EXISTS",
                     )
 
-            await admin_repository.update_topic(
-                conn=conn,
-                topic_id=topic_id,
-                name=clean_name,
-                slug=req.slug,
-                description=req.description,
-                display_order=req.display_order,
-            )
+            async with conn.transaction():
+                await admin_repository.update_topic(
+                    conn=conn,
+                    topic_id=topic_id,
+                    name=clean_name,
+                    slug=req.slug,
+                    description=req.description,
+                    display_order=req.display_order,
+                )
 
-            await admin_repository.insert_admin_audit_log(
-                conn=conn,
-                actor_id=user.id,
-                action="kb.topic_update",
-                target_type="kb_topic",
-                target_id=topic_id,
-                payload={
-                    "changes": {
-                        k: v
-                        for k, v in {
-                            "name": clean_name,
-                            "slug": req.slug,
-                            "display_order": req.display_order,
-                        }.items()
-                        if v is not None
-                    }
-                },
-            )
+                await admin_repository.insert_admin_audit_log(
+                    conn=conn,
+                    actor_id=user.id,
+                    action="kb.topic_update",
+                    target_type="kb_topic",
+                    target_id=topic_id,
+                    payload={
+                        "changes": {
+                            k: v
+                            for k, v in {
+                                "name": clean_name,
+                                "slug": req.slug,
+                                "display_order": req.display_order,
+                            }.items()
+                            if v is not None
+                        }
+                    },
+                )
 
         return await KBAdminService.get_topic_detail(topic_id)
 
@@ -397,26 +404,27 @@ class KBAdminService:
             if not existing:
                 raise NotFoundError(f"Topic '{topic_id}' not found.", code="TOPIC_NOT_FOUND")
 
-            await admin_repository.update_topic(
-                conn=conn,
-                topic_id=topic_id,
-                name=None,
-                slug=None,
-                description=None,
-                display_order=req.display_order,
-            )
+            async with conn.transaction():
+                await admin_repository.update_topic(
+                    conn=conn,
+                    topic_id=topic_id,
+                    name=None,
+                    slug=None,
+                    description=None,
+                    display_order=req.display_order,
+                )
 
-            await admin_repository.insert_admin_audit_log(
-                conn=conn,
-                actor_id=user.id,
-                action="kb.topic_reorder",
-                target_type="kb_topic",
-                target_id=topic_id,
-                payload={
-                    "old_display_order": existing["display_order"],
-                    "new_display_order": req.display_order,
-                },
-            )
+                await admin_repository.insert_admin_audit_log(
+                    conn=conn,
+                    actor_id=user.id,
+                    action="kb.topic_reorder",
+                    target_type="kb_topic",
+                    target_id=topic_id,
+                    payload={
+                        "old_display_order": existing["display_order"],
+                        "new_display_order": req.display_order,
+                    },
+                )
 
         return await KBAdminService.get_topic_detail(topic_id)
 
@@ -428,15 +436,16 @@ class KBAdminService:
             if not existing:
                 raise NotFoundError(f"Topic '{topic_id}' not found.", code="TOPIC_NOT_FOUND")
 
-            await admin_repository.set_topic_active_status(conn, topic_id, is_active=False)
-            await admin_repository.insert_admin_audit_log(
-                conn=conn,
-                actor_id=user.id,
-                action="kb.topic_archive",
-                target_type="kb_topic",
-                target_id=topic_id,
-                payload={"name": existing["name"], "slug": existing["slug"]},
-            )
+            async with conn.transaction():
+                await admin_repository.set_topic_active_status(conn, topic_id, is_active=False)
+                await admin_repository.insert_admin_audit_log(
+                    conn=conn,
+                    actor_id=user.id,
+                    action="kb.topic_archive",
+                    target_type="kb_topic",
+                    target_id=topic_id,
+                    payload={"name": existing["name"], "slug": existing["slug"]},
+                )
 
         return await KBAdminService.get_topic_detail(topic_id)
 
@@ -456,15 +465,16 @@ class KBAdminService:
                     code="PARENT_SUBJECT_ARCHIVED",
                 )
 
-            await admin_repository.set_topic_active_status(conn, topic_id, is_active=True)
-            await admin_repository.insert_admin_audit_log(
-                conn=conn,
-                actor_id=user.id,
-                action="kb.topic_restore",
-                target_type="kb_topic",
-                target_id=topic_id,
-                payload={"name": existing["name"], "slug": existing["slug"]},
-            )
+            async with conn.transaction():
+                await admin_repository.set_topic_active_status(conn, topic_id, is_active=True)
+                await admin_repository.insert_admin_audit_log(
+                    conn=conn,
+                    actor_id=user.id,
+                    action="kb.topic_restore",
+                    target_type="kb_topic",
+                    target_id=topic_id,
+                    payload={"name": existing["name"], "slug": existing["slug"]},
+                )
 
         return await KBAdminService.get_topic_detail(topic_id)
 
@@ -569,16 +579,30 @@ class KBAdminService:
                         active_job["id"],
                     )
 
-                # Set document archived
-                await conn.execute(
-                    """
-                    UPDATE public.kb_documents
-                    SET is_archived = true,
-                        updated_at = timezone('utc'::text, now())
-                    WHERE id = $1
-                    """,
-                    document_id,
-                )
+                # Set document archived; if active job was fenced, update extraction_status to failed
+                if active_job:
+                    await conn.execute(
+                        """
+                        UPDATE public.kb_documents
+                        SET is_archived = true,
+                            extraction_status = 'failed',
+                            error_code = 'ARCHIVED_BY_ADMIN',
+                            error_message = 'Extraction interrupted: document was archived by administrator.',
+                            updated_at = timezone('utc'::text, now())
+                        WHERE id = $1
+                        """,
+                        document_id,
+                    )
+                else:
+                    await conn.execute(
+                        """
+                        UPDATE public.kb_documents
+                        SET is_archived = true,
+                            updated_at = timezone('utc'::text, now())
+                        WHERE id = $1
+                        """,
+                        document_id,
+                    )
 
                 # Record audit log within the same transaction
                 await admin_repository.insert_admin_audit_log(
@@ -693,20 +717,21 @@ class KBAdminService:
 
         # 4. Finalize deletion: set upload_status = 'deleted', is_archived = true
         async with get_admin_db_session() as conn:
-            await repository.finalize_document_deletion(conn, document_id)
+            async with conn.transaction():
+                await repository.finalize_document_deletion(conn, document_id)
 
-            await admin_repository.insert_admin_audit_log(
-                conn=conn,
-                actor_id=user.id,
-                action="kb.document_delete",
-                target_type="kb_document",
-                target_id=document_id,
-                payload={
-                    "title": transitioned["title"],
-                    "storage_path": transitioned["storage_path"],
-                    "reason": clean_reason,
-                },
-            )
+                await admin_repository.insert_admin_audit_log(
+                    conn=conn,
+                    actor_id=user.id,
+                    action="kb.document_delete",
+                    target_type="kb_document",
+                    target_id=document_id,
+                    payload={
+                        "title": transitioned["title"],
+                        "storage_path": transitioned["storage_path"],
+                        "reason": clean_reason,
+                    },
+                )
 
     # --------------------------------------------------------------------------
     # Extraction Jobs & Retry
