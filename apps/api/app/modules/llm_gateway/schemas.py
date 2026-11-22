@@ -2,7 +2,7 @@
 
 from datetime import datetime
 from typing import Any, Literal
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from pydantic import BaseModel, Field, model_validator
 
@@ -227,12 +227,29 @@ class ChatCompletionRequest(BaseModel):
     messages: list[ChatMessage] = Field(..., min_length=1, max_length=100)
     params: GenerationParams = Field(default_factory=GenerationParams)
     stream: bool = Field(default=True, description="Whether to stream response via SSE")
-    idempotency_key: str = Field(..., min_length=4, max_length=128)
+    idempotency_key: str = Field(
+        default_factory=lambda: f"req-{uuid4().hex}",
+        min_length=4,
+        max_length=128,
+        description="Unique idempotency key to prevent duplicate charges and reservations",
+    )
 
     @model_validator(mode="before")
     @classmethod
     def reconcile_routing_fields(cls, data: Any) -> Any:
         if isinstance(data, dict):
+            # Reconcile idempotency_key if missing or empty
+            if not data.get("idempotency_key"):
+                data["idempotency_key"] = f"req-{uuid4().hex}"
+
+            # Reconcile temperature into params if passed at root
+            if "temperature" in data:
+                temp_val = data["temperature"]
+                if "params" not in data or not isinstance(data.get("params"), dict):
+                    data["params"] = {"temperature": temp_val}
+                elif "temperature" not in data["params"]:
+                    data["params"]["temperature"] = temp_val
+
             # Reconcile model and model_id
             if not data.get("model_id") and data.get("model"):
                 data["model_id"] = data["model"]

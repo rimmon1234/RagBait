@@ -21,6 +21,7 @@
 | **BUG-09** | Testing / Database | `supabase/tests/m3_1_knowledge_base_test.sql` | Fixed 11 failing pgTAP subtests caused by test fixture collisions against pre-existing seed data. Scoped test assertions to isolated test fixture UUIDs. | **RESOLVED** |
 | **BUG-10** | Code Quality | `apps/api/app`, `apps/web` | Cleaned up Mypy strict type diagnostics (0 errors across 96 backend files) and TypeScript compiler diagnostics (0 errors). | **RESOLVED** |
 | **BUG-11** | Frontend / API | `credentials/page.tsx`, `credentials/schemas.py`, `types/index.ts` | Fixed credentials page crash caused by JSON schema key divergence: backend returned `items` while frontend expected `credentials`, making state `undefined` and throwing `Cannot read properties of undefined (reading 'length')`. Added dual-compatibility computed fields and resilient array unpacking. | **RESOLVED** |
+| **BUG-12** | Routing / Gateway | `routing-client.ts`, `llm_gateway/schemas.py`, `routing/executor.py`, `admission/service.py` | Fixed "Error during routed inference: Request failed with status 422". Root cause: `idempotency_key` was required by `ChatCompletionRequest` but omitted by frontend client; root `temperature` was unmapped. Also fixed upstream model resolution where dynamically returned models (e.g. `nvidia/nemotron-...` via OpenRouter) threw 404 in reservation settlement by ensuring fallback to the registered model ID. | **RESOLVED** |
 
 ---
 

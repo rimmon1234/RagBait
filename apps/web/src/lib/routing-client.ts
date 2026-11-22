@@ -18,6 +18,7 @@ export interface StreamChatCompletionParams {
   model?: string;
   temperature?: number;
   community_opt_in?: boolean;
+  idempotency_key?: string;
 }
 
 export interface RouteHeaders {
@@ -28,9 +29,13 @@ export interface RouteHeaders {
 }
 
 export async function previewRoute(params: RoutePreviewParams): Promise<RoutePreviewResponse> {
+  const idempotencyKey = `prev-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`;
   return fetchWithAuth<RoutePreviewResponse>("/api/v1/routing/preview", {
     method: "POST",
-    body: JSON.stringify(params),
+    body: JSON.stringify({
+      ...params,
+      idempotency_key: idempotencyKey,
+    }),
   });
 }
 
@@ -60,6 +65,9 @@ export async function streamChatCompletion(
     headers.set("Authorization", `Bearer ${session.access_token}`);
   }
 
+  const idempotencyKey =
+    params.idempotency_key || `req-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`;
+
   let response: Response;
   try {
     response = await fetch(url, {
@@ -67,7 +75,11 @@ export async function streamChatCompletion(
       headers,
       body: JSON.stringify({
         ...params,
+        idempotency_key: idempotencyKey,
         stream: true,
+        params: {
+          temperature: params.temperature ?? 0.7,
+        },
       }),
       signal: options?.signal,
     });
@@ -91,7 +103,19 @@ export async function streamChatCompletion(
     try {
       const errJson = await response.json();
       if (errJson.detail) {
-        errorDetail = typeof errJson.detail === "string" ? errJson.detail : JSON.stringify(errJson.detail);
+        if (Array.isArray(errJson.detail)) {
+          errorDetail = errJson.detail
+            .map((d: any) =>
+              d.msg ? `${d.loc ? d.loc.slice(1).join(".") + ": " : ""}${d.msg}` : JSON.stringify(d)
+            )
+            .join("; ");
+        } else {
+          errorDetail = typeof errJson.detail === "string" ? errJson.detail : JSON.stringify(errJson.detail);
+        }
+      } else if (errJson.error?.message) {
+        errorDetail = errJson.error.message;
+      } else if (errJson.message) {
+        errorDetail = errJson.message;
       }
     } catch {
       // Body not JSON
