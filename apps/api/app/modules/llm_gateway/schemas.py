@@ -4,7 +4,7 @@ from datetime import datetime
 from typing import Any, Literal
 from uuid import UUID, uuid4
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 # Types & Literals
 ProviderRuntimeType = Literal["cloud_api", "local_runtime"]
@@ -180,6 +180,23 @@ class ChatMessage(BaseModel):
     role: Literal["system", "user", "assistant"]
     content: str = Field(..., min_length=1, max_length=128000)
 
+    @field_validator("role", mode="before")
+    @classmethod
+    def normalize_role(cls, v: Any) -> str:
+        if isinstance(v, str):
+            return v.strip().lower()
+        return str(v)
+
+    @field_validator("content", mode="before")
+    @classmethod
+    def sanitize_content(cls, v: Any) -> str:
+        if isinstance(v, str):
+            trimmed = v.strip()
+            if not trimmed:
+                raise ValueError("Message content cannot be empty or only whitespace")
+            return trimmed
+        return str(v)
+
 
 class GenerationParams(BaseModel):
     """Inference generation hyperparameters."""
@@ -238,8 +255,17 @@ class ChatCompletionRequest(BaseModel):
     @classmethod
     def reconcile_routing_fields(cls, data: Any) -> Any:
         if isinstance(data, dict):
+            # Normalize empty strings to None for model/model_id/provider_id
+            for str_field in ("model", "model_id", "provider_id"):
+                if str_field in data:
+                    val = data[str_field]
+                    if val is None or (isinstance(val, str) and not val.strip()):
+                        data[str_field] = None
+                    elif isinstance(val, str):
+                        data[str_field] = val.strip()
+
             # Reconcile idempotency_key if missing or empty
-            if not data.get("idempotency_key"):
+            if not data.get("idempotency_key") or not str(data["idempotency_key"]).strip():
                 data["idempotency_key"] = f"req-{uuid4().hex}"
 
             # Reconcile temperature into params if passed at root
@@ -255,6 +281,26 @@ class ChatCompletionRequest(BaseModel):
                 data["model_id"] = data["model"]
             elif not data.get("model") and data.get("model_id"):
                 data["model"] = data["model_id"]
+
+            # Filter out empty or whitespace-only messages if messages list is present
+            if "messages" in data and isinstance(data["messages"], list):
+                sanitized_messages = []
+                for m in data["messages"]:
+                    if isinstance(m, dict):
+                        role = str(m.get("role", "user")).strip().lower()
+                        content = m.get("content", "")
+                        if isinstance(content, str):
+                            content = content.strip()
+                        if content and role in ("system", "user", "assistant"):
+                            sanitized_messages.append({**m, "role": role, "content": content})
+                    elif hasattr(m, "content") and hasattr(m, "role"):
+                        role = str(getattr(m, "role", "")).strip().lower()
+                        content = getattr(m, "content", "")
+                        if isinstance(content, str):
+                            content = content.strip()
+                        if content and role in ("system", "user", "assistant"):
+                            sanitized_messages.append(m)
+                data["messages"] = sanitized_messages
 
             # Default routing mode determination
             if not data.get("routing_mode"):

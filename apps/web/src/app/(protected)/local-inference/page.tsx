@@ -71,6 +71,18 @@ function isHeavyModel(model?: OllamaTagModel): boolean {
   return false;
 }
 
+const FALLBACK_CLOUD_MODELS = [
+  { id: "openrouter/free", display_name: "OpenRouter Free Router (Dynamic Alias)" },
+  { id: "openrouter/meta-llama/llama-3.3-70b-instruct:free", display_name: "Meta Llama 3.3 70B Instruct (OpenRouter Free)" },
+  { id: "gemini-3.8-flash", display_name: "Google Gemini 3.8 Flash" },
+  { id: "gemini-3.5-flash-lite", display_name: "Google Gemini 3.5 Flash-Lite" },
+  { id: "openai/gpt-oss-120b", display_name: "OpenAI GPT-OSS 120B (Groq)" },
+  { id: "openai/gpt-oss-20b", display_name: "OpenAI GPT-OSS 20B (Groq)" },
+  { id: "qwen/qwen3.8-27b", display_name: "Qwen 3.8 27B (Groq Preview)" },
+  { id: "cerebras/gpt-oss-120b", display_name: "Cerebras GPT-OSS 120B" },
+  { id: "gpt-4o", display_name: "OpenAI GPT-4o" },
+];
+
 export default function LocalInferencePage() {
   const router = useRouter();
   const [authLoading, setAuthLoading] = useState(true);
@@ -100,10 +112,24 @@ export default function LocalInferencePage() {
   // Mode switcher: "private" | "auto" | "cloud_only"
   const [inferenceMode, setInferenceMode] = useState<"private" | "auto" | "cloud_only">("private");
   const [selectedCloudModel, setSelectedCloudModel] = useState<string>("");
+  const [cloudModels, setCloudModels] = useState<{ id: string; display_name: string }[]>([]);
   const [lastRouteHeaders, setLastRouteHeaders] = useState<RouteHeaders | null>(null);
 
   const abortControllerRef = useRef<AbortController | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
+
+  // Fetch available cloud models from the backend
+  useEffect(() => {
+    fetchWithAuth<{ items: { id: string; display_name: string }[] }>("/api/v1/llm/models")
+      .then((res) => {
+        if (res.items && res.items.length > 0) {
+          setCloudModels(res.items);
+        }
+      })
+      .catch((err) => {
+        console.warn("Failed to fetch registered cloud models, using fallback list", err);
+      });
+  }, []);
 
   // Check Supabase authentication and user approval status
   useEffect(() => {
@@ -262,7 +288,9 @@ export default function LocalInferencePage() {
       chatMessages.push({ role: "system", content: systemPrompt.trim() });
     }
     for (const msg of updatedMessages) {
-      chatMessages.push({ role: msg.role, content: msg.content });
+      if (!msg.content || !msg.content.trim()) continue;
+      if (msg.role === "assistant" && msg.content.startsWith("⚠️")) continue;
+      chatMessages.push({ role: msg.role, content: msg.content.trim() });
     }
 
     const controller = new AbortController();
@@ -273,7 +301,7 @@ export default function LocalInferencePage() {
         {
           messages: chatMessages,
           routing_mode: mode,
-          model: selectedCloudModel || undefined,
+          model: selectedCloudModel && selectedCloudModel.trim().length > 0 ? selectedCloudModel.trim() : undefined,
           temperature,
           community_opt_in: false,
         },
@@ -371,7 +399,9 @@ export default function LocalInferencePage() {
       ollamaMessages.push({ role: "system", content: systemPrompt.trim() });
     }
     for (const msg of updatedMessages) {
-      ollamaMessages.push({ role: msg.role, content: msg.content });
+      if (!msg.content || !msg.content.trim()) continue;
+      if (msg.role === "assistant" && msg.content.startsWith("⚠️")) continue;
+      ollamaMessages.push({ role: msg.role, content: msg.content.trim() });
     }
 
     const controller = new AbortController();
@@ -863,10 +893,11 @@ Environment="OLLAMA_ORIGINS=http://localhost:3000,http://127.0.0.1:3000"`}
                   className="rounded-lg border border-gray-300 bg-white px-3 py-1.5 text-sm font-medium text-gray-800 shadow-xs focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
                 >
                   <option value="">Auto (Server Selected Default)</option>
-                  <option value="gemini-2.5-flash">Gemini 2.5 Flash</option>
-                  <option value="gemini-2.5-pro">Gemini 2.5 Pro</option>
-                  <option value="claude-3-5-sonnet">Claude 3.5 Sonnet</option>
-                  <option value="openrouter/free">OpenRouter Free Tier</option>
+                  {(cloudModels.length > 0 ? cloudModels : FALLBACK_CLOUD_MODELS).map((m) => (
+                    <option key={m.id} value={m.id}>
+                      {m.display_name}
+                    </option>
+                  ))}
                 </select>
               ) : models.length > 0 ? (
                 <select

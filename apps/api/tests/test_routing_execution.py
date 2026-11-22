@@ -625,3 +625,34 @@ async def test_route_and_dispatch_community_candidate():
     first_chunk = await anext(result)
     assert "generation_started" in first_chunk
     assert str(job_id) in first_chunk
+
+
+def test_chat_message_role_and_content_sanitization():
+    """Verify ChatMessage trims whitespace and normalizes role casing."""
+    msg = ChatMessage(role="USER ", content="  Hello world!  ")  # type: ignore[arg-type]
+    assert msg.role == "user"
+    assert msg.content == "Hello world!"
+
+    with pytest.raises(ValueError):
+        ChatMessage(role="user", content="   ")
+
+
+def test_chat_completion_request_reconciles_empty_fields():
+    """Verify ChatCompletionRequest normalizes empty models and prunes empty messages."""
+    req = ChatCompletionRequest(
+        routing_mode="auto",
+        model="",
+        model_id="",
+        messages=[
+            {"role": "user", "content": "  Valid prompt  "},
+            {"role": "assistant", "content": "   "},
+            {"role": "assistant", "content": ""},
+        ],  # type: ignore[arg-type]
+    )
+    assert req.model is None
+    assert req.model_id is None
+    assert len(req.messages) == 1
+    assert req.messages[0].role == "user"
+    assert req.messages[0].content == "Valid prompt"
+    assert req.idempotency_key.startswith("req-")
+

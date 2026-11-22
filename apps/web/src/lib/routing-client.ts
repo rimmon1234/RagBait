@@ -102,7 +102,23 @@ export async function streamChatCompletion(
     let errorDetail = `Request failed with status ${response.status}`;
     try {
       const errJson = await response.json();
-      if (errJson.detail) {
+      if (errJson.error) {
+        const baseMsg = errJson.error.message || "Request failed";
+        if (Array.isArray(errJson.error.details) && errJson.error.details.length > 0) {
+          const detailMsgs = errJson.error.details
+            .map((d: any) => {
+              const field = Array.isArray(d.loc)
+                ? d.loc.filter((p: any) => p !== "body").join(".")
+                : d.loc || "";
+              const msg = d.msg || JSON.stringify(d);
+              return field ? `${field}: ${msg}` : msg;
+            })
+            .join("; ");
+          errorDetail = `${baseMsg}: ${detailMsgs}`;
+        } else {
+          errorDetail = baseMsg;
+        }
+      } else if (errJson.detail) {
         if (Array.isArray(errJson.detail)) {
           errorDetail = errJson.detail
             .map((d: any) =>
@@ -112,8 +128,6 @@ export async function streamChatCompletion(
         } else {
           errorDetail = typeof errJson.detail === "string" ? errJson.detail : JSON.stringify(errJson.detail);
         }
-      } else if (errJson.error?.message) {
-        errorDetail = errJson.error.message;
       } else if (errJson.message) {
         errorDetail = errJson.message;
       }

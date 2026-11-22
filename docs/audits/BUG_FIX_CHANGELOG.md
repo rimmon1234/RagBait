@@ -86,9 +86,15 @@
 10. **`src/app/(protected)/local-inference/page.tsx`**
     - Cleaned up obsolete `"community"` inference mode references and dead state variables.
     - Strictly enforced the 3 canonical inference modes: Private Local (`private`), Intelligent Router (`auto`), and Cloud Only (`cloud_only`).
+    - Added dynamic cloud model fetching from `/api/v1/llm/models` with fallback list matching registered models in database.
+    - Sanitized conversation history payload before streaming to prevent sending empty assistant placeholder turns or error banners as context.
 
 11. **`tests/ContributionRequiredPage.test.tsx`, `tests/CommunityNodesPage.test.tsx`**
     - Updated unit tests to verify immediate redirection behavior and mock requirements.
+
+12. **`apps/api/app/modules/llm_gateway/schemas.py`, `apps/web/src/lib/routing-client.ts`, `apps/web/src/lib/api.ts` (BUG-13)**
+    - Reconciled chat completion validation: automatically trimmed and normalized message roles and contents, pruned empty/whitespace-only messages, and normalized empty string model parameters to `None`.
+    - Formatted structured FastAPI `RequestValidationError` (`error.details`) into client error strings so exact field-level validation errors are visible instead of generic "Input validation failed".
 
 ### Database Tests (`supabase`)
 
@@ -104,12 +110,13 @@
 Test Suite                             Results
 ========================================================================
 Supabase pgTAP (10 files)              212 / 212 passed (100%)
-Backend Pytest (apps/api)              313 passed, 4 skipped, 0 failed
+Backend Pytest (apps/api)              315 passed, 4 skipped, 0 failed
 Backend Ruff Lint & Format             146 files clean, 0 errors
 Backend Mypy Strict Mode               96 files clean, 0 errors
 Frontend Typecheck (tsc)               0 errors
 Frontend Lint (next lint)              0 errors / 0 warnings
-Frontend Vitest (21 files)             119 / 119 passed (100%)
+Frontend Vitest (21 files)             120 / 120 passed (100%)
 Frontend Production Build (next build) 25 / 25 routes compiled successfully
+Live LLM Routed Streaming (SSE)        Verified HTTP 200 via OpenRouter
 ========================================================================
 ```

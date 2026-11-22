@@ -150,4 +150,42 @@ describe("M2.9 Routing Client", () => {
     expect(capturedError).toBeDefined();
     expect(capturedError?.message).toContain("User daily spending limit exceeded");
   });
+
+  it("extracts and formats detailed validation errors from error.details on 422 response", async () => {
+    globalThis.fetch = vi.fn().mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          error: {
+            code: "VALIDATION_ERROR",
+            message: "Input validation failed",
+            details: [
+              {
+                type: "string_too_short",
+                loc: ["body", "messages", 0, "content"],
+                msg: "String should have at least 1 character",
+              },
+            ],
+          },
+        }),
+        { status: 422 }
+      )
+    );
+
+    let capturedError: Error | undefined;
+    await streamChatCompletion(
+      {
+        messages: [{ role: "user", content: "Test" }],
+        routing_mode: "auto",
+      },
+      {
+        onDelta: vi.fn(),
+        onError: (err) => {
+          capturedError = err;
+        },
+      }
+    );
+
+    expect(capturedError).toBeDefined();
+    expect(capturedError?.message).toContain("Input validation failed: messages.0.content: String should have at least 1 character");
+  });
 });

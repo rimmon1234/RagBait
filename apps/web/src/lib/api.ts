@@ -50,6 +50,28 @@ export async function fetchWithAuth<T>(
         errCode = data.error.code || errCode;
         errMsg = data.error.message || errMsg;
         errDetails = data.error.details;
+        if (Array.isArray(errDetails) && errDetails.length > 0) {
+          const detailMsgs = errDetails
+            .map((d: any) => {
+              const field = Array.isArray(d.loc)
+                ? d.loc.filter((p: any) => p !== "body").join(".")
+                : d.loc || "";
+              const msg = d.msg || JSON.stringify(d);
+              return field ? `${field}: ${msg}` : msg;
+            })
+            .join("; ");
+          errMsg = `${errMsg}: ${detailMsgs}`;
+        }
+      } else if (data.detail) {
+        if (Array.isArray(data.detail)) {
+          errMsg = data.detail
+            .map((d: any) =>
+              d.msg ? `${d.loc ? d.loc.slice(1).join(".") + ": " : ""}${d.msg}` : JSON.stringify(d)
+            )
+            .join("; ");
+        } else {
+          errMsg = typeof data.detail === "string" ? data.detail : JSON.stringify(data.detail);
+        }
       }
     } catch {
       // Body not JSON
