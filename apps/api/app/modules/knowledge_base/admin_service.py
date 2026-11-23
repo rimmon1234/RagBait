@@ -605,6 +605,32 @@ class KBAdminService:
                         document_id,
                     )
 
+                # Fence and cancel any active indexing jobs
+                await conn.execute(
+                    """
+                    UPDATE public.kb_indexing_jobs
+                    SET status = 'cancelled',
+                        lease_token = NULL,
+                        locked_until = NULL,
+                        error_code = 'ARCHIVED_BY_ADMIN',
+                        error_message = 'Indexing cancelled: document was archived by administrator.',
+                        completed_at = timezone('utc'::text, now()),
+                        updated_at = timezone('utc'::text, now())
+                    WHERE document_id = $1 AND status IN ('queued', 'processing');
+                    """,
+                    document_id,
+                )
+
+                # Deactivate any active chunks for this archived document
+                await conn.execute(
+                    """
+                    UPDATE public.kb_document_chunks
+                    SET is_active = false
+                    WHERE document_id = $1;
+                    """,
+                    document_id,
+                )
+
                 # Record audit log within the same transaction
                 await admin_repository.insert_admin_audit_log(
                     conn=conn,
@@ -672,6 +698,23 @@ class KBAdminService:
                     """,
                     document_id,
                 )
+
+                # If document was previously extracted and has text, re-enqueue an indexing job
+                if doc["extraction_status"] == "completed":
+                    await conn.execute(
+                        """
+                        INSERT INTO public.kb_indexing_jobs (
+                            document_id,
+                            source_version,
+                            chunking_version,
+                            status,
+                            scheduled_at
+                        ) VALUES ($1, 1, 1, 'queued', timezone('utc'::text, now()))
+                        ON CONFLICT (document_id) WHERE status IN ('queued', 'processing')
+                        DO NOTHING;
+                        """,
+                        document_id,
+                    )
 
                 await admin_repository.insert_admin_audit_log(
                     conn=conn,

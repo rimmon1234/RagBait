@@ -69,32 +69,36 @@ flowchart LR
 
 ---
 
-### Milestone M4.2 — Page-Aware Chunking and Durable Indexing Lifecycle
+### Milestone M4.2 — Page-Aware Chunking and Durable Indexing Lifecycle (Completed)
+- **Status**: COMPLETE & VERIFIED (November 23, 2026)
 - **Objective**: Implement deterministic page-aware document chunking and the asynchronous indexing job daemon.
 - **Scope**:
   - Deterministic chunking algorithm: target 350–400 tokens per chunk with 60–80 token overlap and hard ceiling of 420 tokens (`chk_chunk_token_ceiling CHECK (token_count <= 420)`).
   - Sentence and clause splitting fallback for exceptionally long paragraphs, ensuring no chunk ever exceeds 420 tokens.
-  - Chunk table: `public.kb_document_chunks` with `page_number_start`, `page_number_end`, `content_hash`.
+  - Multilingual boundary support for English, Bengali (।), and Hindi (।, ॥).
+  - Chunk table: `public.kb_document_chunks` with `page_number_start`, `page_number_end`, `page_spans`, and `content_hash`.
   - Durable job table: `public.kb_indexing_jobs` with lease token and `SKIP LOCKED`.
-  - Indexing worker daemon (`apps/api/app/modules/knowledge_base/indexing_worker.py`).
+  - Indexing worker daemon (`apps/api/app/modules/knowledge_base/indexing_worker.py` and `apps/api/app/workers/indexing_worker.py`).
   - Automatic indexing trigger when document extraction completes (`completed`).
+  - Idempotent backfill CLI command (`apps/api/app/cli/backfill_indexing.py`).
 - **Dependencies**: M4.0 chunking specification, Phase 3 `kb_document_pages`.
-- **Database Changes**: Migration `20260302000000_m4_2_chunking_and_indexing.sql` creating `kb_document_chunks` and `kb_indexing_jobs`.
-- **Backend Changes**: Chunking utility, indexing repository, worker process, extraction hook.
-- **Frontend Changes**: Admin Document moderation view showing chunk count and indexing job status badge.
+- **Database Changes**: Migration `20260302000000_m4_2_document_indexing.sql` creating `kb_document_chunks` and `kb_indexing_jobs`, and adding `indexing_status` and `active_chunk_version` to `kb_documents`.
+- **Backend Changes**: Chunking package (`tokenizer.py`, `chunker.py`), indexing repository, indexing service, standalone worker, backfill CLI, extraction hook, and moderation fencing.
+- **Frontend Changes**: Unaffected (admin moderation and viewer integration prepared for M4.7).
 - **Security Considerations**:
-  - Fencing: If a document is archived or soft-deleted while indexing, the worker aborts without committing chunks.
+  - Fencing: If a document is archived or soft-deleted while indexing, the worker aborts without committing chunks, and active jobs are cancelled.
   - Idempotency: Duplicate chunking runs on the same document version delete old chunks before inserting new ones.
+  - RLS: Direct mutations revoked from `anon` and `authenticated`; students can only read active chunks for accessible, non-archived materials.
 - **Testing**:
-  - Chunking unit tests with 420-token boundary length assertions (`test_page_aware_chunking.py`).
-  - Worker lifecycle & lease tests (`test_indexing_worker.py`).
-  - pgTAP test (`supabase/tests/m4_2_indexing_lifecycle_test.sql`).
+  - Chunking unit tests with 420-token boundary length assertions (`test_kb_chunking.py` - 8/8 passed).
+  - Worker lifecycle & lease tests (`test_kb_indexing_worker.py` - 4/4 passed).
+  - pgTAP test (`supabase/tests/m4_2_indexing_test.sql` - 18/18 passed).
 - **Acceptance Criteria**:
   - 100% of chunks maintain physical page provenance.
   - Zero chunks exceed 420 tokens.
   - Retrying an indexing job produces 0 duplicate chunks.
   - Worker crash recovers automatically upon lease expiration.
-- **Exclusions**: Embedding generation or vector math.
+- **Exclusions**: Embedding generation or vector math (deferred to M4.3).
 
 ---
 

@@ -245,7 +245,7 @@ async def test_community_sharing_gated_by_provider_policy(client: httpx.AsyncCli
             await conn.execute(
                 """
                 UPDATE public.llm_providers
-                SET allows_community_sharing = true
+                SET allows_community_sharing = false
                 WHERE id = 'groq'
                 """
             )

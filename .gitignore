@@ -41,4 +41,5 @@ supabase/.temp
 .idea/
 .DS_Store
 Thumbs.db
-*.log
+# Model & Tokenizer caches
+apps/api/app/modules/knowledge_base/assets/*.json

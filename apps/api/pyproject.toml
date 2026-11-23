@@ -17,6 +17,7 @@ dependencies = [
     "python-dotenv>=1.0.0",
     "supabase==2.34.1",
     "pypdf>=5.1.0",
+    "tokenizers>=0.23.3",
 ]
 
 [project.optional-dependencies]

@@ -240,7 +240,7 @@ async def complete_job_success(
         pages_with_text = sum(1 for p in pages if p["has_text"])
         final_doc_status = "completed" if has_any_text else "completed_no_text"
 
-        # 5. Update document metadata
+        # 5. Update document metadata and enqueue background indexing job if text was extracted
         await conn.execute(
             """
             UPDATE public.kb_documents
@@ -258,6 +258,34 @@ async def complete_job_success(
             total_pages,
             pages_with_text,
         )
+
+        if has_any_text and final_doc_status == "completed":
+            # Decoupled durable indexing queue
+            await conn.execute(
+                """
+                INSERT INTO public.kb_indexing_jobs (
+                    document_id,
+                    source_version,
+                    chunking_version,
+                    status,
+                    scheduled_at
+                ) VALUES ($1, $2, 1, 'queued', timezone('utc'::text, now()))
+                ON CONFLICT (document_id) WHERE status IN ('queued', 'processing')
+                DO NOTHING;
+                """,
+                document_id,
+                doc_version,
+            )
+        else:
+            await conn.execute(
+                """
+                UPDATE public.kb_documents
+                SET indexing_status = 'not_indexable',
+                    updated_at = timezone('utc'::text, now())
+                WHERE id = $1;
+                """,
+                document_id,
+            )
 
         # 6. Update extraction job to completed
         await conn.execute(
