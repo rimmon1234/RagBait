@@ -8,6 +8,7 @@ from app.core.database import get_pool
 from app.core.errors import AuthorizationError, ConflictError, NotFoundError
 from app.core.redis import get_community_redis
 from app.modules.admission.cooldown import check_cooldown
+from app.modules.routing.free_models import is_approved_free_model
 from app.modules.routing.schemas import RoutingCandidate, RoutingMode
 
 logger = logging.getLogger("ragbait.routing.discovery")
@@ -70,14 +71,20 @@ async def discover_cloud_candidates(
 
         shared_creds = await conn.fetch(
             """
-            SELECT id, owner_id, provider_id, status, validation_status,
-                   sharing_scope, shared_consent, account_scope_id, account_scope_verified
-            FROM public.api_key_metadata
-            WHERE sharing_scope = 'community_shared'
-              AND shared_consent = true
-              AND status = 'active'
-              AND validation_status = 'valid'
-            ORDER BY created_at ASC
+            SELECT c.id, c.owner_id, c.provider_id, c.status, c.validation_status,
+                   c.sharing_scope, c.shared_consent, c.account_scope_id, c.account_scope_verified,
+                   c.billing_tier, c.billing_verified_at
+            FROM public.api_key_metadata c
+            JOIN public.llm_providers p ON p.id = c.provider_id
+            WHERE c.sharing_scope = 'community_shared'
+              AND c.shared_consent = true
+              AND c.status = 'active'
+              AND c.validation_status = 'valid'
+              AND c.billing_tier = 'verified_free_only'
+              AND p.allows_community_sharing = true
+              AND p.is_enabled = true
+              AND c.billing_verified_at >= (now() - interval '30 days')
+            ORDER BY c.created_at ASC
             """
         )
         shared_cred_by_provider: dict[str, dict[str, Any]] = {}
@@ -156,16 +163,18 @@ async def discover_cloud_candidates(
                         and explicit_cred["shared_consent"]
                         and m["allows_community_sharing"]
                     ):
-                        selected_cred = explicit_cred
-                        is_shared = True
+                        if is_approved_free_model(provider_id, m["model_id"]):
+                            selected_cred = explicit_cred
+                            is_shared = True
                 else:
                     continue
             elif provider_id in user_cred_by_provider:
                 selected_cred = user_cred_by_provider[provider_id]
                 is_shared = False
             elif m["allows_community_sharing"] and provider_id in shared_cred_by_provider:
-                selected_cred = shared_cred_by_provider[provider_id]
-                is_shared = True
+                if is_approved_free_model(provider_id, m["model_id"]):
+                    selected_cred = shared_cred_by_provider[provider_id]
+                    is_shared = True
 
             # Missing or non-positive prices represented as None for metered models unless free_tier_eligible
             raw_in = m["input_cost_per_million_cents"]

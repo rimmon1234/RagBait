@@ -174,8 +174,8 @@ async def probe_openai_compatible(
 
 
 async def probe_openrouter(raw_key: str) -> ValidationResult:
-    """Validate OpenRouter API key via official GET /api/v1/auth/key inspection endpoint."""
-    url = "https://openrouter.ai/api/v1/auth/key"
+    """Validate OpenRouter API key via official GET /api/v1/key inspection endpoint."""
+    url = "https://openrouter.ai/api/v1/key"
     headers = {"Authorization": f"Bearer {raw_key}"}
 
     try:
@@ -186,15 +186,24 @@ async def probe_openrouter(raw_key: str) -> ValidationResult:
                 billing_tier = "unknown"
                 billing_error = None
                 try:
-                    data = resp.json().get("data") or {}
+                    payload = resp.json()
+                    if not isinstance(payload, dict):
+                        raise ValueError("Response payload is not a JSON object")
+                    data = payload.get("data")
+                    if not isinstance(data, dict):
+                        raise ValueError("Response 'data' field is missing or not a JSON object")
+
                     is_free = data.get("is_free_tier")
-                    if is_free is True:
-                        billing_tier = "verified_free_only"
-                    elif is_free is False:
-                        billing_tier = "paid"
+                    if isinstance(is_free, bool):
+                        if is_free is True:
+                            billing_tier = "verified_free_only"
+                            billing_error = None
+                        else:
+                            billing_tier = "paid"
+                            billing_error = "OpenRouter reported key is not free tier"
                     else:
                         billing_tier = "unknown"
-                        billing_error = "OpenRouter response did not include is_free_tier flag"
+                        billing_error = "OpenRouter response did not include a valid boolean is_free_tier flag"
                 except Exception as exc:
                     billing_tier = "unknown"
                     billing_error = f"Failed to parse OpenRouter key inspection response: {exc}"

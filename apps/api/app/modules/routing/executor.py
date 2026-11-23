@@ -30,6 +30,7 @@ from app.modules.llm_gateway.interfaces import NormalizedUsage, UsageSourceType
 from app.modules.llm_gateway.schemas import ChatCompletionRequest, ChatCompletionResponse
 from app.modules.llm_gateway.streaming import format_sse_event
 from app.modules.llm_gateway.token_estimation import TokenEstimate, estimate_text_tokens
+from app.modules.routing.free_models import is_approved_free_model
 from app.modules.routing.schemas import RoutingCandidate
 
 logger = logging.getLogger("ragbait.routing.executor")
@@ -53,6 +54,16 @@ async def execute_cloud_candidate(
 ) -> tuple[AsyncIterator[str] | ChatCompletionResponse, bool]:
     """Execute inference on an approved cloud candidate."""
     assert candidate.credential_id is not None, "Cloud candidate must have credential_id"
+
+    # 0. Strict Community-Shared Free-Model Boundary Enforcement
+    if candidate.is_shared_credential and not is_approved_free_model(
+        candidate.provider_id, candidate.model_id
+    ):
+        raise PreDispatchCandidateError(
+            f"Community-shared credential for provider '{candidate.provider_id}' "
+            f"cannot be dispatched with non-free model '{candidate.model_id}'.",
+            is_candidate_specific=False,
+        )
 
     # 1. Attempt M2.4 Admission Reservation
     admission_request = AdmissionRequest(
