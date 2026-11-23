@@ -5,7 +5,7 @@ from datetime import datetime
 from typing import Any
 from uuid import UUID, uuid4
 
-import asyncpg
+import asyncpg  # type: ignore[import-untyped]
 
 from app.core.config import settings
 from app.modules.credentials.crypto import (
@@ -129,6 +129,7 @@ async def store_credential(
                           consent_version, validation_status, last_validated_at,
                           validation_error_code, account_scope_id,
                           account_scope_verified, account_scope_source, account_scope_verified_at,
+                          billing_tier, billing_verified_at, billing_verification_error, billing_verification_source,
                           daily_request_limit, monthly_request_limit,
                           daily_spending_limit_cents, monthly_spending_limit_cents,
                           created_at, updated_at
@@ -202,6 +203,10 @@ async def store_credential(
         account_scope_verified=meta_row["account_scope_verified"],
         account_scope_source=meta_row["account_scope_source"],
         account_scope_verified_at=meta_row["account_scope_verified_at"],
+        billing_tier=meta_row["billing_tier"],
+        billing_verified_at=meta_row["billing_verified_at"],
+        billing_verification_error=meta_row["billing_verification_error"],
+        billing_verification_source=meta_row["billing_verification_source"],
         daily_request_limit=meta_row["daily_request_limit"],
         monthly_request_limit=meta_row["monthly_request_limit"],
         daily_spending_limit_cents=meta_row["daily_spending_limit_cents"],
@@ -447,6 +452,7 @@ async def get_credential_metadata(credential_id: UUID, caller_id: UUID) -> Store
                    m.consent_version, m.validation_status, m.last_validated_at,
                    m.validation_error_code, m.account_scope_id,
                    m.account_scope_verified, m.account_scope_source, m.account_scope_verified_at,
+                   m.billing_tier, m.billing_verified_at, m.billing_verification_error, m.billing_verification_source,
                    m.daily_request_limit, m.monthly_request_limit,
                    m.daily_spending_limit_cents, m.monthly_spending_limit_cents,
                    s.data_encryption_version, s.kek_version,
@@ -488,6 +494,10 @@ async def get_credential_metadata(credential_id: UUID, caller_id: UUID) -> Store
         account_scope_verified=row["account_scope_verified"],
         account_scope_source=row["account_scope_source"],
         account_scope_verified_at=row["account_scope_verified_at"],
+        billing_tier=row["billing_tier"],
+        billing_verified_at=row["billing_verified_at"],
+        billing_verification_error=row["billing_verification_error"],
+        billing_verification_source=row["billing_verification_source"],
         daily_request_limit=row["daily_request_limit"],
         monthly_request_limit=row["monthly_request_limit"],
         daily_spending_limit_cents=row["daily_spending_limit_cents"],
@@ -509,6 +519,7 @@ async def list_credentials_by_owner(owner_id: UUID) -> list[StoredCredentialResu
                    m.consent_version, m.validation_status, m.last_validated_at,
                    m.validation_error_code, m.account_scope_id,
                    m.account_scope_verified, m.account_scope_source, m.account_scope_verified_at,
+                   m.billing_tier, m.billing_verified_at, m.billing_verification_error, m.billing_verification_source,
                    m.daily_request_limit, m.monthly_request_limit,
                    m.daily_spending_limit_cents, m.monthly_spending_limit_cents,
                    s.data_encryption_version, s.kek_version,
@@ -541,6 +552,10 @@ async def list_credentials_by_owner(owner_id: UUID) -> list[StoredCredentialResu
             account_scope_verified=r["account_scope_verified"],
             account_scope_source=r["account_scope_source"],
             account_scope_verified_at=r["account_scope_verified_at"],
+            billing_tier=r["billing_tier"],
+            billing_verified_at=r["billing_verified_at"],
+            billing_verification_error=r["billing_verification_error"],
+            billing_verification_source=r["billing_verification_source"],
             daily_request_limit=r["daily_request_limit"],
             monthly_request_limit=r["monthly_request_limit"],
             daily_spending_limit_cents=r["daily_spending_limit_cents"],
@@ -603,8 +618,11 @@ async def update_validation_status(
     owner_id: UUID,
     validation_status: str,
     validation_error_code: str | None = None,
+    billing_tier: str = "unknown",
+    billing_verification_error: str | None = None,
+    billing_verification_source: str | None = None,
 ) -> StoredCredentialResult:
-    """Record validation outcome timestamp and error code."""
+    """Record validation outcome timestamp, error code, and billing tier verification."""
     async with get_vault_session() as conn:
         updated = await conn.fetchval(
             """
@@ -612,12 +630,19 @@ async def update_validation_status(
             SET validation_status = $1,
                 last_validated_at = now(),
                 validation_error_code = $2,
+                billing_tier = $3,
+                billing_verified_at = now(),
+                billing_verification_error = $4,
+                billing_verification_source = $5,
                 updated_at = now()
-            WHERE id = $3 AND owner_id = $4
+            WHERE id = $6 AND owner_id = $7
             RETURNING id
             """,
             validation_status,
             validation_error_code,
+            billing_tier,
+            billing_verification_error,
+            billing_verification_source,
             credential_id,
             owner_id,
         )

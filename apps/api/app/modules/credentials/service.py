@@ -75,6 +75,10 @@ def _to_credential_response(
         account_scope_verified=res.account_scope_verified,
         account_scope_source=res.account_scope_source,
         account_scope_verified_at=res.account_scope_verified_at,
+        billing_tier=res.billing_tier,
+        billing_verified_at=res.billing_verified_at,
+        billing_verification_error=res.billing_verification_error,
+        billing_verification_source=res.billing_verification_source,
         daily_request_limit=res.daily_request_limit,
         monthly_request_limit=res.monthly_request_limit,
         daily_spending_limit_cents=res.daily_spending_limit_cents,
@@ -284,6 +288,9 @@ async def validate_user_credential(
         owner_id=owner_id,
         validation_status=outcome_val,
         validation_error_code=probe_result.safe_code,
+        billing_tier=probe_result.billing_tier,
+        billing_verification_error=probe_result.billing_error,
+        billing_verification_source=f"{existing.provider_id}_auth_probe",
     )
 
     await log_credential_audit(
@@ -301,6 +308,8 @@ async def validate_user_credential(
         outcome=outcome_val,  # type: ignore[arg-type]
         safe_code=probe_result.safe_code,
         message=probe_result.message,
+        billing_tier=probe_result.billing_tier,
+        billing_verification_error=probe_result.billing_error,
         validated_at=datetime.now(UTC),
     )
 

@@ -2,6 +2,7 @@
 
 import logging
 from collections.abc import Callable
+from datetime import UTC, datetime
 from typing import Any
 
 from fastapi import Depends, Header, Request
@@ -116,7 +117,8 @@ async def check_user_chat_entitlement(
         rows = await conn.fetch(
             """
             SELECT c.id, c.provider_id, c.status, c.validation_status, c.sharing_scope, c.shared_consent,
-                   p.runtime_type, p.allows_community_sharing
+                   c.billing_tier, c.billing_verified_at, c.billing_verification_error,
+                   p.runtime_type, p.allows_community_sharing, p.is_enabled
             FROM public.api_key_metadata c
             JOIN public.llm_providers p ON p.id = c.provider_id
             WHERE c.owner_id = $1
@@ -129,23 +131,31 @@ async def check_user_chat_entitlement(
         return (
             False,
             "NO_CREDENTIAL_CONTRIBUTED",
-            "No qualifying key contributed yet. Please add a verified free-tier cloud API key (e.g. Groq, OpenRouter, Cerebras) and enable community sharing to unlock AI Chat.",
+            "A qualifying free-tier cloud credential is required before accessing AI Chat. Please contribute an approved free-tier key.",
             0,
         )
 
-    # Count qualifying credentials
-    qualifying_count = sum(
-        1
-        for r in rows
+    now = datetime.now(UTC)
+    qualifying_count = 0
+    for r in rows:
+        b_verified = r["billing_verified_at"]
+        if b_verified and b_verified.tzinfo is None:
+            b_verified = b_verified.replace(tzinfo=UTC)
+
+        is_fresh = b_verified is not None and (now - b_verified).total_seconds() <= 30 * 86400
+
         if (
             r["runtime_type"] == "cloud_api"
             and r["allows_community_sharing"] is True
+            and r["is_enabled"] is True
             and r["sharing_scope"] == "community_shared"
             and r["shared_consent"] is True
             and r["validation_status"] == "valid"
-            and r["status"] == "active"
-        )
-    )
+            and r["status"] in ("active", "rate_limited", "quota_exhausted")
+            and r["billing_tier"] == "verified_free_only"
+            and is_fresh
+        ):
+            qualifying_count += 1
 
     if qualifying_count > 0:
         return (
@@ -155,46 +165,91 @@ async def check_user_chat_entitlement(
             qualifying_count,
         )
 
-    # Identify most informative rejection reason
-    for r in rows:
-        if r["runtime_type"] == "cloud_api" and r["allows_community_sharing"] is True:
-            if r["sharing_scope"] == "community_shared" and r["shared_consent"] is True:
-                if r["status"] != "active":
-                    return (
-                        False,
-                        "CREDENTIAL_INACTIVE",
-                        "Your contributed credential is currently inactive. Please enable your key in Key Management.",
-                        0,
-                    )
-                if r["validation_status"] != "valid":
-                    return (
-                        False,
-                        "VALIDATION_REQUIRED",
-                        "Key validation required. Please run the validation probe in Key Management.",
-                        0,
-                    )
-            elif r["sharing_scope"] != "community_shared" or not r["shared_consent"]:
+    # Filter sharable cloud providers vs local or non-sharable
+    sharable_cloud_rows = [
+        r
+        for r in rows
+        if r["runtime_type"] == "cloud_api"
+        and r["allows_community_sharing"] is True
+        and r["is_enabled"] is True
+    ]
+
+    if not sharable_cloud_rows:
+        return (
+            False,
+            "PROVIDER_NOT_ELIGIBLE_FOR_SHARING",
+            "Private local Ollama models or non-sharable providers do not satisfy the shared cloud contribution requirement. Please contribute an approved free-tier key.",
+            0,
+        )
+
+    # Check paid tier rejection
+    for r in sharable_cloud_rows:
+        if r["billing_tier"] == "paid":
+            return (
+                False,
+                "PAID_CREDENTIAL_INELIGIBLE",
+                "Paid credentials are not eligible for community contribution. Please contribute a free-tier key.",
+                0,
+            )
+
+    # Check unvalidated credentials
+    for r in sharable_cloud_rows:
+        if r["validation_status"] != "valid":
+            return (
+                False,
+                "VALIDATION_REQUIRED",
+                "Key validation required. Please run the validation probe in Key Management.",
+                0,
+            )
+
+    # Check billing verification required (unknown tier)
+    for r in sharable_cloud_rows:
+        if r["billing_tier"] == "unknown":
+            return (
+                False,
+                "BILLING_VERIFICATION_REQUIRED",
+                "Key billing verification could not be verified automatically. Please verify your credential or use a provider with automated free-tier verification.",
+                0,
+            )
+
+    # Check stale billing verification (> 30 days)
+    for r in sharable_cloud_rows:
+        if r["billing_tier"] == "verified_free_only":
+            b_verified = r["billing_verified_at"]
+            if b_verified and b_verified.tzinfo is None:
+                b_verified = b_verified.replace(tzinfo=UTC)
+            if b_verified is None or (now - b_verified).total_seconds() > 30 * 86400:
                 return (
                     False,
-                    "SHARING_CONSENT_REQUIRED",
-                    "Sharing consent required. Please enable community sharing on your key.",
+                    "BILLING_VERIFICATION_STALE",
+                    "Key billing verification has expired (must be verified within 30 days). Please re-run key validation in Key Management.",
                     0,
                 )
 
-    # If user has only local or non-sharable credentials
-    for r in rows:
-        if r["runtime_type"] != "cloud_api" or not r["allows_community_sharing"]:
+    # Check sharing scope and consent
+    for r in sharable_cloud_rows:
+        if r["sharing_scope"] != "community_shared" or not r["shared_consent"]:
             return (
                 False,
-                "PROVIDER_NOT_ELIGIBLE_FOR_SHARING",
-                "Private local Ollama models or non-sharable providers do not satisfy the shared cloud contribution requirement. Please contribute an approved free-tier key.",
+                "SHARING_CONSENT_REQUIRED",
+                "Sharing consent required. Please enable community sharing on your key.",
+                0,
+            )
+
+    # Check inactive credentials
+    for r in sharable_cloud_rows:
+        if r["status"] in ("disabled", "revoked"):
+            return (
+                False,
+                "CREDENTIAL_INACTIVE",
+                "Your contributed credential is currently inactive. Please enable your key in Key Management.",
                 0,
             )
 
     return (
         False,
         "NO_CREDENTIAL_CONTRIBUTED",
-        "A qualifying free-tier cloud credential is required before accessing AI Chat.",
+        "A qualifying free-tier cloud credential is required before accessing AI Chat. Please contribute an approved free-tier key.",
         0,
     )
 

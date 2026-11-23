@@ -56,7 +56,15 @@ async def setup_test_environment():
     CREATED_TEST_SUBJECTS.clear()
 
 
-async def add_qualifying_credential(user_id: UUID, provider_id: str = "groq") -> UUID:
+async def add_qualifying_credential(
+    user_id: UUID,
+    provider_id: str = "openrouter",
+    billing_tier: str = "verified_free_only",
+    status: str = "active",
+    sharing_scope: str = "community_shared",
+    shared_consent: bool = True,
+    validation_status: str = "valid",
+) -> UUID:
     """Provision an active, valid, community-shared free-tier credential for testing."""
     cred_id = uuid4()
     pool = get_pool()
@@ -66,14 +74,20 @@ async def add_qualifying_credential(user_id: UUID, provider_id: str = "groq") ->
             INSERT INTO public.api_key_metadata (
                 id, owner_id, provider_id, nickname, masked_key, key_fingerprint,
                 status, validation_status, sharing_scope, shared_consent,
-                sharing_consent_timestamp, consent_version
+                sharing_consent_timestamp, consent_version,
+                billing_tier, billing_verified_at, billing_verification_source
             )
-            VALUES ($1, $2, $3, 'Test Qualifying Key', 'gsk_...test', $4, 'active', 'valid', 'community_shared', true, now(), 'v1');
+            VALUES ($1, $2, $3, 'Test Qualifying Key', 'sk-or-...test', $4, $5, $6, $7, $8, now(), 'v1', $9, now(), 'openrouter_auth_probe');
             """,
             cred_id,
             user_id,
             provider_id,
             uuid4().hex[:16],
+            status,
+            validation_status,
+            sharing_scope,
+            shared_consent,
+            billing_tier,
         )
     return cred_id
 
@@ -359,6 +373,209 @@ async def test_local_ollama_and_unapproved_providers_do_not_grant_entitlement(
     assert res_gemini.status_code == 200
     assert res_gemini.json()["eligible"] is False
     assert res_gemini.json()["reason_code"] == "PROVIDER_NOT_ELIGIBLE_FOR_SHARING"
+
+
+@pytest.mark.asyncio
+async def test_paid_credential_rejected_from_chat_entitlement(client: httpx.AsyncClient):
+    """Paid credentials (even if shared and active) must be rejected with PAID_CREDENTIAL_INELIGIBLE."""
+    user_id, token, _ = await create_user_fixture("paid_student", with_qualifying_key=False)
+    subject_id = await create_subject_fixture("Database Internals", "db-paid-test")
+
+    # Add paid OpenRouter key
+    await add_qualifying_credential(user_id=user_id, provider_id="openrouter", billing_tier="paid")
+
+    # Entitlement status must show ineligible with PAID_CREDENTIAL_INELIGIBLE
+    res = await client.get(
+        "/api/v1/me/chat-entitlement",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert res.status_code == 200
+    data = res.json()
+    assert data["eligible"] is False
+    assert data["can_chat"] is False
+    assert data["reason_code"] == "PAID_CREDENTIAL_INELIGIBLE"
+    assert "paid" in data["reason"].lower()
+
+    # Conversation creation must be blocked (403)
+    create_resp = await client.post(
+        "/api/v1/chat/conversations",
+        json={"subject_id": str(subject_id), "title": "B-Tree Indexes"},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert create_resp.status_code == 403
+    assert create_resp.json()["error"]["code"] == "CHAT_CONTRIBUTION_REQUIRED"
+
+
+@pytest.mark.asyncio
+async def test_unknown_billing_tier_rejected_from_chat_entitlement(client: httpx.AsyncClient):
+    """Credentials with unknown billing tier must be rejected with BILLING_VERIFICATION_REQUIRED."""
+    user_id, token, _ = await create_user_fixture("unknown_tier_student", with_qualifying_key=False)
+    subject_id = await create_subject_fixture("Compiler Design", "cd-unknown-test")
+
+    # Add OpenRouter key with unknown billing tier
+    await add_qualifying_credential(
+        user_id=user_id, provider_id="openrouter", billing_tier="unknown"
+    )
+
+    # Entitlement status must show ineligible with BILLING_VERIFICATION_REQUIRED
+    res = await client.get(
+        "/api/v1/me/chat-entitlement",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert res.status_code == 200
+    data = res.json()
+    assert data["eligible"] is False
+    assert data["can_chat"] is False
+    assert data["reason_code"] == "BILLING_VERIFICATION_REQUIRED"
+
+    # Conversation creation must be blocked
+    create_resp = await client.post(
+        "/api/v1/chat/conversations",
+        json={"subject_id": str(subject_id), "title": "LLVM IR"},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert create_resp.status_code == 403
+    assert create_resp.json()["error"]["code"] == "CHAT_CONTRIBUTION_REQUIRED"
+
+
+@pytest.mark.asyncio
+async def test_stale_billing_verification_rejected(client: httpx.AsyncClient):
+    """Verified free credentials older than 30 days must be rejected with BILLING_VERIFICATION_STALE."""
+    user_id, token, _ = await create_user_fixture("stale_student", with_qualifying_key=False)
+    subject_id = await create_subject_fixture("Computer Graphics", "cg-stale-test")
+
+    cred_id = await add_qualifying_credential(
+        user_id=user_id, provider_id="openrouter", billing_tier="verified_free_only"
+    )
+
+    # Age the verification timestamp past 30 days (e.g. 35 days ago)
+    pool = get_pool()
+    async with pool.acquire() as conn:
+        await conn.execute(
+            "UPDATE public.api_key_metadata SET billing_verified_at = now() - interval '35 days' WHERE id = $1",
+            cred_id,
+        )
+
+    # Entitlement status must show ineligible with BILLING_VERIFICATION_STALE
+    res = await client.get(
+        "/api/v1/me/chat-entitlement",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert res.status_code == 200
+    data = res.json()
+    assert data["eligible"] is False
+    assert data["can_chat"] is False
+    assert data["reason_code"] == "BILLING_VERIFICATION_STALE"
+
+    # Conversation creation must be blocked
+    create_resp = await client.post(
+        "/api/v1/chat/conversations",
+        json={"subject_id": str(subject_id), "title": "Ray Tracing"},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert create_resp.status_code == 403
+    assert create_resp.json()["error"]["code"] == "CHAT_CONTRIBUTION_REQUIRED"
+
+
+@pytest.mark.asyncio
+async def test_quota_exhausted_credential_retains_chat_entitlement(client: httpx.AsyncClient):
+    """Quota-exhausted or rate-limited free-tier credentials PRESERVE student Chat entitlement."""
+    user_id, token, _ = await create_user_fixture("exhausted_student", with_qualifying_key=False)
+    subject_id = await create_subject_fixture("Distributed Computing", "dist-quota-test")
+
+    # Add credential with status = 'quota_exhausted'
+    cred_id = await add_qualifying_credential(
+        user_id=user_id,
+        provider_id="openrouter",
+        billing_tier="verified_free_only",
+        status="quota_exhausted",
+    )
+
+    res = await client.get(
+        "/api/v1/me/chat-entitlement",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert res.status_code == 200
+    data = res.json()
+    assert data["eligible"] is True
+    assert data["can_chat"] is True
+    assert data["eligible_credential_count"] == 1
+
+    # Conversation creation must succeed
+    create_resp = await client.post(
+        "/api/v1/chat/conversations",
+        json={"subject_id": str(subject_id), "title": "Raft Protocol"},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert create_resp.status_code == 201
+
+    # Switch status to 'rate_limited'
+    pool = get_pool()
+    async with pool.acquire() as conn:
+        await conn.execute(
+            "UPDATE public.api_key_metadata SET status = 'rate_limited' WHERE id = $1",
+            cred_id,
+        )
+
+    res_rl = await client.get(
+        "/api/v1/me/chat-entitlement",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert res_rl.status_code == 200
+    assert res_rl.json()["eligible"] is True
+    assert res_rl.json()["can_chat"] is True
+
+
+@pytest.mark.asyncio
+async def test_multiple_credentials_entitlement_behavior(client: httpx.AsyncClient):
+    """Multiple credentials must evaluate accurately: single qualifying key suffices, removal revokes."""
+    user_id, token, _ = await create_user_fixture("multi_key_student", with_qualifying_key=False)
+    _ = await create_subject_fixture("Security Engineering", "sec-multi-test")
+
+    # 1. User starts with a paid key
+    await add_qualifying_credential(
+        user_id=user_id,
+        provider_id="openrouter",
+        billing_tier="paid",
+    )
+
+    res1 = await client.get(
+        "/api/v1/me/chat-entitlement",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert res1.json()["eligible"] is False
+    assert res1.json()["reason_code"] == "PAID_CREDENTIAL_INELIGIBLE"
+
+    # 2. User adds a verified free key
+    free_cred_id = await add_qualifying_credential(
+        user_id=user_id,
+        provider_id="openrouter",
+        billing_tier="verified_free_only",
+    )
+
+    res2 = await client.get(
+        "/api/v1/me/chat-entitlement",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert res2.json()["eligible"] is True
+    assert res2.json()["can_chat"] is True
+    assert res2.json()["eligible_credential_count"] == 1
+
+    # 3. User disables the verified free key
+    pool = get_pool()
+    async with pool.acquire() as conn:
+        await conn.execute(
+            "UPDATE public.api_key_metadata SET status = 'disabled' WHERE id = $1",
+            free_cred_id,
+        )
+
+    # Now user has only a paid active key and a disabled free key -> ineligible
+    res3 = await client.get(
+        "/api/v1/me/chat-entitlement",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert res3.json()["eligible"] is False
+    assert res3.json()["can_chat"] is False
 
 
 # ==============================================================================

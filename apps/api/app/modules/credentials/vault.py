@@ -4,7 +4,7 @@ import logging
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 
-import asyncpg
+import asyncpg  # type: ignore[import-untyped]
 
 from app.core.config import settings
 from app.modules.credentials.errors import (

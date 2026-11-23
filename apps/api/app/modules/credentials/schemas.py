@@ -59,6 +59,10 @@ class ApiKeyMetadataRecord(BaseModel):
     account_scope_verified: bool = False
     account_scope_source: str | None = None
     account_scope_verified_at: datetime | None = None
+    billing_tier: str = "unknown"
+    billing_verified_at: datetime | None = None
+    billing_verification_error: str | None = None
+    billing_verification_source: str | None = None
     daily_request_limit: int = 500
     monthly_request_limit: int = 15000
     daily_spending_limit_cents: int | None = None
@@ -88,6 +92,10 @@ class StoredCredentialResult(BaseModel):
     account_scope_verified: bool = False
     account_scope_source: str | None = None
     account_scope_verified_at: datetime | None = None
+    billing_tier: str = "unknown"
+    billing_verified_at: datetime | None = None
+    billing_verification_error: str | None = None
+    billing_verification_source: str | None = None
     daily_request_limit: int
     monthly_request_limit: int
     daily_spending_limit_cents: int | None = None
@@ -212,6 +220,10 @@ class CredentialResponse(BaseModel):
     account_scope_verified: bool = False
     account_scope_source: str | None = None
     account_scope_verified_at: datetime | None = None
+    billing_tier: str = "unknown"
+    billing_verified_at: datetime | None = None
+    billing_verification_error: str | None = None
+    billing_verification_source: str | None = None
     daily_request_limit: int
     monthly_request_limit: int
     daily_spending_limit_cents: int | None = None
@@ -241,6 +253,8 @@ class ValidationResultResponse(BaseModel):
     outcome: ValidationStatus
     safe_code: str
     message: str
+    billing_tier: str = "unknown"
+    billing_verification_error: str | None = None
     validated_at: datetime
 
     @computed_field  # type: ignore[prop-decorator]

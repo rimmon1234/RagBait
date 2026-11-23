@@ -31,6 +31,8 @@ class ValidationResult:
     outcome: ValidationOutcome
     safe_code: str
     message: str
+    billing_tier: str = "unknown"
+    billing_error: str | None = None
 
 
 # Timeout bounds: 5s connect, 10s read
@@ -51,6 +53,8 @@ async def probe_gemini(raw_key: str) -> ValidationResult:
                     outcome=ValidationOutcome.VALID,
                     safe_code="AUTHENTICATED",
                     message="Gemini API credential authenticated successfully.",
+                    billing_tier="unknown",
+                    billing_error="Gemini API does not expose non-generative account billing verification endpoint",
                 )
             if resp.status_code in (400, 403):
                 return ValidationResult(
@@ -115,6 +119,8 @@ async def probe_openai_compatible(
                     outcome=ValidationOutcome.VALID,
                     safe_code="AUTHENTICATED",
                     message=f"{provider_name} API credential authenticated successfully.",
+                    billing_tier="unknown",
+                    billing_error=f"{provider_name} does not expose non-generative account billing verification endpoint",
                 )
             if resp.status_code == 401:
                 return ValidationResult(
@@ -177,10 +183,28 @@ async def probe_openrouter(raw_key: str) -> ValidationResult:
             resp = await client.get(url, headers=headers)
 
             if resp.status_code == 200:
+                billing_tier = "unknown"
+                billing_error = None
+                try:
+                    data = resp.json().get("data") or {}
+                    is_free = data.get("is_free_tier")
+                    if is_free is True:
+                        billing_tier = "verified_free_only"
+                    elif is_free is False:
+                        billing_tier = "paid"
+                    else:
+                        billing_tier = "unknown"
+                        billing_error = "OpenRouter response did not include is_free_tier flag"
+                except Exception as exc:
+                    billing_tier = "unknown"
+                    billing_error = f"Failed to parse OpenRouter key inspection response: {exc}"
+
                 return ValidationResult(
                     outcome=ValidationOutcome.VALID,
                     safe_code="AUTHENTICATED",
                     message="OpenRouter API key authenticated successfully.",
+                    billing_tier=billing_tier,
+                    billing_error=billing_error,
                 )
             if resp.status_code == 401:
                 return ValidationResult(

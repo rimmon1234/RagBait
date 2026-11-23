@@ -23,7 +23,7 @@ Under M4.1, RagBait provides durable, multi-tenant, subject-scoped conversationa
    - Transactional, monotonic sequence generation ensuring message sequence integrity (`(conversation_id, sequence_number)` unique).
    - Strict Row-Level Security (RLS) policies isolating conversations between students; public/anonymous access revoked.
 2. **Database Verification Suite** (`supabase/tests/`):
-   - **All 11 pgTAP test suites passed: 240 of 240 subtests PASSED (100%)**, including all 28 subtests in `m4_1_chat_persistence_test.sql`.
+   - **All 12 pgTAP test suites passed: 255 of 255 subtests PASSED (100%)**, including all 28 subtests in `m4_1_chat_persistence_test.sql` and all subtests in `m2_free_tier_hardening_test.sql`.
 3. **Backend Chat Engine (`apps/api`)**:
    - Pydantic v2 schemas with strict validation, whitespace stripping, and Unicode control-character sanitization (`schemas.py`).
    - Parameterized asyncpg repository with pessimistic row locking (`SELECT FOR UPDATE`) for race-free sequence allocation (`repository.py`).
@@ -31,7 +31,7 @@ Under M4.1, RagBait provides durable, multi-tenant, subject-scoped conversationa
    - REST API router mounted at `/api/v1/chat/` (`router.py`).
    - Contribution entitlement checker and dependency (`check_user_chat_entitlement`, `require_chat_entitlement` in `dependencies.py`).
    - Authoritative entitlement discovery endpoint `GET /api/v1/me/chat-entitlement` (`me.py`).
-   - Chat persistence test suite (`apps/api/tests/test_chat_persistence.py`): **16 of 16 pytest integration tests PASSED**.
+   - Chat persistence test suite (`apps/api/tests/test_chat_persistence.py`): **21 of 21 pytest integration tests PASSED** (including 5 dedicated billing tier tests).
    - Backend regression test suite (`test_auth.py`, `test_credentials_management.py`, etc.): **21 of 21 pytest tests PASSED**.
    - Code quality: Ruff check and format clean (0 warnings/errors), Mypy strict mode clean (0 issues).
 4. **Frontend Chat Client & UI Components (`apps/web`)**:
@@ -101,20 +101,24 @@ Anonymous privileges (`anon`) have been completely revoked.
 
 A central audit requirement in M4.1 was establishing and enforcing the platform's contribution entitlement boundary on the backend rather than relying on frontend-only checks.
 
-### 3.1 Platform Contribution Rule
+### 3.1 Platform Contribution Rule & Billing Tier Invariants
 In accordance with RagBait's community-driven architecture:
 1. **Admin Exemption**: Platform administrators (`admin`, `super_admin`) have full, unconstrained access.
 2. **Approved Regular Users**: To access shared AI compute and initiate new conversations, a user must have at least **one active, validated, explicitly consented free-tier cloud API credential** in `public.api_key_metadata` with:
    - `runtime_type = 'cloud_api'`
-   - `allows_community_sharing = true` in `public.llm_providers` (e.g., Groq, OpenRouter, Cerebras)
+   - `allows_community_sharing = true` in `public.llm_providers` (only OpenRouter is currently allowlisted due to exposing an authoritative non-generative key inspection API)
    - `sharing_scope = 'community_shared'`
    - `shared_consent = true`
    - `validation_status = 'valid'`
-   - `status = 'active'`
+   - `status IN ('active', 'rate_limited', 'quota_exhausted')` (quota exhaustion preserves entitlement)
+   - `billing_tier = 'verified_free_only'` (authoritatively verified via upstream probe)
+   - Freshness: verified within the past 30 days (`billing_verified_at >= now() - 30 days`)
 3. **Ineligible Keys**:
    - Private local Ollama daemons do NOT qualify (they serve only the local browser).
-   - Paid API keys do NOT qualify for community sharing.
-   - Unvalidated or inactive keys do NOT satisfy the entitlement requirement.
+   - Paid API keys (`billing_tier = 'paid'`) do NOT qualify for community sharing (`PAID_CREDENTIAL_INELIGIBLE`).
+   - Unknown billing tier (`billing_tier = 'unknown'`) requires verification (`BILLING_VERIFICATION_REQUIRED`).
+   - Stale verification (> 30 days) requires re-probe (`BILLING_VERIFICATION_STALE`).
+   - Disabled or revoked keys do NOT satisfy the entitlement requirement (`CREDENTIAL_INACTIVE`).
 
 ### 3.2 Authorization Boundary Matrix
 
@@ -193,11 +197,11 @@ apps/web/src/
 ### 6.1 Database pgTAP Tests (`supabase/tests/`)
 Executed via Supabase CLI against PostgreSQL 17:
 - `m4_1_chat_persistence_test.sql`: **28 of 28 tests PASSED (100%)**
-- Total database test suite (11 test files): **240 of 240 tests PASSED (100%)**
+- Total database test suite (12 test files): **255 of 255 tests PASSED (100%)**
 
 ### 6.2 Backend Pytest Suite (`apps/api/tests/`)
 Executed via Python 3.12 pytest runner:
-- `test_chat_persistence.py` (16 tests):
+- `test_chat_persistence.py` (21 tests):
   - `test_unauthenticated_request_rejected`: PASSED
   - `test_unapproved_user_rejected`: PASSED
   - `test_non_contributor_create_conversation_rejected`: PASSED
@@ -205,6 +209,11 @@ Executed via Python 3.12 pytest runner:
   - `test_non_contributor_can_access_knowledge_base`: PASSED
   - `test_chat_entitlement_endpoint`: PASSED
   - `test_local_ollama_and_unapproved_providers_do_not_grant_entitlement`: PASSED
+  - `test_paid_credential_rejected_from_chat_entitlement`: PASSED
+  - `test_unknown_billing_tier_rejected_from_chat_entitlement`: PASSED
+  - `test_stale_billing_verification_rejected`: PASSED
+  - `test_quota_exhausted_credential_retains_chat_entitlement`: PASSED
+  - `test_multiple_credentials_entitlement_behavior`: PASSED
   - `test_create_conversation_success`: PASSED
   - `test_create_conversation_default_title`: PASSED
   - `test_create_conversation_inactive_subject_rejected`: PASSED
@@ -214,7 +223,7 @@ Executed via Python 3.12 pytest runner:
   - `test_conversation_mutations`: PASSED
   - `test_message_pagination`: PASSED
   - `test_concurrent_message_insertion_sequence_integrity`: PASSED
-  - **Result: 16 of 16 tests PASSED (100%).**
+  - **Result: 21 of 21 tests PASSED (100%).**
 - Regression test suite (`test_auth.py`, `test_credentials_management.py`, `test_profile_permissions.py`, `test_health.py`):
   - **Result: 21 of 21 tests PASSED (100%).**
 - Static Analysis:
