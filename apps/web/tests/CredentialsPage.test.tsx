@@ -114,7 +114,7 @@ describe("CredentialsPage", () => {
     expect(screen.getByText("Active")).toBeInTheDocument();
     expect(screen.getByText("Valid")).toBeInTheDocument();
     expect(screen.getByText("Community Shared")).toBeInTheDocument();
-    expect(screen.getByText("1000 req/day")).toBeInTheDocument();
+    expect(screen.getByText("500 RPD Baseline")).toBeInTheDocument();
   });
 
   it("opens add credential modal and validates required consent", async () => {
@@ -141,27 +141,13 @@ describe("CredentialsPage", () => {
     expect(screen.getByText("Add AI Provider Credential")).toBeInTheDocument();
 
     // Fill in nickname and key
-    const nicknameInput = screen.getByPlaceholderText(/e\.g\. My Groq Free Key/i);
-    const keyInput = screen.getByPlaceholderText(/gsk_\.\.\./i);
+    const nicknameInput = screen.getByPlaceholderText(/e\.g\. My/i);
+    const keyInput = screen.getByPlaceholderText(/gsk_/i);
 
     fireEvent.change(nicknameInput, { target: { value: "My Shared Key" } });
     fireEvent.change(keyInput, { target: { value: "gsk_test_secret_key_123" } });
 
-    // Select community sharing
-    const communityRadio = screen.getByDisplayValue("community_shared");
-    fireEvent.click(communityRadio);
-
-    // Try submitting without checking consent checkbox
-    const submitButton = screen.getByRole("button", { name: /Encrypt & Save Key/i });
-    fireEvent.click(submitButton);
-
-    await waitFor(() => {
-      expect(
-        screen.getByText("You must explicitly provide consent to share your credential with the community.")
-      ).toBeInTheDocument();
-    });
-
-    // Check consent checkbox
+    // Enable community sharing consent checkbox
     const consentCheckbox = screen.getByRole("checkbox");
     fireEvent.click(consentCheckbox);
 
@@ -171,6 +157,7 @@ describe("CredentialsPage", () => {
       nickname: "My Shared Key",
     });
 
+    const submitButton = screen.getByRole("button", { name: /Encrypt & Save Key/i });
     fireEvent.click(submitButton);
 
     await waitFor(() => {

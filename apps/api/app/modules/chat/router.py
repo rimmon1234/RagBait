@@ -9,6 +9,7 @@ from app.core.dependencies import (
     get_current_user,
     rate_limit_general,
     require_approved_user,
+    require_chat_entitlement,
 )
 from app.core.security import AuthenticatedUser
 from app.modules.chat.schemas import (
@@ -34,7 +35,7 @@ chat_router = APIRouter(prefix="/chat", tags=["chat"])
 async def create_conversation(
     body: ConversationCreate,
     current_user: AuthenticatedUser = Depends(get_current_user),
-    _: UserProfile = Depends(require_approved_user),
+    _: UserProfile = Depends(require_chat_entitlement),
 ) -> ConversationRead:
     """Create a new independent conversation bound to an academic subject."""
     return await ChatService.create_conversation(

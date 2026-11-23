@@ -3,7 +3,7 @@
 from datetime import datetime
 from uuid import UUID
 
-import asyncpg
+import asyncpg  # type: ignore[import-untyped]
 
 
 class ChatRepository:
@@ -46,7 +46,7 @@ class ChatRepository:
                 VALUES ($1, $2, $3, 'active')
                 RETURNING *
             )
-            SELECT 
+            SELECT
                 i.id,
                 i.user_id,
                 i.subject_id,
@@ -77,7 +77,7 @@ class ChatRepository:
         """Retrieve conversation by ID enforcing user ownership."""
         row = await conn.fetchrow(
             """
-            SELECT 
+            SELECT
                 c.id,
                 c.user_id,
                 c.subject_id,
@@ -129,9 +129,9 @@ class ChatRepository:
 
         # Count total for the given filters
         count_query = f"""
-            SELECT count(*)::integer 
+            SELECT count(*)::integer
             FROM public.chat_conversations c
-            WHERE {' AND '.join(conditions)};
+            WHERE {" AND ".join(conditions)};
         """
         total_count = await conn.fetchval(count_query, *params)
 
@@ -142,7 +142,7 @@ class ChatRepository:
             p_idx += 2
 
         query = f"""
-            SELECT 
+            SELECT
                 c.id,
                 c.user_id,
                 c.subject_id,
@@ -157,7 +157,7 @@ class ChatRepository:
                 c.updated_at
             FROM public.chat_conversations c
             JOIN public.kb_subjects s ON s.id = c.subject_id
-            WHERE {' AND '.join(conditions)}
+            WHERE {" AND ".join(conditions)}
             ORDER BY c.updated_at DESC, c.id DESC
             LIMIT ${p_idx};
         """
@@ -187,7 +187,7 @@ class ChatRepository:
                   AND status != 'deleted'
                 RETURNING *
             )
-            SELECT 
+            SELECT
                 u.id,
                 u.user_id,
                 u.subject_id,
@@ -228,7 +228,7 @@ class ChatRepository:
                   AND status = 'active'
                 RETURNING *
             )
-            SELECT 
+            SELECT
                 u.id,
                 u.user_id,
                 u.subject_id,
@@ -268,7 +268,7 @@ class ChatRepository:
                   AND status = 'archived'
                 RETURNING *
             )
-            SELECT 
+            SELECT
                 u.id,
                 u.user_id,
                 u.subject_id,
@@ -316,7 +316,7 @@ class ChatRepository:
         before_sequence: int | None = None,
     ) -> tuple[list[dict], bool, int] | None:
         """Retrieve paginated messages for a conversation in ascending order.
-        
+
         Returns None if conversation does not exist or user is not the owner.
         """
         # Validate conversation ownership and get message count

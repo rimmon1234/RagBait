@@ -150,6 +150,7 @@ export interface ApiKeyCredential {
   monthly_request_limit: number;
   daily_spending_limit_cents?: number | null;
   monthly_spending_limit_cents?: number | null;
+  billing_tier?: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -194,6 +195,7 @@ export interface ValidationResult {
   validated_at?: string;
   credential_id?: string;
   provider_id?: string;
+  billing_tier?: string | null;
 }
 
 export interface ReservationView {
@@ -276,4 +278,5 @@ export interface ChatEntitlementResponse {
   reason_code?: string;
   reason?: string;
   remaining_messages?: number;
+  eligible_credential_count?: number;
 }

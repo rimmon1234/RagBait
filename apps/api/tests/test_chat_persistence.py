@@ -1,16 +1,13 @@
 """Comprehensive test suite for Phase 4 M4.1 Chat Persistence & Conversation Management."""
 
 import asyncio
-from datetime import UTC, datetime
 from uuid import UUID, uuid4
 
 import httpx
 import pytest
 
 from app.core.database import get_pool, init_db_pool
-from app.core.dependencies import get_current_profile, get_current_user
 from app.core.redis import init_redis
-from app.core.security import AuthenticatedUser
 from app.main import app
 from app.modules.chat.service import ChatService
 from app.modules.users.schemas import UserProfile
@@ -38,6 +35,11 @@ async def setup_test_environment():
                     CREATED_TEST_USERS,
                     CREATED_TEST_SUBJECTS,
                 )
+            if CREATED_TEST_USERS:
+                await conn.execute(
+                    "DELETE FROM public.api_key_metadata WHERE owner_id = ANY($1::uuid[])",
+                    CREATED_TEST_USERS,
+                )
             if CREATED_TEST_SUBJECTS:
                 await conn.execute(
                     "DELETE FROM public.kb_subjects WHERE id = ANY($1::uuid[])",
@@ -54,12 +56,35 @@ async def setup_test_environment():
     CREATED_TEST_SUBJECTS.clear()
 
 
+async def add_qualifying_credential(user_id: UUID, provider_id: str = "groq") -> UUID:
+    """Provision an active, valid, community-shared free-tier credential for testing."""
+    cred_id = uuid4()
+    pool = get_pool()
+    async with pool.acquire() as conn:
+        await conn.execute(
+            """
+            INSERT INTO public.api_key_metadata (
+                id, owner_id, provider_id, nickname, masked_key, key_fingerprint,
+                status, validation_status, sharing_scope, shared_consent,
+                sharing_consent_timestamp, consent_version
+            )
+            VALUES ($1, $2, $3, 'Test Qualifying Key', 'gsk_...test', $4, 'active', 'valid', 'community_shared', true, now(), 'v1');
+            """,
+            cred_id,
+            user_id,
+            provider_id,
+            uuid4().hex[:16],
+        )
+    return cred_id
+
+
 async def create_user_fixture(
     email_prefix: str,
     role: str = "user",
     approval_status: str = "approved",
+    with_qualifying_key: bool = True,
 ) -> tuple[UUID, str, UserProfile]:
-    """Create a verified test user in auth.users and public.profiles."""
+    """Create a verified test user in auth.users and public.profiles with optional contribution."""
     user_id = uuid4()
     email = f"{email_prefix}_{user_id.hex[:6]}@test.internal"
     pool = get_pool()
@@ -84,6 +109,15 @@ async def create_user_fixture(
         )
 
     CREATED_TEST_USERS.append(user_id)
+
+    # Provision qualifying cloud credential if requested for approved non-admin user
+    if (
+        with_qualifying_key
+        and approval_status == "approved"
+        and role not in ("admin", "super_admin")
+    ):
+        await add_qualifying_credential(user_id)
+
     token = create_test_jwt(user_id, email=email)
     profile = make_test_profile(
         user_id=user_id, email=email, role=role, approval_status=approval_status
@@ -143,6 +177,190 @@ async def test_unapproved_user_rejected(client: httpx.AsyncClient):
     assert resp.json()["error"]["code"] == "ACCOUNT_SUSPENDED"
 
 
+@pytest.mark.asyncio
+async def test_non_contributor_create_conversation_rejected(client: httpx.AsyncClient):
+    """Approved student WITHOUT a qualifying free-tier cloud key cannot start new conversations."""
+    _, non_contrib_token, _ = await create_user_fixture(
+        "non_contributor", with_qualifying_key=False
+    )
+    subject_id = await create_subject_fixture("Compiler Design", "cd-entitle")
+
+    resp = await client.post(
+        "/api/v1/chat/conversations",
+        json={"subject_id": str(subject_id), "title": "Lexical Analysis"},
+        headers={"Authorization": f"Bearer {non_contrib_token}"},
+    )
+    assert resp.status_code == 403
+    err = resp.json()["error"]
+    assert err["code"] == "CHAT_CONTRIBUTION_REQUIRED"
+    assert "qualifying" in err["message"].lower() or "contribute" in err["message"].lower()
+
+
+@pytest.mark.asyncio
+async def test_non_contributor_can_list_and_read_conversations(client: httpx.AsyncClient):
+    """Approved student without current key CAN list and read their past conversations."""
+    user_id, token, _ = await create_user_fixture("past_contributor", with_qualifying_key=True)
+    subject_id = await create_subject_fixture("Theory of Computation", "toc-past")
+
+    # 1. Create a conversation while entitled
+    create_resp = await client.post(
+        "/api/v1/chat/conversations",
+        json={"subject_id": str(subject_id), "title": "Turing Machines"},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert create_resp.status_code == 201
+    conv_id = create_resp.json()["id"]
+
+    # 2. Deactivate the contributor's credential (e.g. disabled or deleted)
+    pool = get_pool()
+    async with pool.acquire() as conn:
+        await conn.execute(
+            "UPDATE public.api_key_metadata SET status = 'disabled' WHERE owner_id = $1",
+            user_id,
+        )
+
+    # 3. Listing conversations must STILL succeed (historical access permitted)
+    list_resp = await client.get(
+        "/api/v1/chat/conversations",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert list_resp.status_code == 200
+    conv_titles = [c["title"] for c in list_resp.json()["items"]]
+    assert "Turing Machines" in conv_titles
+
+    # 4. Reading conversation metadata and message transcript must STILL succeed
+    detail_resp = await client.get(
+        f"/api/v1/chat/conversations/{conv_id}",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert detail_resp.status_code == 200
+    assert detail_resp.json()["title"] == "Turing Machines"
+
+    msg_resp = await client.get(
+        f"/api/v1/chat/conversations/{conv_id}/messages",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert msg_resp.status_code == 200
+
+    # 5. But creating a NEW conversation must fail!
+    new_fail_resp = await client.post(
+        "/api/v1/chat/conversations",
+        json={"subject_id": str(subject_id), "title": "Decidability"},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert new_fail_resp.status_code == 403
+    assert new_fail_resp.json()["error"]["code"] == "CHAT_CONTRIBUTION_REQUIRED"
+
+
+@pytest.mark.asyncio
+async def test_non_contributor_can_access_knowledge_base(client: httpx.AsyncClient):
+    """Approved student without credential contribution retains unrestricted Knowledge Base access."""
+    _, non_contrib_token, _ = await create_user_fixture("kb_reader", with_qualifying_key=False)
+    await create_subject_fixture("Software Engineering", "se-kb-test")
+
+    resp = await client.get(
+        "/api/v1/kb/subjects",
+        headers={"Authorization": f"Bearer {non_contrib_token}"},
+    )
+    assert resp.status_code == 200
+    subjects = resp.json()
+    assert any(s["slug"] == "se-kb-test" for s in subjects)
+
+
+@pytest.mark.asyncio
+async def test_chat_entitlement_endpoint(client: httpx.AsyncClient):
+    """GET /api/v1/me/chat-entitlement returns authoritative eligibility state."""
+    # 1. Non-contributor
+    _, non_contrib_token, _ = await create_user_fixture("entitle_none", with_qualifying_key=False)
+    res_none = await client.get(
+        "/api/v1/me/chat-entitlement",
+        headers={"Authorization": f"Bearer {non_contrib_token}"},
+    )
+    assert res_none.status_code == 200
+    data_none = res_none.json()
+    assert data_none["eligible"] is False
+    assert data_none["can_chat"] is False
+    assert data_none["reason_code"] == "NO_CREDENTIAL_CONTRIBUTED"
+
+    # 2. Contributor with valid Groq key
+    _, contrib_token, _ = await create_user_fixture("entitle_valid", with_qualifying_key=True)
+    res_valid = await client.get(
+        "/api/v1/me/chat-entitlement",
+        headers={"Authorization": f"Bearer {contrib_token}"},
+    )
+    assert res_valid.status_code == 200
+    data_valid = res_valid.json()
+    assert data_valid["eligible"] is True
+    assert data_valid["can_chat"] is True
+    assert data_valid["reason_code"] is None
+
+    # 3. Admin account
+    _, admin_token, _ = await create_user_fixture(
+        "admin_entitle", role="admin", with_qualifying_key=False
+    )
+    res_admin = await client.get(
+        "/api/v1/me/chat-entitlement",
+        headers={"Authorization": f"Bearer {admin_token}"},
+    )
+    assert res_admin.status_code == 200
+    assert res_admin.json()["eligible"] is True
+
+
+@pytest.mark.asyncio
+async def test_local_ollama_and_unapproved_providers_do_not_grant_entitlement(
+    client: httpx.AsyncClient,
+):
+    """Local Ollama runtime and unapproved cloud providers do NOT satisfy contribution entitlement."""
+    user_id, token, _ = await create_user_fixture("ollama_user", with_qualifying_key=False)
+    pool = get_pool()
+
+    # Provision active & valid Ollama credential
+    async with pool.acquire() as conn:
+        await conn.execute(
+            """
+            INSERT INTO public.api_key_metadata (
+                id, owner_id, provider_id, nickname, masked_key, key_fingerprint,
+                status, validation_status, sharing_scope, shared_consent
+            )
+            VALUES ($1, $2, 'ollama', 'Local Ollama', 'ollama_local', $3, 'active', 'valid', 'community_shared', true);
+            """,
+            uuid4(),
+            user_id,
+            uuid4().hex[:16],
+        )
+
+    res_ollama = await client.get(
+        "/api/v1/me/chat-entitlement",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert res_ollama.status_code == 200
+    assert res_ollama.json()["eligible"] is False
+    assert res_ollama.json()["reason_code"] == "PROVIDER_NOT_ELIGIBLE_FOR_SHARING"
+
+    # Provision active & valid Gemini credential (Gemini has allows_community_sharing = false)
+    async with pool.acquire() as conn:
+        await conn.execute(
+            """
+            INSERT INTO public.api_key_metadata (
+                id, owner_id, provider_id, nickname, masked_key, key_fingerprint,
+                status, validation_status, sharing_scope, shared_consent
+            )
+            VALUES ($1, $2, 'gemini', 'Private Gemini', 'AIza_test', $3, 'active', 'valid', 'community_shared', true);
+            """,
+            uuid4(),
+            user_id,
+            uuid4().hex[:16],
+        )
+
+    res_gemini = await client.get(
+        "/api/v1/me/chat-entitlement",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert res_gemini.status_code == 200
+    assert res_gemini.json()["eligible"] is False
+    assert res_gemini.json()["reason_code"] == "PROVIDER_NOT_ELIGIBLE_FOR_SHARING"
+
+
 # ==============================================================================
 # 2. Conversation Lifecycle (CRUD) Tests
 # ==============================================================================
@@ -188,7 +406,9 @@ async def test_create_conversation_default_title(client: httpx.AsyncClient):
 async def test_create_conversation_inactive_subject_rejected(client: httpx.AsyncClient):
     """Creating a conversation in an inactive subject must return HTTP 400."""
     _, token, _ = await create_user_fixture("student")
-    inactive_subj_id = await create_subject_fixture("Archived Course", "archived-c", is_active=False)
+    inactive_subj_id = await create_subject_fixture(
+        "Archived Course", "archived-c", is_active=False
+    )
 
     resp = await client.post(
         "/api/v1/chat/conversations",
