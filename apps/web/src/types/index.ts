@@ -269,3 +269,11 @@ export interface RoutePreviewResponse {
   decision_reason: string;
   rejected_reasons_summary: Record<string, number>;
 }
+
+export interface ChatEntitlementResponse {
+  eligible: boolean;
+  can_chat?: boolean;
+  reason_code?: string;
+  reason?: string;
+  remaining_messages?: number;
+}

@@ -41,7 +41,8 @@ flowchart LR
 
 ---
 
-### Milestone M4.1 — Chat Persistence and Conversation Management
+### Milestone M4.1 — Chat Persistence and Conversation Management (Completed)
+- **Status**: COMPLETE & VERIFIED (November 23, 2026)
 - **Objective**: Implement durable multi-conversation storage, message history, and ownership enforcement.
 - **Scope**:
   - Database tables: `chat_conversations` and `chat_messages`.
@@ -51,13 +52,14 @@ flowchart LR
 - **Dependencies**: M4.0 approved data model.
 - **Database Changes**: Migration `20260301000000_m4_1_chat_persistence.sql` creating `chat_conversations` and `chat_messages` with foreign keys, indexes, and RLS policies.
 - **Backend Changes**: New module `apps/api/app/modules/chat/` with repository, service, router (`/api/v1/chat/conversations`), and schemas.
-- **Frontend Changes**: Conversation sidebar API hooks, initial chat route skeleton `/chat/[id]`.
+- **Frontend Changes**: Conversation sidebar, management modals (new/rename/delete), message history viewer (`/chat` and `/chat/[id]`), and direct study chat integration in knowledge base.
 - **Security Considerations**:
   - RLS policies ensuring users can only read and write their own conversations (`user_id = auth.uid()`).
   - Validation that `subject_id` references an active, non-archived subject.
 - **Testing**:
-  - Backend unit & integration tests (`test_chat_persistence.py`, `test_chat_ownership.py`).
-  - Database pgTAP test (`supabase/tests/m4_1_chat_persistence_test.sql`).
+  - Backend integration tests (`apps/api/tests/test_chat_persistence.py` - 11/11 passed).
+  - Database pgTAP test (`supabase/tests/m4_1_chat_persistence_test.sql` - 28/28 passed).
+  - Frontend Vitest suite (`apps/web/tests/chat/` - 19/19 passed).
 - **Acceptance Criteria**:
   - User can create multiple conversations within a subject.
   - Conversations cannot switch subjects.

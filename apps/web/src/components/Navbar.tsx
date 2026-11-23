@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
-import { BookOpen, Cpu, Key, LogOut, Shield, User } from "lucide-react";
+import { BookOpen, Cpu, Key, LogOut, MessageSquare, Shield, Sparkles, User } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 import { fetchWithAuth } from "@/lib/api";
 import type { UserProfile } from "@/types";
@@ -44,8 +44,16 @@ export function Navbar() {
       setLoading(false);
 
       try {
-        const data = await fetchWithAuth<UserProfile>("/api/v1/me");
-        setProfile(data);
+        const apiBase = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000";
+        const res = await fetch(`${apiBase.replace(/\/$/, "")}/api/v1/me`, {
+          headers: {
+            Authorization: `Bearer ${session.access_token}`,
+          },
+        });
+        if (res.ok) {
+          const data = await res.json();
+          setProfile(data);
+        }
       } catch {
         // Retain fallback profile so the user remains authenticated in the UI
         setProfile((prev) => prev || fallbackProfile);
@@ -95,6 +103,13 @@ export function Navbar() {
                 Knowledge Base
               </Link>
               <Link
+                href="/chat"
+                className="flex items-center gap-1.5 text-sm font-medium text-gray-700 hover:text-blue-600"
+              >
+                <MessageSquare className="h-4 w-4" />
+                Study Chat
+              </Link>
+              <Link
                 href="/credentials"
                 className="flex items-center gap-1.5 text-sm font-medium text-gray-700 hover:text-blue-600"
               >
@@ -105,8 +120,8 @@ export function Navbar() {
                 href="/local-inference"
                 className="flex items-center gap-1.5 text-sm font-medium text-gray-700 hover:text-blue-600"
               >
-                <Cpu className="h-4 w-4" />
-                Local Inference
+                <Sparkles className="h-4 w-4" />
+                AI Inference
               </Link>
             </>
           )}
