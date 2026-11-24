@@ -621,6 +621,22 @@ class KBAdminService:
                     document_id,
                 )
 
+                # Fence and cancel any active embedding jobs
+                await conn.execute(
+                    """
+                    UPDATE public.kb_embedding_jobs
+                    SET status = 'cancelled',
+                        lease_token = NULL,
+                        locked_until = NULL,
+                        error_code = 'ARCHIVED_BY_ADMIN',
+                        error_message = 'Embedding cancelled: document was archived by administrator.',
+                        completed_at = timezone('utc'::text, now()),
+                        updated_at = timezone('utc'::text, now())
+                    WHERE document_id = $1 AND status IN ('queued', 'processing');
+                    """,
+                    document_id,
+                )
+
                 # Deactivate any active chunks for this archived document
                 await conn.execute(
                     """

@@ -1,0 +1,37 @@
+{
+  "model_id": "intfloat/multilingual-e5-small",
+  "model_revision": "761b726dd34fb83930e26aab4e9ac3899aa1fa78",
+  "source_repo": "Xenova/multilingual-e5-small",
+  "embedding_dimension": 384,
+  "max_sequence_length": 512,
+  "runtime": "onnxruntime",
+  "runtime_provider": "CPUExecutionProvider",
+  "quantization": "int8",
+  "pooling": "mean",
+  "normalization": "l2",
+  "passage_prefix": "passage: ",
+  "query_prefix": "query: ",
+  "model_fingerprint": "e5_small_int8_761b726d_f80102d3",
+  "artifacts": {
+    "onnx/model_quantized.onnx": {
+      "sha256": "f80102d3f2a1229f387d3c81909990d8945513e347b0eab049f7de3c6f98c193",
+      "size_bytes": 118308185
+    },
+    "tokenizer.json": {
+      "sha256": "0b44a9d7b51c3c62626640cda0e2c2f70fdacdc25bbbd68038369d14ebdf4c39",
+      "size_bytes": 17082730
+    },
+    "config.json": {
+      "sha256": "cb99455288675345e1a4f411438d5d0adbba5fbd3a67ea4fb03c015433b996c1",
+      "size_bytes": 658
+    },
+    "special_tokens_map.json": {
+      "sha256": "d05497f1da52c5e09554c0cd874037a083e1dc1b9cfd48034d1c717f1afc07a7",
+      "size_bytes": 167
+    },
+    "tokenizer_config.json": {
+      "sha256": "a1d6bc8734a6f635dc158508bef000f8e2e5a759c7d92f984b2c86e5ff53425b",
+      "size_bytes": 443
+    }
+  }
+}

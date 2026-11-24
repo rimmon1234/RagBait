@@ -416,11 +416,27 @@ async def finalize_document_deletion(conn: asyncpg.Connection, document_id: UUID
     )
     await conn.execute(
         """
+        UPDATE public.kb_embedding_jobs
+        SET status = 'cancelled',
+            lease_token = NULL,
+            locked_until = NULL,
+            error_code = 'CANCELLED',
+            error_message = 'Document deleted',
+            completed_at = timezone('utc'::text, now()),
+            updated_at = timezone('utc'::text, now())
+        WHERE document_id = $1 AND status IN ('queued', 'processing');
+        """,
+        document_id,
+    )
+    await conn.execute(
+        """
         UPDATE public.kb_documents
         SET upload_status = 'deleted',
             is_archived = true,
             indexing_status = 'unindexed',
+            embedding_status = 'unembedded',
             active_chunk_version = NULL,
+            active_embedding_fingerprint = NULL,
             updated_at = timezone('utc'::text, now())
         WHERE id = $1;
         """,

@@ -43,3 +43,5 @@ supabase/.temp
 Thumbs.db
 # Model & Tokenizer caches
 apps/api/app/modules/knowledge_base/assets/*.json
+apps/api/app/modules/knowledge_base/assets/models/
+*.onnx

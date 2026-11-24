@@ -102,7 +102,8 @@ flowchart LR
 
 ---
 
-### Milestone M4.3 — Embedding Infrastructure and Vector Storage
+### Milestone M4.3 — Embedding Infrastructure and Vector Storage (Completed)
+- **Status**: Completed (Certified in [M4_3_IMPLEMENTATION_REPORT.md](file:///d:/Projects/RagBait/docs/phase4/M4_3_IMPLEMENTATION_REPORT.md))
 - **Objective**: Enable pgvector in PostgreSQL and integrate the local embedding model (`intfloat/multilingual-e5-small`).
 - **Scope**:
   - PostgreSQL vector extension activation (`CREATE EXTENSION IF NOT EXISTS vector WITH SCHEMA extensions`).

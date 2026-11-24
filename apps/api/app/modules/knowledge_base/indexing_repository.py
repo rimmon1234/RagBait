@@ -269,6 +269,7 @@ async def complete_indexing_job_transaction(
             UPDATE public.kb_documents
             SET indexing_status = $2,
                 active_chunk_version = $3,
+                embedding_status = CASE WHEN $2 = 'indexed' THEN 'unembedded' ELSE 'not_applicable' END,
                 updated_at = timezone('utc'::text, now())
             WHERE id = $1;
             """,
@@ -276,6 +277,24 @@ async def complete_indexing_job_transaction(
             final_indexing_status,
             chunking_version if chunks else None,
         )
+
+        if chunks:
+            # Enqueue durable embedding job for this document and active chunk version
+            await conn.execute(
+                """
+                INSERT INTO public.kb_embedding_jobs (
+                    document_id,
+                    chunk_version,
+                    model_fingerprint,
+                    status,
+                    scheduled_at
+                ) VALUES ($1, $2, 'e5_small_int8_761b726d_f80102d3', 'queued', timezone('utc'::text, now()))
+                ON CONFLICT (document_id, model_fingerprint) WHERE status IN ('queued', 'processing')
+                DO NOTHING;
+                """,
+                document_id,
+                chunking_version,
+            )
 
         # 7. Update indexing job to completed
         await conn.execute(
