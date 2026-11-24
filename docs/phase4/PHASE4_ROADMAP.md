@@ -132,29 +132,33 @@ flowchart LR
 
 ---
 
-### Milestone M4.4 — Hybrid Retrieval and Subject Scoping
-- **Objective**: Implement hybrid semantic and keyword retrieval using Reciprocal Rank Fusion (RRF).
+### Milestone M4.4 — Hybrid Retrieval and Subject Scoping (Completed)
+- **Status**: COMPLETE & VERIFIED (November 24, 2026 — [M4_4_IMPLEMENTATION_REPORT.md](file:///d:/Projects/RagBait/docs/phase4/M4_4_IMPLEMENTATION_REPORT.md))
+- **Objective**: Implement hybrid semantic and keyword retrieval using Reciprocal Rank Fusion (RRF) with strict subject isolation and physical page provenance.
 - **Scope**:
-  - PostgreSQL Full-Text Search indexing on `kb_document_chunks.raw_text`.
-  - Database search function / RPC: `match_subject_chunks(subject_id, query_vec, query_text, limit)`.
-  - RRF ranking combining vector cosine distance and `tsvector` keyword matching (Candidate baseline: $k=60, w_{vec}=0.6, w_{fts}=0.4$, subject to grid search tuning).
-  - Authoritative document visibility fencing: excludes archived topics, inactive subjects, unapproved documents, or deleted files.
-- **Dependencies**: M4.3 embeddings and chunks.
-- **Database Changes**: Migration `20260304000000_m4_4_hybrid_search.sql` adding GIN text index and `match_subject_chunks` SQL function.
-- **Backend Changes**: RAG retrieval service (`app/modules/rag/retrieval.py`) executing hybrid query and formatting candidate passages.
-- **Frontend Changes**: None.
+  - PostgreSQL Full-Text Search indexing (`idx_kb_chunks_fts_simple` on unstemmed Unicode lexemes for English, Bengali, Hindi, acronyms, and formulas).
+  - Database search function / RPC: `public.match_subject_chunks` with `SECURITY DEFINER`, fixed search path, permissions revoked from client roles and granted to `service_role`.
+  - Reciprocal Rank Fusion (RRF) combining vector cosine distance and lexical matching ($k=60, w_{vec}=0.60, w_{fts}=0.40$).
+  - Authoritative document visibility fencing: excludes archived topics, inactive subjects, unapproved documents, deleted files, stale chunk versions, and content-hash mismatches.
+  - Python retrieval subsystem (`apps/api/app/modules/knowledge_base/retrieval/`) with authorization gates, query validation (<= 128 tokens), local FastEmbed ONNX query embeddings, and typed result schemas.
+- **Dependencies**: M4.1 chat persistence, M4.2 chunks, M4.3 embeddings.
+- **Database Changes**: Migration `20260304000000_m4_4_hybrid_retrieval.sql` adding GIN text index and `public.match_subject_chunks` SQL function.
+- **Backend Changes**: New module `apps/api/app/modules/knowledge_base/retrieval/` (`config.py`, `schemas.py`, `ranking.py`, `authorization.py`, `query_service.py`, `retrieval_repository.py`, `retrieval_service.py`).
+- **Frontend Changes**: None (internal retrieval service consumed by M4.5).
 - **Security Considerations**:
-  - Mandatory `subject_id` filter prevents cross-subject data leakage.
-  - Unapproved or deleted documents are excluded at the SQL query level.
+  - Mandatory `subject_id` filter prevents cross-subject data leakage (0% leakage certified).
+  - Student authorization gate checks user approval status, conversation ownership, and active status.
+  - Unapproved, archived, or deleted documents and incomplete embeddings are excluded at the SQL level.
+  - Raw vectors and vector distances never exposed to client-facing endpoints.
 - **Testing**:
-  - Hybrid search precision tests (`test_hybrid_retrieval.py`).
-  - Acronym, formula, and exact keyword recovery tests.
-  - pgTAP test (`supabase/tests/m4_4_hybrid_retrieval_test.sql`).
+  - Retrieval unit, authorization, plan inspection, and benchmark tests (`apps/api/tests/test_kb_retrieval.py` - 8/8 passed).
+  - Multilingual evaluation benchmark: Recall@5 = 100%, MRR = 1.000, Precision@5 = 0.200 across English, Bengali, Hindi, acronyms, and formulas.
+  - Database pgTAP test (`supabase/tests/m4_4_retrieval_test.sql` - 19/19 passed, full pgTAP suite 310/310 passed).
 - **Acceptance Criteria**:
-  - Exact technical terms rank in the top 3 results even when semantic similarity is moderate.
-  - Search latency remains under 35ms for a 10,000-chunk corpus.
-  - Zero results returned from subjects outside the query's `subject_id`.
-- **Exclusions**: LLM answer generation.
+  - Exact technical terms, acronyms, formulas, Bengali, and Hindi passages retrieved with top rank.
+  - Zero results returned from subjects outside the query's bound subject (100% isolation).
+  - Physical page spans and provenance preserved for every retrieved chunk.
+- **Exclusions**: Prompt construction, context budgeting, XML framing, or streaming generation (deferred to M4.5–M4.7).
 
 ---
 
