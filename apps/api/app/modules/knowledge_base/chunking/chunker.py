@@ -252,7 +252,11 @@ def chunk_document_pages(pages: list[PageInput]) -> list[ChunkOutput]:
         while scan_idx < total_units:
             next_unit = all_units[scan_idx]
             separator = "\n\n" if (accumulated_text and "\n" not in accumulated_text[-2:]) else " "
-            candidate_text = f"{accumulated_text}{separator}{next_unit.text}".strip() if accumulated_text else next_unit.text
+            candidate_text = (
+                f"{accumulated_text}{separator}{next_unit.text}".strip()
+                if accumulated_text
+                else next_unit.text
+            )
             cand_tokens = count_tokens(candidate_text)
 
             if cand_tokens <= MAX_RAW_CHUNK_TOKENS:

@@ -125,7 +125,7 @@ async def renew_embedding_lease(
         lease_token,
         str(lease_ttl_seconds),
     )
-    return result == "UPDATE 1"
+    return bool(result == "UPDATE 1")
 
 
 async def fetch_chunks_for_embedding(

@@ -153,3 +153,101 @@ def test_multilingual_real_model_smoke_and_semantic_ordering():
     assert sim_hi > sim_unrelated
     assert sim_en > 0.70
     assert sim_bn > 0.65
+
+
+def test_m4_2_to_m4_3_end_to_end_boundary_integration():
+    """Real-model integration test connecting M4.2 page-aware chunking to M4.3 vector embeddings.
+
+    Verifies the complete pipeline:
+    Long extracted multi-page document (English, Bengali, Hindi, Math, Unicode)
+    -> M4.2 chunker
+    -> Page-aware chunks with valid page bounds (<= 420 tokens)
+    -> M4.3 passage formatting ("passage: ")
+    -> Actual tokenizer verification (<= 512 tokens)
+    -> Real ONNX FastEmbed execution
+    -> 384-dimensional unit-norm vectors with correct model fingerprint.
+    """
+    from app.modules.knowledge_base.chunking.chunker import PageInput, chunk_document_pages
+    from app.modules.knowledge_base.chunking.tokenizer import get_tokenizer
+
+    # Realistic multilingual academic document across 4 physical pages
+    page_1_en = (
+        "Operating systems coordinate CPU scheduling, memory management, and concurrent processes. "
+        "The kernel manages critical resources through abstractions like virtual memory and threads. "
+        "Formulas like P(success) = \\sum_{i=1}^{n} p_i and complexity bounds like O(n \\log n) are common. "
+        "ACID transaction properties ensure Atomicity, Consistency, Isolation, and Durability in relational DBMS. "
+        "When page faults occur, the translation lookaside buffer (TLB) misses must be handled by the memory management unit. "
+        * 3
+    )
+
+    page_2_bn = (
+        "অপারেটিং সিস্টেম হলো কম্পিউটারের এমন একটি মৌলিক প্রোগ্রাম যা হার্ডওয়্যার এবং ব্যবহারকারীর মধ্যে সমন্বয় স্থাপন করে। "
+        "মেমরি ম্যানেজমেন্ট এবং প্রসেস শিডিউলিং এর মাধ্যমে সিস্টেম রিসোর্সের সুষ্ঠু ব্যবহার নিশ্চিত করা হয়। "
+        "একটি পেজ ফল্ট তখনই ঘটে যখন মেমরি ম্যানেজমেন্ট ইউনিট কাঙ্ক্ষিত পেজটি ফিজিক্যাল র‍্যামে খুঁজে পেতে ব্যর্থ হয়। "
+        "অ্যালগরিদমের জটিলতা বিশ্লেষণ করার জন্য বিগ-ও নোটেশন বহুল ব্যবহৃত হয়, যেমন O(n \\log n) বা O(n^2)। "
+        * 3
+    )
+
+    page_3_hi = (
+        "ऑपरेटिंग सिस्टम कंप्यूटर हार्डवेयर और उपयोगकर्ता अनुप्रयोगों के बीच एक आवश्यक मध्यस्थ के रूप में कार्य करता है। "
+        "वर्चुअल मेमोरी तकनीक प्रक्रियाओं को भौतिक मेमोरी सीमाओं से परे निष्पादित करने की अनुमति देती है। "
+        "सीपीयू शेड्यूलिंग एल्गोरिदम जैसे राउंड-रॉबिन और फर्स्ट-कम-फर्स्ट-सर्व्ड प्रक्रिया निष्पादन को अनुकूलित करते हैं। "
+        "डेटाबेस प्रबंधन प्रणाली में ACID गुण डेटा अखंडता और संगति सुनिश्चित करने के लिए महत्वपूर्ण हैं। "
+        * 3
+    )
+
+    page_4_mixed = (
+        "আধুনিক Cloud Computing আর্কিটেকচারে Microservices এবং Kubernetes ব্যবহার করে distributed systems স্কেল করা হয়। "
+        "आधुनिक Distributed Systems में Raft consensus algorithm और Paxos протокол का उपयोग डेटा संगति बनाए रखने के लिए होता है। "
+        "Mathematical relations like \\int_0^\\infty e^{-x} dx = 1 and inequalities like \\epsilon > 0 are standard notations. "
+        "In modern systems, low latency and high availability are achieved through horizontal partitioning and replication. "
+        * 3
+    )
+
+    pages = [
+        PageInput(page_number=1, text=page_1_en, has_text=True),
+        PageInput(page_number=2, text=page_2_bn, has_text=True),
+        PageInput(page_number=3, text=page_3_hi, has_text=True),
+        PageInput(page_number=4, text=page_4_mixed, has_text=True),
+    ]
+
+    # Step 1: Chunk the multi-page document using M4.2 chunker
+    chunks = chunk_document_pages(pages)
+    assert len(chunks) >= 4, f"Expected at least 4 chunks, got {len(chunks)}"
+
+    tok = get_tokenizer()
+    expected_fingerprint = "e5_small_int8_761b726d_f80102d3"
+
+    # Step 2: Verify chunk properties, raw token ceilings, and page ranges
+    for c in chunks:
+        assert 1 <= c.page_number_start <= c.page_number_end <= 4
+        assert len(c.page_spans) >= 1
+        assert c.token_count <= 420, f"Chunk exceeded 420 raw tokens: {c.token_count}"
+        assert len(c.raw_text.strip()) > 0
+        assert len(c.content_hash) == 64
+
+        # Step 3: Verify passage framing with actual tokenizer
+        passage_text = f"passage: {c.raw_text}"
+        passage_encoded = tok.encode(passage_text, add_special_tokens=True)
+        passage_len = len(passage_encoded.ids)
+        assert passage_len <= 512, f"Formatted passage exceeded 512 tokens: {passage_len}"
+
+    # Step 4: Real-model local ONNX embedding inference (no mocks)
+    raw_texts = [c.raw_text for c in chunks]
+    embedding_results = embed_passages(raw_texts)
+    assert len(embedding_results) == len(chunks)
+
+    # Step 5: Verify vector invariants on every generated embedding
+    for res in embedding_results:
+        assert isinstance(res, EmbeddingResult)
+        assert len(res.vector) == 384
+        assert res.dimensions == 384
+        assert res.model_fingerprint == expected_fingerprint
+
+        # Finiteness check
+        assert all(math.isfinite(val) for val in res.vector)
+
+        # L2 unit-norm check
+        norm = math.sqrt(sum(val * val for val in res.vector))
+        assert abs(norm - 1.0) < 1e-4, f"Vector not L2 unit normalized: norm={norm}"
+

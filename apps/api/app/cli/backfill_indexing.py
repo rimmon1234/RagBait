@@ -62,10 +62,14 @@ async def run_backfill(
             rows = await conn.fetch(query, *params)
             discovered_count = len(rows)
 
-            logger.info(f"Discovered {discovered_count} documents eligible for RAG indexing backfill.")
+            logger.info(
+                f"Discovered {discovered_count} documents eligible for RAG indexing backfill."
+            )
             if dry_run or discovered_count == 0:
                 for r in rows:
-                    logger.info(f"  [DRY RUN] Document '{r['title']}' ({r['id']}) in subject '{r['subject_name']}'")
+                    logger.info(
+                        f"  [DRY RUN] Document '{r['title']}' ({r['id']}) in subject '{r['subject_name']}'"
+                    )
                 return discovered_count, 0
 
             enqueued_count = 0
@@ -92,9 +96,13 @@ async def run_backfill(
                     enqueued_count += 1
                     logger.info(f"Enqueued indexing job {res['id']} for '{r['title']}' ({doc_id})")
                 else:
-                    logger.info(f"Document '{r['title']}' ({doc_id}) already has an active indexing job.")
+                    logger.info(
+                        f"Document '{r['title']}' ({doc_id}) already has an active indexing job."
+                    )
 
-            logger.info(f"Backfill complete: enqueued {enqueued_count} jobs out of {discovered_count} discovered.")
+            logger.info(
+                f"Backfill complete: enqueued {enqueued_count} jobs out of {discovered_count} discovered."
+            )
             return discovered_count, enqueued_count
 
     finally:
@@ -103,10 +111,16 @@ async def run_backfill(
 
 def main() -> None:
     """CLI entry point for backfill indexing."""
-    parser = argparse.ArgumentParser(description="Backfill RAG indexing jobs for completed KB documents.")
-    parser.add_argument("--subject-id", type=UUID, default=None, help="Filter by specific subject UUID")
+    parser = argparse.ArgumentParser(
+        description="Backfill RAG indexing jobs for completed KB documents."
+    )
+    parser.add_argument(
+        "--subject-id", type=UUID, default=None, help="Filter by specific subject UUID"
+    )
     parser.add_argument("--limit", type=int, default=None, help="Max documents to enqueue")
-    parser.add_argument("--dry-run", action="store_true", help="Print candidate documents without enqueuing")
+    parser.add_argument(
+        "--dry-run", action="store_true", help="Print candidate documents without enqueuing"
+    )
     args = parser.parse_args()
 
     discovered, enqueued = asyncio.run(

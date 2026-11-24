@@ -120,7 +120,7 @@ async def renew_indexing_lease(
         lease_token,
         str(lease_ttl_seconds),
     )
-    return result == "UPDATE 1"
+    return bool(result == "UPDATE 1")
 
 
 async def fetch_document_pages_for_indexing(
@@ -195,7 +195,9 @@ async def complete_indexing_job_transaction(
             worker_id,
         )
         if not job:
-            logger.warning(f"Worker {worker_id} lost lease on indexing job {job_id}. Aborting completion.")
+            logger.warning(
+                f"Worker {worker_id} lost lease on indexing job {job_id}. Aborting completion."
+            )
             return False
 
         # 3. Clean up any previous chunks for this version (or prior runs)

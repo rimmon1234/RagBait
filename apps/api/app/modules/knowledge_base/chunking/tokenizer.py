@@ -48,7 +48,9 @@ def get_tokenizer() -> Tokenizer:
             _CACHED_TOKENIZER = Tokenizer.from_file(str(local_path))
             return _CACHED_TOKENIZER
         except Exception as exc:
-            logger.warning(f"Failed to load tokenizer from {local_path}: {exc}. Falling back to HuggingFace.")
+            logger.warning(
+                f"Failed to load tokenizer from {local_path}: {exc}. Falling back to HuggingFace."
+            )
 
     logger.info(f"Downloading tokenizer for {MODEL_NAME} from HuggingFace Hub...")
     tok = Tokenizer.from_pretrained(MODEL_NAME)

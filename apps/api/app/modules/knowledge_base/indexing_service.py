@@ -42,7 +42,9 @@ async def process_single_indexing_job(
         # 1. Fetch extracted pages
         pages = await fetch_document_pages_for_indexing(conn, document_id)
         if not pages:
-            logger.warning(f"No extracted pages found for document {document_id}. Marking not_indexable.")
+            logger.warning(
+                f"No extracted pages found for document {document_id}. Marking not_indexable."
+            )
             return await complete_indexing_job_transaction(
                 conn=conn,
                 job_id=job_id,
@@ -87,12 +89,17 @@ async def process_single_indexing_job(
         if success:
             logger.info(f"Successfully completed indexing job {job_id} for document {document_id}.")
         else:
-            logger.warning(f"Failed to complete indexing job {job_id} (lease expired or document modified).")
+            logger.warning(
+                f"Failed to complete indexing job {job_id} (lease expired or document modified)."
+            )
 
         return success
 
     except Exception as exc:
-        logger.error(f"Error processing indexing job {job_id} for document {document_id}: {exc}", exc_info=True)
+        logger.error(
+            f"Error processing indexing job {job_id} for document {document_id}: {exc}",
+            exc_info=True,
+        )
         try:
             await fail_indexing_job(
                 conn=conn,
