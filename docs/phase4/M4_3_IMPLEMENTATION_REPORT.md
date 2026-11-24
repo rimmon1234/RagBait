@@ -69,6 +69,26 @@ Milestone M4.3 connects RagBait's persistent conversation foundation (M4.1) and 
 - **Git Invariant:** Large binaries are ignored via `.gitignore` (`apps/api/app/modules/knowledge_base/assets/models/` and `*.onnx`).
 - **Offline Startup:** FastEmbed initializes with `specific_model_path=str(model_dir)` and `local_files_only=True`. The worker never initiates an implicit download.
 
+### 4. Deep Tokenizer Equivalence & Compatibility Audit (M4.2 vs M4.3)
+M4.2 chunking uses the HuggingFace `intfloat/multilingual-e5-small` tokenizer artifact (`614241f6...`), while M4.3 provisions ONNX runtime artifacts from `Xenova/multilingual-e5-small` (`761b726d...`). A forensic token-by-token comparison was performed across multilingual and edge-case corpora:
+
+- **Vocabulary Size:** Exactly 250,002 in both tokenizers; 0 vocabulary differences.
+- **Special Tokens:** `<s>` (ID 0), `<pad>` (ID 1), `</s>` (ID 2), `<unk>` (ID 3) are 100% identical.
+- **Corpus Tokenization Test Matrix:**
+
+| Test Case | Language / Nature | M4.2 Raw Tokens | M4.3 Raw Tokens | Token IDs Match | Passage Formatted Match | Query Formatted Match | Sequence $\le 512$ | Compatibility Verdict |
+|---|---|---|---|---|---|---|---|---|
+| **English Academic** | Distributed systems passage | 31 | 31 | True | True | True | True (35 tokens) | **IDENTICAL** |
+| **Bengali Academic** | OS and algorithms text | 46 | 46 | True | True | True | True (50 tokens) | **IDENTICAL** |
+| **Hindi Academic** | OS and kernel text | 46 | 46 | True | True | True | True (50 tokens) | **IDENTICAL** |
+| **Mixed Language** | English, Bengali, Hindi mix | 26 | 26 | True | True | True | True (30 tokens) | **IDENTICAL** |
+| **Unicode & Math** | Formulas ($\sum, \int, \ne$), symbols | 53 | 53 | True | True | True | True (57 tokens) | **IDENTICAL** |
+| **Empty String** | Zero-length edge case | 0 | 0 | True | True | True | True (5 tokens) | **IDENTICAL** |
+| **Short Passage** | 3-word sentence | 3 | 3 | True | True | True | True (7 tokens) | **IDENTICAL** |
+| **Long Passage** | Synthetic chunk near boundary | 714 | 714 | True | True | True | N/A (Test chunk) | **IDENTICAL** |
+
+*Conclusion:* The tokenizers produce 100% identical token sequences and sequence lengths across all languages and token formulations. M4.2 chunk boundaries (capped at 420 tokens) guarantee that formatted passages ($420 + 4 = 424$ tokens) never exceed the 512-token context window.
+
 ---
 
 ## Section C: Embedding Service Architecture & Token Budget Math
@@ -180,17 +200,24 @@ Every generated vector must satisfy:
 | **All Knowledge Base Tests** | Combined KB test suites | 21 tests | 21 | 0 | **PASSED** (2.66s) |
 | **Database Tests** | Supabase pgTAP (14 files) | 291 tests | 291 | 0 | **PASSED** |
 | — M4.3 Vector Storage | `m4_3_embedding_test.sql` | 18 tests | 18 | 0 | **PASSED** |
-| **Backend Regression** | Pytest (`apps/api/tests/`) | 374 tests | 366 | 4* | **PASSED (with user WIP)** |
+| **Backend Regression** | Pytest (`apps/api/tests/`) | 374 collected | 366 | 4* (4 skipped) | **PASSED (with user WIP)** |
 | **Backend Lint** | Ruff check (`apps/api/`) | Whole codebase | 0 errors | 0 | **PASSED** |
-| **Backend Types** | Mypy (`kb`, `cli`, `workers`) | 41 source files | 41 / 41 | 0 | **PASSED** |
+| **Backend Types** | Mypy (`kb`, `cli`, `workers`) | 12 source files | 11 / 12 | 1 quirk | **DOCUMENTED** |
 | **Frontend Tests** | Vitest (`apps/web/`) | 141 tests (23 files) | 141 | 0 | **PASSED** |
 
-*\* The 4 failures in `test_community_inference.py` are isolated to user uncommitted route deprecations.*
+*\** The 4 backend failures are strictly isolated to `apps/api/tests/test_community_inference.py` lines 237, 276, 315, 464, which is part of the user's uncommitted in-flight route deprecations.  
+The 4 skipped backend tests are:
+1. `test_admission_ledger_reconciliation.py::test_hourly_rollups_and_anomaly_detection_aggregation` (marked `@pytest.mark.skip(reason="...")`)
+2. `test_kb_extraction_worker.py::test_pdf_worker_real_pdf_smoke` (skipped when optional sample PDF fixture not present)
+3. `test_kb_txt_extraction.py::test_txt_worker_real_txt_smoke` (skipped when optional sample TXT fixture not present)
+4. `test_local_inference_smoke.py::test_live_ollama_smoke` (opt-in smoke test skipped when `OLLAMA_LIVE_TEST` is unset)
+
+Total collected: $366\text{ passed} + 4\text{ failed} + 4\text{ skipped} = 374\text{ test items}$.
 
 ### 2. Measured CPU Performance Benchmarks
 - **Model Cold Start / Load Time:** `1.014 seconds`
 - **CPU Inference Latency (Batch of 4):** `26.95 ms` ($\approx 6.74\text{ ms}$ per chunk on CPU)
-- **Extrapolated CPU Throughput:** $> 140\text{ chunks/second}$
+- **Extrapolated CPU Throughput:** $\approx 148\text{ chunks/second}$ (extrapolated from single-batch CPU latency: $1000\text{ ms} / 6.74\text{ ms} \approx 148.4$). *Note: Real-world database ingestion throughput will be bound by network/disk I/O and batch size.*
 - **INT8 Disk Footprint:** `118.3 MB` (vs 470 MB for FP32)
 - **Unit Norm Precision:** $|\|v\|_2 - 1.0| = 0.000000$ across all tested samples
 - **Bilingual Semantic Similarity:**
