@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   archiveConversation,
+  cancelGeneration,
   createConversation,
   deleteConversation,
   getConversation,
@@ -166,5 +167,42 @@ describe("Chat API Client (Phase 4 M4.1)", () => {
       { method: "GET" }
     );
     expect(result).toEqual(mockMessages);
+  });
+
+  it("cancelGeneration posts to standalone /messages/{id}/cancel when conversationId is omitted", async () => {
+    const cancelResp = {
+      message_id: "msg-9",
+      conversation_id: "conv-1",
+      status: "cancelled" as const,
+      already_cancelled: false,
+      retained_length: 42,
+      reason: "user_requested",
+    };
+    mockFetchWithAuth.mockResolvedValueOnce(cancelResp);
+
+    const result = await cancelGeneration("msg-9");
+    expect(mockFetchWithAuth).toHaveBeenCalledWith("/api/v1/chat/messages/msg-9/cancel", {
+      method: "POST",
+    });
+    expect(result).toEqual(cancelResp);
+  });
+
+  it("cancelGeneration posts to conversation-scoped cancel endpoint when conversationId is provided", async () => {
+    const cancelResp = {
+      message_id: "msg-9",
+      conversation_id: "conv-1",
+      status: "cancelled" as const,
+      already_cancelled: true,
+      retained_length: 0,
+      reason: "user_requested",
+    };
+    mockFetchWithAuth.mockResolvedValueOnce(cancelResp);
+
+    const result = await cancelGeneration("msg-9", "conv-1");
+    expect(mockFetchWithAuth).toHaveBeenCalledWith(
+      "/api/v1/chat/conversations/conv-1/messages/msg-9/cancel",
+      { method: "POST" }
+    );
+    expect(result).toEqual(cancelResp);
   });
 });

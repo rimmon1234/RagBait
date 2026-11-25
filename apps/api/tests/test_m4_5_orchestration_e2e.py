@@ -343,6 +343,7 @@ async def test_cloud_rag_turn_e2e_idempotency_and_failure_recovery():
                     "routing_mode": "cloud_only",
                     "provider_id": "openrouter",
                     "model_id": "openrouter/meta-llama/llama-3.3-70b-instruct:free",
+                    "stream": False,
                 },
             )
 
@@ -390,6 +391,7 @@ async def test_cloud_rag_turn_e2e_idempotency_and_failure_recovery():
                     "content": "What is the difference between paging and segmentation?",
                     "idempotency_key": idem_key,
                     "model_id": "openrouter/meta-llama/llama-3.3-70b-instruct:free",
+                    "stream": False,
                 },
             )
         assert replay.status_code == 200, replay.text
@@ -406,6 +408,7 @@ async def test_cloud_rag_turn_e2e_idempotency_and_failure_recovery():
                 "content": "Completely different question",
                 "idempotency_key": idem_key,
                 "model_id": "openrouter/meta-llama/llama-3.3-70b-instruct:free",
+                "stream": False,
             },
         )
         assert conflict.status_code == 409
@@ -426,6 +429,7 @@ async def test_cloud_rag_turn_e2e_idempotency_and_failure_recovery():
                         "content": retry_q,
                         "idempotency_key": retry_key,
                         "model_id": "openrouter/meta-llama/llama-3.3-70b-instruct:free",
+                        "stream": False,
                     },
                 )
 
@@ -450,6 +454,7 @@ async def test_cloud_rag_turn_e2e_idempotency_and_failure_recovery():
                     "content": retry_q,
                     "idempotency_key": retry_key,
                     "model_id": "openrouter/meta-llama/llama-3.3-70b-instruct:free",
+                    "stream": False,
                 },
             )
         assert recovered.status_code == 200, recovered.text
@@ -502,6 +507,7 @@ async def test_citation_repair_and_failure_status_transition():
                 json={
                     "content": "How does Raft achieve consensus?",
                     "model_id": "openrouter/meta-llama/llama-3.3-70b-instruct:free",
+                    "stream": False,
                 },
             )
         assert res_ok.status_code == 200, res_ok.text
@@ -531,6 +537,7 @@ async def test_citation_repair_and_failure_status_transition():
                     "content": "How do Raft terms behave?",
                     "idempotency_key": fail_key,
                     "model_id": "openrouter/meta-llama/llama-3.3-70b-instruct:free",
+                    "stream": False,
                 },
             )
         assert res_fail.status_code == 422
@@ -613,6 +620,7 @@ async def test_authorization_and_entitlement_rejections_before_llm_calls():
                     json={
                         "content": "Explain shortest paths",
                         "model_id": "openrouter/meta-llama/llama-3.3-70b-instruct:free",
+                        "stream": False,
                     },
                 )
                 assert r.status_code == expected_status, (
@@ -827,6 +835,7 @@ async def test_historical_source_visibility_revalidation_and_masking():
                 json={
                     "content": "What does a page table do?",
                     "model_id": "openrouter/meta-llama/llama-3.3-70b-instruct:free",
+                    "stream": False,
                 },
             )
         assert turn.status_code == 200

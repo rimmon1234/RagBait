@@ -196,31 +196,34 @@ flowchart LR
 
 ---
 
-### Milestone M4.6 — Generation Reliability and Load Control
-- **Objective**: Implement SSE streaming, request cancellation, Redis-backed concurrency limits, and retry recovery.
+### Milestone M4.6 — Generation Reliability and Load Control (Completed)
+- **Status**: COMPLETE & VERIFIED (November 25, 2026 — [M4_6_IMPLEMENTATION_REPORT.md](file:///d:/Projects/RagBait/docs/phase4/M4_6_IMPLEMENTATION_REPORT.md))
+- **Objective**: Implement SSE streaming, distributed request cancellation, Redis-backed concurrency limits, lease heartbeats, and bounded admission wait/retry recovery.
 - **Scope**:
-  - Server-Sent Events (SSE) streaming endpoint: `POST /api/v1/chat/conversations/{id}/messages`.
-  - Cancellation endpoint: `POST /api/v1/chat/conversations/{id}/messages/{msg_id}/cancel`.
-  - Private Local Ollama endpoints (`prepare-local` and `finalize-local`) bypassing cloud semaphores.
-  - Redis distributed concurrency semaphores with UUID4 lease tokens and atomic Lua release scripts (max 1 generation per conversation, max 2 per user, max 10 global).
-  - Bounded request queue with `event: admission_waiting`, 30s timeout, and HTTP 429 failover.
-  - Safe error recovery and partial stream persistence on client disconnect.
-- **Dependencies**: M4.5 orchestration, Phase 2 routing engine.
-- **Database Changes**: Minor index additions for pending message state tracking.
-- **Backend Changes**: Chat streaming router, cancellation handler, Redis semaphore wrapper.
-- **Frontend Changes**: None.
+  - Server-Sent Events (SSE) streaming endpoint: `POST /api/v1/chat/conversations/{id}/messages` (streaming default `stream=true`, plus synchronous `stream=false` JSON parity).
+  - Provider SSE adapters (`GeminiAdapter`, `GroqAdapter`, `OpenRouterAdapter`, `CerebrasAdapter`) with mid-stream error frame sanitization and M2.9 pre-first-token failover + post-first-token isolation in `stream_route_and_dispatch()`.
+  - Cancellation endpoints: `POST /api/v1/chat/messages/{message_id}/cancel` and `/conversations/{conversation_id}/messages/{message_id}/cancel` with Redis marker/PubSub + DB CAS guards.
+  - Private Local Ollama endpoints (`prepare-local` and `finalize-local`) bypassing `sem:global:cloud` semaphores even under 10/10 saturation or Redis outage.
+  - Atomic 3-scope Redis ZSET Lua semaphores (`sem:conv:{id}` = 1, `sem:user:{id}` = 2, `sem:global:cloud` = 10) with UUID4 lease tokens, 60s TTL, 15s background heartbeat renewal, and fail-closed `503` on Redis outage.
+  - Bounded request wait with `event: admission_waiting`, 30s timeout -> `event: generation_failed` (`RATE_LIMITED`), keepalive pings, client disconnect detection, and partial response preservation on cancel.
+- **Dependencies**: M4.5 orchestration + hardening (`36f4a46`), M2.9 routing engine.
+- **Database Changes**: Migration `20260307000000_m4_6_generation_reliability.sql` adding partial lookup indexes `idx_chat_messages_gen_req_id` and `idx_chat_messages_active_conv`.
+- **Backend Changes**: `streaming_service.py`, `semaphores.py`, `cancellation.py`, `config.py`, extended gateway `interfaces.py`/`streaming.py`/providers, routing `executor.py`/`service.py`, and updated `chat/router.py` & `orchestration/service.py`.
+- **Frontend Changes**: Thin transport & cancellation types (`src/types/chat.ts`), `cancelGeneration` (`src/lib/chat-client.ts`), and incremental SSE client (`src/lib/chat/streaming-client.ts`). (Full UI components remain deferred to M4.7.)
 - **Security Considerations**:
-  - Concurrency locks prevent interleaved responses in the same conversation.
-  - Abort signals release provider connections and Redis leases immediately via verified tokens.
+  - Atomic ZSET Lua scripts + UUID4 lease tokens prevent stale workers from releasing active permits or reviving expired leases.
+  - Non-owner cancellation returns `404 MESSAGE_NOT_FOUND`; completed/failed messages return `409`; `expected_generation_request_id` CAS prevents terminal overwrite races.
 - **Testing**:
-  - Concurrency lease tests (`test_chat_concurrency.py`).
-  - Cancellation race tests (`test_chat_cancellation.py`).
-  - Client disconnect cleanup tests.
+  - Gateway SSE, UTF-8 multibyte, provider adapter error mapping, failover & quota settlement tests (`tests/test_m4_6_adapters_and_sse.py`).
+  - Real Redis semaphore, heartbeat, lease expiry, fail-closed 503, and multi-process contention tests (`tests/test_m4_6_semaphores_and_heartbeat.py`).
+  - E2E streaming lifecycle, repair, cancel, disconnect, wait queue, and Private Local isolation tests (`tests/test_m4_6_streaming_lifecycle.py`).
+  - Controlled load saturation tests for 5, 10, and 20 concurrent streams (`tests/test_m4_6_load.py`).
+  - Frontend SSE chunked UTF-8 & abort/cancel tests (`apps/web/tests/chat/streaming-client.test.ts` and `chat-client.test.ts`).
 - **Acceptance Criteria**:
-  - Concurrent requests within the same conversation are rejected with HTTP 409 Conflict.
-  - Cancelling a stream stops token emission within 250ms and saves partial text.
-  - Concurrency leases automatically expire after 60s to prevent deadlocks.
-- **Exclusions**: Final frontend UI polishing.
+  - Concurrent requests within the same conversation are rejected with HTTP 409 (`CONVERSATION_CONCURRENCY_LIMIT`), and >2 per user with HTTP 429 (`USER_CONCURRENCY_LIMIT`).
+  - Active Redis global saturation never exceeds `sem:global:cloud` = 10 and cleans up with 0 leaked permits across contention and disconnects.
+  - Cancelling a stream aborts upstream generation promptly, settles quota once, and preserves partial text.
+- **Exclusions**: Final student chat UI page, sidebar, Sources drawer, citation chips, and M4.8 50-question evaluation certification.
 
 ---
 

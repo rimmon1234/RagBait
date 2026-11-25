@@ -1,5 +1,6 @@
 import { fetchWithAuth } from "@/lib/api";
 import type {
+  CancelGenerationResponse,
   ChatConversation,
   ConversationListParams,
   ConversationListResponse,
@@ -90,5 +91,18 @@ export async function getConversationMessages(
   }`;
   return fetchWithAuth<MessageListResponse>(endpoint, {
     method: "GET",
+  });
+}
+
+export async function cancelGeneration(
+  messageId: string,
+  conversationId?: string
+): Promise<CancelGenerationResponse> {
+  const endpoint = conversationId
+    ? `/api/v1/chat/conversations/${encodeURIComponent(conversationId)}/messages/${encodeURIComponent(messageId)}/cancel`
+    : `/api/v1/chat/messages/${encodeURIComponent(messageId)}/cancel`;
+
+  return fetchWithAuth<CancelGenerationResponse>(endpoint, {
+    method: "POST",
   });
 }

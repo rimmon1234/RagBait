@@ -118,12 +118,14 @@ In RagBait Phase 4, the platform processes student study queries and academic ma
 ---
 
 ### 2.7 Threat Vector 7: Concurrency Lock Hijacking & Race Conditions
-- **Threat**: A client disconnects or times out; an old delayed worker process wakes up and releases a lock that has already been acquired by another generation request.
+- **Threat**: A client disconnects or times out; an old delayed worker process wakes up and releases a lock that has already been acquired by another generation request, or a late completion overwrites a cancelled message.
 - **Severity**: Medium.
 - **Mitigation**:
-  1. All locks and Redis semaphores use a unique UUID4 **Lease Permit Token**.
-  2. Release operations use an atomic Lua script that verifies the token matches before deleting the key.
-  3. Stale processes are unable to delete active locks held by subsequent generations.
+  1. All Redis 3-scope ZSET semaphores (`sem:conv:{id}`, `sem:user:{id}`, `sem:global:cloud`) use unique per-attempt `lease_token` values.
+  2. Acquisition, heartbeat renewal, and release use atomic Redis Lua scripts that verify exact token ownership and reject/prune expired leases instead of reviving or evicting another owner's lease.
+  3. Cloud generation **fails closed** (`503 SERVICE_UNAVAILABLE`) when Redis is unreachable rather than falling back to per-process locks.
+  4. Cross-process cancellation signals via Redis marker + Pub/Sub, paired with conditional database CAS (`generation_request_id` + active status checks), prevent `completed`/`failed` messages from flipping to `cancelled` and vice versa.
+  5. Cancellation endpoints enforce ownership isolation (`404 MESSAGE_NOT_FOUND` for non-owners).
 
 ---
 

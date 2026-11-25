@@ -97,42 +97,62 @@ All Phase 4 conversational endpoints are mounted under `/api/v1/chat/` within th
 ```
 
 #### SSE Stream Protocol & Events
-The server opens an HTTP Server-Sent Events stream emitting newline-delimited chunks:
+By default (`"stream": true` or `Accept: text/event-stream`), the server opens an HTTP 200 Server-Sent Events stream with `id: <seq>`, keepalive pings (`: keep-alive`), and JSON `data:` payloads (passing `"stream": false` without SSE `Accept` returns synchronous `ChatTurnResponse` JSON):
 
-1. **`event: admission_waiting`** (Emitted if global concurrency is saturated):
+1. **`event: admission_waiting`** (Emitted when global cloud cap of 10 is saturated before admission timeout):
 ```
+id: 1
 event: admission_waiting
-data: {"position":1,"estimated_wait_ms":3500,"message":"Platform concurrency reached. Waiting for next available generation slot..."}
+data: {"message_id":"...","conversation_id":"...","queue_position":1,"estimated_wait_seconds":30,"status":"queued"}
 ```
 
-2. **`event: generation_started`**: Emitted when prompt validation, subject scoping, and admission reservation pass.
+2. **`event: generation_started`**: Emitted when upstream cloud generation begins (or replayed idempotently).
 ```
+id: 2
 event: generation_started
-data: {"message_id":"m-8f7a6b5c","generation_request_id":"req-019283","model_id":"gemini-3.8-flash","provider_id":"gemini"}
+data: {"message_id":"...","user_message_id":"...","conversation_id":"...","generation_request_id":"req-019283","model_id":"gemini-2.5-flash","provider_id":"gemini","resolved_model_id":"gemini-2.5-flash","streaming":true,"replayed":false}
 ```
 
-3. **`event: sources_identified`**: Emitted immediately upon hybrid search completion, alerting the UI to identified candidate sources before token generation begins.
+3. **`event: sources_identified`**: Emitted alongside generation start with safe citation source metadata (excluding raw chunks/secrets).
 ```
+id: 3
 event: sources_identified
-data: {"sources":[{"citation_key":"S1","document_id":"d-123","document_title":"Silberschatz OS 10th Ed.pdf","page_number_start":142,"page_number_end":143}]}
+data: {"message_id":"...","conversation_id":"...","sources":[{"citation_key":"S1","document_id":"d-123","document_title":"Silberschatz OS 10th Ed.pdf","page_number_start":142,"page_number_end":143,"relevance_score":0.884}],"omitted_count":0,"retrieval_candidate_count":4}
 ```
 
-4. **`event: text_delta`**: Emitted repeatedly as completion tokens arrive from the upstream provider.
+4. **`event: text_delta`**: Emitted repeatedly as normalized UTF-8 completion chunks arrive.
 ```
+id: 4
 event: text_delta
-data: {"delta":"Round Robin (RR) is a preemptive CPU scheduling algorithm [S1]"}
+data: {"message_id":"...","delta":"Round Robin (RR) is a preemptive CPU scheduling algorithm [S1]"}
 ```
 
-5. **`event: generation_completed`**: Emitted when generation finishes successfully.
+5. **`event: content_replaced`** (Emitted if post-stream citation validation triggers bounded single repair):
 ```
+id: 5
+event: content_replaced
+data: {"message_id":"...","content":"Corrected answer [S1]","reason":"citation_repair"}
+```
+
+6. **`event: generation_completed`**: Terminal event emitted after atomic database and provenance commit.
+```
+id: 6
 event: generation_completed
-data: {"message_id":"m-8f7a6b5c","finish_reason":"stop","token_usage":{"prompt_tokens":840,"completion_tokens":165,"total_tokens":1005}}
+data: {"message_id":"...","finish_reason":"stop","usage":{"input_tokens":840,"output_tokens":165,"total_tokens":1005},"citation_validation_status":"valid_grounded","valid_citations":["S1"],"repair_attempted":false,"sources":[...],"replayed":false}
 ```
 
-6. **`event: generation_error`**: Emitted if generation fails mid-stream or times out.
+7. **`event: generation_failed`**: Terminal event emitted on unrecoverable timeout, citation validation failure, lease loss, or mid-stream provider error.
 ```
-event: generation_error
-data: {"error_code":"PROVIDER_OVERLOADED","message":"Upstream provider rate limited; unable to complete response."}
+id: 7
+event: generation_failed
+data: {"message_id":"...","code":"RATE_LIMITED","message":"All cloud generation slots remained busy for 30s. Please retry shortly.","retryable":true}
+```
+
+8. **`event: generation_cancelled`**: Terminal event emitted when student cancellation stops an active or queued stream.
+```
+id: 8
+event: generation_cancelled
+data: {"message_id":"...","conversation_id":"...","partial_content":"...","retained_length":42,"reason":"user_requested"}
 ```
 
 ### 3.2 Private Local Ollama Endpoints
@@ -171,6 +191,7 @@ data: {"error_code":"PROVIDER_OVERLOADED","message":"Upstream provider rate limi
 ```json
 {
   "message_id": "m-local-8f7a6b5c",
+  "prepared_request_id": "prep-9f8e7d6c5b4a",
   "completion_text": "Paging is a memory management scheme that eliminates the need for contiguous allocation of physical memory [S1]...",
   "finish_reason": "stop",
   "token_usage": {
@@ -190,15 +211,20 @@ data: {"error_code":"PROVIDER_OVERLOADED","message":"Upstream provider rate limi
 ```
 
 ### 3.3 Cancel Generation
-- **Route**: `POST /api/v1/chat/conversations/{id}/messages/{msg_id}/cancel`
+- **Primary Route**: `POST /api/v1/chat/messages/{message_id}/cancel`
+- **Conversation-Scoped Alias**: `POST /api/v1/chat/conversations/{conversation_id}/messages/{message_id}/cancel`
 - **Success Response (200 OK)**:
 ```json
 {
   "message_id": "m-8f7a6b5c",
+  "conversation_id": "c1f88720-3b4c-4e89-8d75-8e7c10bcf22a",
   "status": "cancelled",
-  "retained_length": 182
+  "already_cancelled": false,
+  "retained_length": 182,
+  "reason": "user_requested"
 }
 ```
+- **Conflict Responses (`409`)**: Already-terminal `completed` (`GENERATION_ALREADY_COMPLETED`) or `failed` (`GENERATION_ALREADY_FAILED`) messages are never overwritten to `cancelled`. Non-owners receive `404 MESSAGE_NOT_FOUND`.
 
 ---
 

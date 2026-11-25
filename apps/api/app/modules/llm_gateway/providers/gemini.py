@@ -16,6 +16,7 @@ from app.modules.llm_gateway.interfaces import (
     NormalizedGenerationResult,
     NormalizedStreamChunk,
     NormalizedUsage,
+    raise_for_stream_error_payload,
 )
 from app.modules.llm_gateway.streaming import parse_sse_stream
 
@@ -147,6 +148,8 @@ class GeminiAdapter(BaseProviderAdapter):
                     chunk_json = json.loads(raw_data)
                 except Exception:
                     continue
+
+                raise_for_stream_error_payload(self.provider_id, chunk_json)
 
                 # Check promptFeedback
                 feedback = chunk_json.get("promptFeedback")

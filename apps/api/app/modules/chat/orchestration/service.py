@@ -25,6 +25,7 @@ from app.modules.chat.context.compaction import (
 )
 from app.modules.chat.context.config import context_settings
 from app.modules.chat.context.context_service import ContextService
+from app.modules.chat.orchestration.cancellation import is_generation_cancelled_in_redis
 from app.modules.chat.orchestration.generation import (
     execute_grounded_cloud_generation,
     normalize_token_usage_record,
@@ -34,8 +35,10 @@ from app.modules.chat.orchestration.persistence import (
     compute_prepared_expiry,
     lock_and_verify_prepared_local_message,
     lookup_existing_turn_by_idempotency,
+    mark_assistant_message_cancelled,
     mark_assistant_message_failed,
     reserve_turn_messages,
+    verify_conversation_ready_for_cloud,
 )
 from app.modules.chat.orchestration.schemas import (
     ChatMessageCreateRequest,
@@ -46,6 +49,13 @@ from app.modules.chat.orchestration.schemas import (
     PreparedSourceMetadata,
     PrepareLocalRequest,
     PrepareLocalResponse,
+)
+from app.modules.chat.orchestration.semaphores import (
+    CloudGenerationPermit,
+    release_cloud_permits,
+    start_permit_heartbeat,
+    stop_permit_heartbeat,
+    wait_for_sync_cloud_permits,
 )
 from app.modules.chat.schemas import MessageRead
 
@@ -148,6 +158,46 @@ class ChatOrchestrationService:
                         telemetry=telemetry,
                     )
 
+            await verify_conversation_ready_for_cloud(
+                db_conn,
+                user_id=user_id,
+                conversation_id=conversation_id,
+            )
+
+        permit: CloudGenerationPermit = await wait_for_sync_cloud_permits(
+            conversation_id=conversation_id,
+            user_id=user_id,
+        )
+        try:
+            return await ChatOrchestrationService._execute_cloud_turn_with_permit(
+                user_id=user_id,
+                conversation_id=conversation_id,
+                request=request,
+                gen_request_id=gen_request_id,
+                start_ts=start_ts,
+                existing_user_id=existing_user["id"] if existing_user else None,
+                permit=permit,
+                spawn_background_compaction=spawn_background_compaction,
+                conn=conn,
+            )
+        finally:
+            await stop_permit_heartbeat(permit)
+            await release_cloud_permits(permit)
+
+    @staticmethod
+    async def _execute_cloud_turn_with_permit(
+        *,
+        user_id: UUID,
+        conversation_id: UUID,
+        request: ChatMessageCreateRequest,
+        gen_request_id: str,
+        start_ts: float,
+        existing_user_id: UUID | None,
+        permit: CloudGenerationPermit,
+        spawn_background_compaction: bool,
+        conn: asyncpg.Connection | None,
+    ) -> ChatTurnResponse:
+        async with _borrow_conn(conn) as db_conn:
             prepared = await ContextService.prepare_grounded_context(
                 user_id=user_id,
                 conversation_id=conversation_id,
@@ -158,7 +208,7 @@ class ChatOrchestrationService:
                 routing_mode=request.routing_mode,
                 explicit_credential_id=request.credential_id,
                 requested_max_output=request.max_output_tokens,
-                exclude_message_id=existing_user["id"] if existing_user else None,
+                exclude_message_id=existing_user_id,
                 conn=db_conn,
             )
 
@@ -176,6 +226,7 @@ class ChatOrchestrationService:
                     extra_metadata={"model_fingerprint": prepared.model_fingerprint},
                 )
         assistant_id: UUID = asst_row["id"]
+        start_permit_heartbeat(permit)
 
         # 4. Call inference gateway + validate citations (NO DB connection held during upstream I/O!)
         included_keys = [ev.citation_key for ev in prepared.selected_evidence]
@@ -201,8 +252,20 @@ class ChatOrchestrationService:
                     assistant_message_id=assistant_id,
                     error_code=err_code,
                     error_message=_safe_error_text(exc),
+                    expected_generation_request_id=gen_request_id,
                 )
             raise
+
+        if await is_generation_cancelled_in_redis(assistant_id, gen_request_id):
+            async with _borrow_conn(conn) as cancel_conn:
+                await mark_assistant_message_cancelled(
+                    cancel_conn,
+                    assistant_message_id=assistant_id,
+                    partial_content="",
+                    reason="user_requested",
+                    expected_generation_request_id=gen_request_id,
+                )
+            raise ConflictError("Generation was cancelled", code="GENERATION_CANCELLED")
 
         # 5 & 6 & 7. Post-LLM atomic completion + compaction scheduling + revalidated sources
         referenced_set = set(gen_out.validation.valid_keys)
@@ -230,13 +293,17 @@ class ChatOrchestrationService:
                     selected_evidence=prepared.selected_evidence,
                     referenced_keys=referenced_set,
                     extra_metadata=telemetry_meta,
+                    expected_generation_request_id=gen_request_id,
                 )
+            except ConflictError:
+                raise
             except Exception:
                 await mark_assistant_message_failed(
                     db_conn,
                     assistant_message_id=assistant_id,
                     error_code="PERSISTENCE_FAILED",
                     error_message="Failed to persist assistant response and source provenance",
+                    expected_generation_request_id=gen_request_id,
                 )
                 raise
 

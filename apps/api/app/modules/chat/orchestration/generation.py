@@ -1,19 +1,21 @@
 """Cloud generation adapter delegating strictly to M2.9 route_and_dispatch()."""
 
 import logging
+from collections.abc import AsyncIterator, Callable
 from typing import Any
 from uuid import UUID
 
 from app.modules.chat.citations.schemas import CitationValidationError, CitationValidationResult
 from app.modules.chat.citations.validator import build_citation_repair_messages, validate_citations
 from app.modules.chat.context.config import context_settings
+from app.modules.llm_gateway.interfaces import GatewayStreamEvent
 from app.modules.llm_gateway.schemas import (
     ChatCompletionRequest,
     ChatCompletionResponse,
     ChatMessage,
 )
 from app.modules.routing.schemas import RouteDecision
-from app.modules.routing.service import route_and_dispatch
+from app.modules.routing.service import route_and_dispatch, stream_route_and_dispatch
 
 logger = logging.getLogger("ragbait.chat.orchestration.generation")
 
@@ -144,42 +146,26 @@ async def execute_grounded_cloud_generation(
             f"Citation validation failed for request {generation_request_id}; "
             f"attempting bounded single repair pass (status={validation.status}, unknown={validation.unknown_keys})"
         )
-        repair_msgs = build_citation_repair_messages(
+        rep_res = await run_bounded_citation_repair(
+            user_id=user_id,
             original_answer=answer_text,
-            valid_included_keys=included_citation_keys,
+            included_citation_keys=included_citation_keys,
             unknown_keys=validation.unknown_keys,
             malformed_tokens=validation.malformed_tokens,
-        )
-        repair_req = ChatCompletionRequest(
-            routing_mode=routing_mode,  # type: ignore[arg-type]
+            idempotency_key=idempotency_key,
+            generation_request_id=generation_request_id,
+            routing_mode=routing_mode,
             provider_id=decision.provider_id,
             model_id=decision.model_id,
             credential_id=credential_id,
-            community_opt_in=False,
-            messages=[ChatMessage(role=m["role"], content=m["content"]) for m in repair_msgs],  # type: ignore[arg-type]
-            stream=False,
-            idempotency_key=f"repair-{idempotency_key}",
+            max_output_tokens=max_output_tokens,
         )
-        repair_req.params.temperature = 0.0
-        repair_req.params.max_output_tokens = max_output_tokens
-
-        try:
-            rep_res, rep_streaming, _ = await route_and_dispatch(
-                user_id=user_id,
-                req=repair_req,
-                correlation_id=f"{generation_request_id}-repair",
-            )
-            if not rep_streaming and isinstance(rep_res, ChatCompletionResponse):
-                repair_usage_dict = dict(rep_res.usage or {})
-                # Re-run FULL citation + emptiness validation on repaired output
-                repaired_validation = validate_citations(rep_res.content, included_citation_keys)
-                validation = repaired_validation
-                answer_text = rep_res.content
-                raw_result = rep_res
-        except Exception as repair_exc:
-            logger.warning(
-                f"Bounded citation repair failed for request {generation_request_id}: {repair_exc}"
-            )
+        if rep_res is not None:
+            repair_usage_dict = dict(rep_res.usage or {})
+            repaired_validation = validate_citations(rep_res.content, included_citation_keys)
+            validation = repaired_validation
+            answer_text = rep_res.content
+            raw_result = rep_res
 
     if not validation.is_valid:
         raise CitationValidationError(
@@ -204,4 +190,95 @@ async def execute_grounded_cloud_generation(
         decision=decision,
         repair_attempted=repair_attempted,
         normalized_usage=normalized_usage,
+    )
+
+
+async def run_bounded_citation_repair(
+    *,
+    user_id: UUID,
+    original_answer: str,
+    included_citation_keys: list[str],
+    unknown_keys: list[str],
+    malformed_tokens: list[str],
+    idempotency_key: str,
+    generation_request_id: str,
+    routing_mode: str = "auto",
+    provider_id: str | None = None,
+    model_id: str | None = None,
+    credential_id: UUID | None = None,
+    max_output_tokens: int = 2048,
+) -> ChatCompletionResponse | None:
+    """Execute one bounded deterministic citation-repair pass without changing source context."""
+    repair_msgs = build_citation_repair_messages(
+        original_answer=original_answer,
+        valid_included_keys=included_citation_keys,
+        unknown_keys=unknown_keys,
+        malformed_tokens=malformed_tokens,
+    )
+    repair_req = ChatCompletionRequest(
+        routing_mode=routing_mode,  # type: ignore[arg-type]
+        provider_id=provider_id,
+        model_id=model_id,
+        credential_id=credential_id,
+        community_opt_in=False,
+        messages=[ChatMessage(role=m["role"], content=m["content"]) for m in repair_msgs],  # type: ignore[arg-type]
+        stream=False,
+        idempotency_key=f"repair-{idempotency_key}",
+    )
+    repair_req.params.temperature = 0.0
+    repair_req.params.max_output_tokens = max_output_tokens
+
+    try:
+        rep_res, rep_streaming, _ = await route_and_dispatch(
+            user_id=user_id,
+            req=repair_req,
+            correlation_id=f"{generation_request_id}-repair",
+        )
+        if not rep_streaming and isinstance(rep_res, ChatCompletionResponse):
+            return rep_res
+    except Exception as repair_exc:
+        logger.warning(
+            f"Bounded citation repair failed for request {generation_request_id}: {repair_exc}"
+        )
+    return None
+
+
+async def stream_grounded_cloud_generation(
+    *,
+    user_id: UUID,
+    llm_messages: list[dict[str, str]],
+    idempotency_key: str,
+    generation_request_id: str,
+    routing_mode: str = "auto",
+    provider_id: str | None = None,
+    model_id: str | None = None,
+    credential_id: UUID | None = None,
+    temperature: float = 0.7,
+    max_output_tokens: int = 2048,
+    cancel_check: Callable[[], bool] | None = None,
+    first_token_timeout_seconds: float | None = None,
+    idle_timeout_seconds: float | None = None,
+) -> tuple[AsyncIterator[GatewayStreamEvent], RouteDecision]:
+    """Initiate streaming cloud generation via M2.9 stream_route_and_dispatch."""
+    gateway_msgs = [ChatMessage(role=m["role"], content=m["content"]) for m in llm_messages]  # type: ignore[arg-type]
+    req = ChatCompletionRequest(
+        routing_mode=routing_mode,  # type: ignore[arg-type]
+        provider_id=provider_id,
+        model_id=model_id,
+        credential_id=credential_id,
+        community_opt_in=False,
+        messages=gateway_msgs,
+        stream=True,
+        idempotency_key=f"chat-{idempotency_key}",
+    )
+    req.params.temperature = temperature
+    req.params.max_output_tokens = max_output_tokens
+
+    return await stream_route_and_dispatch(
+        user_id=user_id,
+        req=req,
+        correlation_id=generation_request_id,
+        cancel_check=cancel_check,
+        first_token_timeout_seconds=first_token_timeout_seconds,
+        idle_timeout_seconds=idle_timeout_seconds,
     )

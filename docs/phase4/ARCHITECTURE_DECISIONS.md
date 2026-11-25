@@ -225,7 +225,7 @@
 - **Decision**: **Option 1 (Redis Semaphores with Lua Release)**.
 - **Reasoning**: Redis provides sub-millisecond atomic lease management with self-expiring TTLs (60s). Checking token equality via Lua before deletion guarantees that a delayed worker will never accidentally delete a subsequent generation's lock.
 - **Trade-offs**: Requires active Redis connection (port 6379).
-- **Risks**: Redis failure; falls back to in-memory process locks.
+- **Risks**: Redis outage; updated in M4.6 (ADR 23) to **fail closed** with HTTP `503 SERVICE_UNAVAILABLE` for cloud generation rather than falling back to unsafe per-worker in-memory locks across multi-worker deployments, while Private Local Ollama continues uninterrupted.
 - **Revisiting Conditions**: If student user base expands past 1,000 active concurrent users.
 
 ---
@@ -236,7 +236,7 @@
   1. *Bounded Direct Streaming with Redis Admission Waiting (Max 30s)*.
   2. *Durable PostgreSQL / Celery Worker Queue*.
 - **Decision**: **Option 1 (Bounded Direct Streaming with Admission Waiting)**.
-- **Reasoning**: Interactive AI chat requires instant Time-to-First-Token ($<1.5\text{s}$). When global capacity is saturated, the server emits `event: admission_waiting` and waits up to 30 seconds for a slot. If no slot frees, it fails fast with HTTP 429 rather than trapping students in an invisible backlog queue.
+- **Reasoning**: Interactive AI chat requires instant Time-to-First-Token ($<1.5\text{s}$). When global capacity is saturated on streaming requests, the server opens SSE (`HTTP 200`), emits `event: admission_waiting`, and waits up to 30 seconds for a slot; if none opens, it emits `event: generation_failed` (`code="RATE_LIMITED"`, `retryable=true`). Synchronous `stream=false` requests wait up to 30 seconds and return `HTTP 429 CONCURRENCY_TIMEOUT` (see ADR 23).
 - **Trade-offs**: Requests waiting $>30\text{s}$ are rejected cleanly.
 - **Risks**: None; students prefer actionable notices to silent delays.
 - **Revisiting Conditions**: If cloud providers impose strict 1-request-at-a-time rate limits.
@@ -306,3 +306,19 @@
 - **Trade-offs**: Documents with extraction status `completed_no_text` cannot be indexed.
 - **Risks**: None.
 - **Revisiting Conditions**: When gVisor / container sandboxing is enabled for Phase 3.
+
+---
+
+### ADR 23: M4.6 Streaming Contracts, Redis Fail-Closed Policy, Cancel Routes & Prepare-Local Binding
+- **Context**: During M4.6 implementation, four cross-document ambiguities were resolved to preserve distributed multi-worker correctness, M4.5 hardening guarantees, and clean HTTP/SSE semantics:
+  1. **Cancellation route**: `API_AND_EVENT_CONTRACTS.md` documented `/conversations/{id}/messages/{message_id}/cancel` while M4.6 operational specs mandated `/messages/{message_id}/cancel`.
+  2. **Global queue saturation HTTP code vs SSE**: `HTTP 200 text/event-stream` headers cannot retroactively switch to `HTTP 429` once `event: admission_waiting` has been flushed to the wire.
+  3. **Redis outage handling**: `GENERATION_RELIABILITY_AND_LOAD_PLAN.md` §5.3 mentioned in-memory process fallback, whereas multi-worker uvicorn deployments cannot enforce a platform-wide 10-stream cloud cap locally.
+  4. **`finalize-local` replay token**: M4.5 hardening required `prepared_request_id` (`min_length=8`) to close replay/cross-message races.
+- **Decision**:
+  1. Support **both** `POST /api/v1/chat/messages/{message_id}/cancel` (authoritative, derives `conversation_id` safely from DB with ownership verification) and `POST /api/v1/chat/conversations/{conversation_id}/messages/{message_id}/cancel` (verifies path `conversation_id` matches message row or returns `404`).
+  2. Preflight conversation (`409 CONVERSATION_CONCURRENCY_LIMIT`), user (`429 USER_CONCURRENCY_LIMIT`), authorization (`403`/`404`), and Redis availability (`503 SERVICE_UNAVAILABLE`) fail BEFORE SSE headers. When only the global cap (10) is saturated on streaming (`stream=true`, default), the endpoint commits `HTTP 200 text/event-stream`, emits `event: admission_waiting`, and upon 30s timeout emits terminal `event: generation_failed` (`code="RATE_LIMITED"`, `retryable=true`). Non-streaming (`stream=false`) requests synchronously wait and reject with `HTTP 429 CONCURRENCY_TIMEOUT`.
+  3. Fail **closed** (`HTTP 503 SERVICE_UNAVAILABLE`) for cloud generation whenever Redis is unavailable; never fall back to `asyncio.Semaphore` or per-process locks. Private Local Ollama (`prepare-local` / `finalize-local`) continues bypassing Redis cloud semaphores completely.
+  4. Keep `FinalizeLocalRequest.prepared_request_id` mandatory (`min_length=8`) and verify it under `FOR UPDATE` CAS.
+- **Consequences**: Guaranteed cross-process cloud concurrency safety, clean SSE terminal state machine without HTTP framing violations, and zero breaking drift between API contracts and M4.5/M4.6 security controls.
+- **Revisiting Conditions**: If a durable brokered job queue or single-process embedded mode is explicitly added post-Phase 4.

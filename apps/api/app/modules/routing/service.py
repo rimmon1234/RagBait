@@ -3,7 +3,8 @@
 import hashlib
 import json
 import logging
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable
+from contextlib import suppress
 from datetime import UTC, datetime
 from typing import Any
 from uuid import UUID, uuid4
@@ -11,13 +12,16 @@ from uuid import UUID, uuid4
 from app.core.config import settings
 from app.core.database import get_pool
 from app.core.errors import BadRequestError, ConflictError, NotFoundError
+from app.modules.llm_gateway.interfaces import GatewayStreamEvent
 from app.modules.llm_gateway.schemas import ChatCompletionRequest, ChatCompletionResponse
 from app.modules.llm_gateway.token_estimation import estimate_generation_tokens
 from app.modules.routing.discovery import discover_all_candidates
 from app.modules.routing.executor import (
     PreDispatchCandidateError,
+    PreFirstTokenCandidateError,
     execute_cloud_candidate,
     execute_community_candidate,
+    stream_cloud_candidate_events,
 )
 from app.modules.routing.policy import filter_candidates, rank_candidates
 from app.modules.routing.schemas import (
@@ -254,6 +258,177 @@ async def route_and_dispatch(
             f"All eligible inference candidates failed pre-dispatch admission: {last_error}"
         )
     raise ConflictError("No candidate could be executed")
+
+
+async def stream_route_and_dispatch(
+    user_id: UUID,
+    req: ChatCompletionRequest,
+    correlation_id: str | None = None,
+    *,
+    cancel_check: Callable[[], bool] | None = None,
+    first_token_timeout_seconds: float | None = None,
+    idle_timeout_seconds: float | None = None,
+) -> tuple[AsyncIterator[GatewayStreamEvent], RouteDecision]:
+    """Stream typed GatewayStreamEvents through routing policy with safe pre-first-token failover."""
+    routing_mode = req.routing_mode
+    request_id = correlation_id or f"req-{uuid4().hex[:12]}"
+    payload_hash = compute_request_payload_hash(req)
+
+    await check_user_idempotency(user_id, req.idempotency_key, payload_hash)
+
+    preferred_default = (
+        DEFAULT_COMMUNITY_MODEL if routing_mode == "community_only" else DEFAULT_CLOUD_MODEL
+    )
+    target_model_id = req.model_id
+
+    if routing_mode == "community_only":
+        raise BadRequestError(
+            "Streaming RAG chat orchestration supports cloud inference modes only; use Private Local mode for Ollama."
+        )
+    if routing_mode == "auto" and req.community_opt_in:
+        if req.community_consent_version != settings.COMMUNITY_CONSENT_POLICY_VERSION:
+            raise BadRequestError(
+                f"Community consent policy version mismatch. Expected '{settings.COMMUNITY_CONSENT_POLICY_VERSION}'"
+            )
+
+    candidates = await discover_all_candidates(
+        user_id=user_id,
+        routing_mode=routing_mode,
+        community_opt_in=req.community_opt_in,
+        requested_provider_id=req.provider_id,
+        requested_model_id=target_model_id,
+        explicit_credential_id=req.credential_id,
+    )
+    if not candidates:
+        if routing_mode == "provider_specific":
+            raise NotFoundError(
+                f"No eligible candidate found for requested provider '{req.provider_id}' and model '{req.model_id}'"
+            )
+        raise ConflictError("No candidates available matching the requested criteria")
+
+    messages_payload = [{"role": m.role, "content": m.content} for m in req.messages]
+    token_estimate = estimate_generation_tokens(
+        messages=messages_payload,
+        model_context_window=131072,
+        model_max_output_tokens=8192,
+        requested_max_output=req.params.max_output_tokens,
+    )
+
+    eligible, filter_results = filter_candidates(
+        candidates=candidates,
+        routing_mode=routing_mode,
+        community_opt_in=req.community_opt_in,
+        estimated_input_tokens=token_estimate.estimated_input_tokens,
+        requested_max_output=token_estimate.reserved_output_tokens,
+        stream=True,
+        requested_model_id=target_model_id,
+    )
+    if not eligible:
+        rejection_reasons = {
+            r.rejection_code: r.rejection_reason for r in filter_results if not r.eligible
+        }
+        if "NO_ELIGIBLE_CREDENTIAL" in rejection_reasons:
+            raise NotFoundError(
+                f"No active, authorized API credential available for provider '{req.provider_id or 'cloud'}'. "
+                "Please configure an API key in Credential Management."
+            )
+        if "PROVIDER_COOLDOWN_ACTIVE" in rejection_reasons:
+            raise ConflictError(
+                "Requested provider is temporarily cooling down due to upstream rate limits."
+            )
+        raise ConflictError(
+            f"No eligible inference sources available. Rejections: {list(rejection_reasons.keys())}"
+        )
+
+    ranked = rank_candidates(
+        eligible_candidates=eligible,
+        estimated_input_tokens=token_estimate.estimated_input_tokens,
+        estimated_output_tokens=token_estimate.reserved_output_tokens,
+        requested_model_id=target_model_id or preferred_default,
+    )
+    cloud_ranked = [c for c in ranked if c.source_type == "cloud"]
+    if not cloud_ranked:
+        raise ConflictError("No eligible cloud candidates available for streaming")
+
+    first_cand = cloud_ranked[0]
+    first_decision = RouteDecision(
+        routing_mode=routing_mode,
+        selected_source=first_cand.source_type,
+        provider_id=first_cand.provider_id,
+        model_id=first_cand.model_id,
+        resolved_model_id=first_cand.model_id,
+        credential_id=first_cand.credential_id,
+        node_id=first_cand.node_id,
+        decision_reason="free_tier_priority"
+        if first_cand.free_tier_eligible and (first_cand.pricing_input_cents_per_million or 0) == 0
+        else (
+            "exact_model_match"
+            if first_cand.model_id == target_model_id
+            else "deterministic_ranking"
+        ),
+        attempt_count=1,
+        created_at=datetime.now(UTC),
+    )
+
+    async def _failover_stream() -> AsyncIterator[GatewayStreamEvent]:
+        last_err: Exception | None = None
+        for idx, cand in enumerate(cloud_ranked):
+            cand_stream: AsyncIterator[GatewayStreamEvent] | None = None
+            emitted_any_visible = False
+            try:
+                cand_req = req.model_copy(
+                    update={"idempotency_key": f"{req.idempotency_key}-a{idx}"}
+                )
+                cand_stream = stream_cloud_candidate_events(
+                    user_id=user_id,
+                    candidate=cand,
+                    req=cand_req if idx > 0 else req,
+                    token_estimate=token_estimate,
+                    request_id=request_id if idx == 0 else f"{request_id}-a{idx}",
+                    payload_hash=payload_hash
+                    if idx == 0
+                    else compute_request_payload_hash(cand_req),
+                    cancel_check=cancel_check,
+                    first_token_timeout_seconds=first_token_timeout_seconds,
+                    idle_timeout_seconds=idle_timeout_seconds,
+                )
+                async for ev in cand_stream:
+                    if ev.event_type == "delta" and ev.delta:
+                        emitted_any_visible = True
+                    yield ev
+                return
+            except (PreDispatchCandidateError, PreFirstTokenCandidateError) as exc:
+                last_err = exc
+                logger.warning(
+                    f"Pre-first-token failure for {cand.provider_id}:{cand.model_id}: {exc}. "
+                    f"Attempt {idx + 1}/{len(cloud_ranked)}."
+                )
+                if emitted_any_visible:
+                    yield GatewayStreamEvent(
+                        event_type="error",
+                        error_code="PROVIDER_STREAM_FAILED",
+                        error_message="Generation interrupted mid-stream.",
+                        provider_id=cand.provider_id,
+                        resolved_model=cand.model_id,
+                        retryable=True,
+                    )
+                    return
+                if isinstance(exc, PreDispatchCandidateError) and not exc.is_candidate_specific:
+                    break
+                continue
+            finally:
+                if cand_stream is not None and hasattr(cand_stream, "aclose"):
+                    with suppress(Exception):
+                        await cand_stream.aclose()
+
+        yield GatewayStreamEvent(
+            event_type="error",
+            error_code="PROVIDER_UNAVAILABLE",
+            error_message=f"All eligible cloud providers failed to initialize streaming: {last_err}",
+            retryable=True,
+        )
+
+    return _failover_stream(), first_decision
 
 
 async def preview_route(

@@ -3,7 +3,8 @@
 from typing import Literal
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Query, status
+from fastapi import APIRouter, Depends, Query, Request, status
+from fastapi.responses import StreamingResponse
 
 from app.core.dependencies import (
     get_current_user,
@@ -13,7 +14,9 @@ from app.core.dependencies import (
 )
 from app.core.security import AuthenticatedUser
 from app.modules.chat.citations.schemas import MessageSourcesResponse
+from app.modules.chat.orchestration.cancellation import request_generation_cancellation
 from app.modules.chat.orchestration.schemas import (
+    CancelGenerationResponse,
     ChatMessageCreateRequest,
     ChatTurnResponse,
     FinalizeLocalRequest,
@@ -22,6 +25,10 @@ from app.modules.chat.orchestration.schemas import (
     PrepareLocalResponse,
 )
 from app.modules.chat.orchestration.service import ChatOrchestrationService
+from app.modules.chat.orchestration.streaming_service import (
+    prepare_cloud_sse_stream,
+    stream_cloud_sse_events,
+)
 from app.modules.chat.schemas import (
     ConversationCreate,
     ConversationListResponse,
@@ -209,21 +216,98 @@ async def get_conversation_messages(
 
 @chat_router.post(
     "/conversations/{conversation_id}/messages",
-    response_model=ChatTurnResponse,
+    response_model=None,
+    responses={
+        200: {
+            "model": ChatTurnResponse,
+            "description": "SSE text/event-stream (default) or ChatTurnResponse JSON when stream=false",
+        }
+    },
     dependencies=[Depends(rate_limit_general)],
-    summary="Submit user question and generate grounded cloud answer (M4.5 synchronous)",
+    summary="Submit user question and generate grounded cloud answer (SSE default or sync JSON)",
 )
 async def create_grounded_message(
     conversation_id: UUID,
     body: ChatMessageCreateRequest,
+    http_request: Request,
     current_user: AuthenticatedUser = Depends(get_current_user),
     _: UserProfile = Depends(require_chat_entitlement),
-) -> ChatTurnResponse:
-    """Execute grounded RAG retrieval, budgeting, generation, citation validation, and persistence."""
-    return await ChatOrchestrationService.execute_cloud_chat_turn(
+) -> StreamingResponse | ChatTurnResponse:
+    """Execute grounded RAG retrieval, concurrency admission, streaming/sync generation, and persistence."""
+    accept_header = (http_request.headers.get("accept") or "").lower()
+    wants_stream = body.stream or ("text/event-stream" in accept_header)
+    if not wants_stream:
+        return await ChatOrchestrationService.execute_cloud_chat_turn(
+            user_id=current_user.user_id,
+            conversation_id=conversation_id,
+            request=body,
+        )
+
+    plan = await prepare_cloud_sse_stream(
         user_id=current_user.user_id,
         conversation_id=conversation_id,
         request=body,
+    )
+    return StreamingResponse(
+        stream_cloud_sse_events(plan, is_disconnected=http_request.is_disconnected),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache, no-transform",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
+
+
+@chat_router.post(
+    "/messages/{message_id}/cancel",
+    response_model=CancelGenerationResponse,
+    dependencies=[Depends(rate_limit_general)],
+    summary="Cancel an active or queued streaming generation",
+)
+async def cancel_generation_message(
+    message_id: UUID,
+    current_user: AuthenticatedUser = Depends(get_current_user),
+    _: UserProfile = Depends(require_approved_user),
+) -> CancelGenerationResponse:
+    """Signal distributed cancellation for an owned active generation message."""
+    res = await request_generation_cancellation(
+        user_id=current_user.user_id,
+        message_id=message_id,
+    )
+    return CancelGenerationResponse(
+        message_id=UUID(str(res["message_id"])),
+        conversation_id=UUID(str(res["conversation_id"])),
+        status="cancelled",
+        already_cancelled=bool(res["already_cancelled"]),
+        retained_length=int(res["retained_length"]),  # type: ignore[call-overload]
+    )
+
+
+@chat_router.post(
+    "/conversations/{conversation_id}/messages/{message_id}/cancel",
+    response_model=CancelGenerationResponse,
+    dependencies=[Depends(rate_limit_general)],
+    summary="Cancel an active or queued generation within a conversation",
+)
+async def cancel_conversation_generation_message(
+    conversation_id: UUID,
+    message_id: UUID,
+    current_user: AuthenticatedUser = Depends(get_current_user),
+    _: UserProfile = Depends(require_approved_user),
+) -> CancelGenerationResponse:
+    """Signal distributed cancellation scoped explicitly by conversation_id and message_id."""
+    res = await request_generation_cancellation(
+        user_id=current_user.user_id,
+        message_id=message_id,
+        conversation_id=conversation_id,
+    )
+    return CancelGenerationResponse(
+        message_id=UUID(str(res["message_id"])),
+        conversation_id=UUID(str(res["conversation_id"])),
+        status="cancelled",
+        already_cancelled=bool(res["already_cancelled"]),
+        retained_length=int(res["retained_length"]),  # type: ignore[call-overload]
     )
 
 

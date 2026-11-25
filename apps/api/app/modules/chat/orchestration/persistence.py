@@ -69,6 +69,7 @@ async def reserve_turn_messages(
     idempotency_key: str,
     generation_request_id: str,
     mode: str,
+    initial_status: str = "pending",
     model_id: str | None = None,
     provider_id: str | None = None,
     extra_metadata: dict[str, Any] | None = None,
@@ -132,7 +133,7 @@ async def reserve_turn_messages(
                 conversation_id, sequence_number, role, content, status,
                 generation_request_id, idempotency_key, model_id, provider_id, metadata
             )
-            VALUES ($1, $2, 'assistant', '', 'pending', $3, $4, $5, $6, $7::jsonb)
+            VALUES ($1, $2, 'assistant', '', $8::public.chat_message_status, $3, $4, $5, $6, $7::jsonb)
             RETURNING *;
             """,
             conversation_id,
@@ -142,6 +143,7 @@ async def reserve_turn_messages(
             model_id,
             provider_id,
             json.dumps(asst_meta),
+            initial_status,
         )
         await conn.execute(
             """
@@ -186,7 +188,7 @@ async def reserve_turn_messages(
     asst_meta = {
         "mode": mode,
         "user_idempotency_key": idempotency_key,
-        "stage": "generating" if mode == "cloud" else "prepared_local",
+        "stage": initial_status if mode == "cloud" else "prepared_local",
         **(extra_metadata or {}),
     }
     asst_row = await conn.fetchrow(
@@ -195,7 +197,7 @@ async def reserve_turn_messages(
             conversation_id, sequence_number, role, content, status,
             generation_request_id, idempotency_key, model_id, provider_id, metadata
         )
-        VALUES ($1, $2, 'assistant', '', 'pending', $3, $4, $5, $6, $7::jsonb)
+        VALUES ($1, $2, 'assistant', '', $8::public.chat_message_status, $3, $4, $5, $6, $7::jsonb)
         RETURNING *;
         """,
         conversation_id,
@@ -205,6 +207,7 @@ async def reserve_turn_messages(
         model_id,
         provider_id,
         json.dumps(asst_meta),
+        initial_status,
     )
 
     await conn.execute(
@@ -240,16 +243,10 @@ async def complete_cloud_turn_atomically(
     selected_evidence: list[SelectedEvidenceSource],
     referenced_keys: set[str],
     extra_metadata: dict[str, Any],
+    expected_generation_request_id: str | None = None,
 ) -> dict[str, Any]:
     """Atomically persist Stage-3/4 source snapshots and complete the assistant message."""
     async with conn.transaction():
-        await insert_included_source_snapshots(
-            conn,
-            message_id=assistant_message_id,
-            selected_evidence=selected_evidence,
-            referenced_keys=referenced_keys,
-        )
-
         msg_row = await conn.fetchrow(
             """
             UPDATE public.chat_messages
@@ -263,7 +260,8 @@ async def complete_cloud_turn_atomically(
                 metadata = metadata || $7::jsonb,
                 updated_at = timezone('utc'::text, now())
             WHERE id = $1
-              AND status = 'pending'
+              AND status IN ('pending', 'streaming')
+              AND ($8::text IS NULL OR generation_request_id = $8)
             RETURNING *;
             """,
             assistant_message_id,
@@ -273,12 +271,20 @@ async def complete_cloud_turn_atomically(
             json.dumps(token_usage),
             finish_reason,
             json.dumps({"stage": "completed", **extra_metadata}),
+            expected_generation_request_id,
         )
         if not msg_row:
             raise ConflictError(
-                "Assistant message could not be finalized because it is no longer pending",
-                code="MESSAGE_NOT_PENDING",
+                "Assistant message could not be finalized because it is no longer active or was cancelled",
+                code="MESSAGE_NOT_ACTIVE",
             )
+
+        await insert_included_source_snapshots(
+            conn,
+            message_id=assistant_message_id,
+            selected_evidence=selected_evidence,
+            referenced_keys=referenced_keys,
+        )
 
         await conn.execute(
             """
@@ -298,8 +304,9 @@ async def mark_assistant_message_failed(
     assistant_message_id: UUID,
     error_code: str,
     error_message: str,
+    expected_generation_request_id: str | None = None,
 ) -> None:
-    """Transition a pending assistant message cleanly to failed with sanitized reason."""
+    """Transition an active pending/streaming assistant message cleanly to failed."""
     safe_msg = (error_message or "Generation failed").strip()[:500]
     await conn.execute(
         """
@@ -309,12 +316,48 @@ async def mark_assistant_message_failed(
             metadata = metadata || $3::jsonb,
             updated_at = timezone('utc'::text, now())
         WHERE id = $1
-          AND status = 'pending';
+          AND status IN ('pending', 'streaming')
+          AND ($4::text IS NULL OR generation_request_id = $4);
         """,
         assistant_message_id,
         safe_msg,
         json.dumps({"stage": "failed", "error_code": error_code}),
+        expected_generation_request_id,
     )
+
+
+async def mark_assistant_message_cancelled(
+    conn: asyncpg.Connection,
+    *,
+    assistant_message_id: UUID,
+    partial_content: str = "",
+    reason: str = "user_requested",
+    expected_generation_request_id: str | None = None,
+) -> int:
+    """Persist partial text cleanly as 'cancelled' without overwriting terminal completed/failed rows."""
+    safe_partial = (partial_content or "")[:32768]
+    row = await conn.fetchrow(
+        """
+        UPDATE public.chat_messages
+        SET content = CASE
+                WHEN char_length(trim(content)) > char_length(trim($2)) THEN content
+                ELSE $2
+            END,
+            status = 'cancelled',
+            finish_reason = 'cancelled',
+            metadata = metadata || $3::jsonb,
+            updated_at = timezone('utc'::text, now())
+        WHERE id = $1
+          AND status IN ('pending', 'streaming', 'cancelled')
+          AND ($4::text IS NULL OR generation_request_id = $4)
+        RETURNING char_length(content) AS retained_length;
+        """,
+        assistant_message_id,
+        safe_partial,
+        json.dumps({"stage": "cancelled", "cancel_reason": reason}),
+        expected_generation_request_id,
+    )
+    return int(row["retained_length"] or 0) if row else 0
 
 
 async def lock_and_verify_prepared_local_message(
@@ -415,3 +458,53 @@ async def lock_and_verify_prepared_local_message(
 def compute_prepared_expiry(ttl_seconds: int) -> datetime:
     """Compute UTC expiration timestamp for a prepared-local context lease."""
     return datetime.now(UTC) + timedelta(seconds=ttl_seconds)
+
+
+async def verify_conversation_ready_for_cloud(
+    conn: asyncpg.Connection,
+    *,
+    user_id: UUID,
+    conversation_id: UUID,
+) -> None:
+    """Verify conversation ownership, active status, active subject, and no active cloud turn."""
+    conv = await conn.fetchrow(
+        """
+        SELECT c.id, c.user_id, c.status, c.subject_id, subj.is_active AS subject_active
+        FROM public.chat_conversations c
+        JOIN public.kb_subjects subj ON subj.id = c.subject_id
+        WHERE c.id = $1;
+        """,
+        conversation_id,
+    )
+    if not conv or conv["status"] == "deleted":
+        raise NotFoundError("Conversation not found", code="CONVERSATION_NOT_FOUND")
+    if conv["user_id"] != user_id:
+        raise AuthorizationError("Access denied: you do not own this conversation.")
+    if conv["status"] != "active":
+        raise AuthorizationError(
+            f"Cannot generate messages in an {conv['status']} conversation",
+            code="CONVERSATION_NOT_ACTIVE",
+        )
+    if not conv["subject_active"]:
+        raise AuthorizationError(
+            "Cannot generate messages because the conversation subject is inactive",
+            code="SUBJECT_INACTIVE",
+        )
+
+    active_cloud = await conn.fetchval(
+        """
+        SELECT id
+        FROM public.chat_messages
+        WHERE conversation_id = $1
+          AND role = 'assistant'
+          AND status IN ('pending', 'streaming')
+          AND coalesce(metadata->>'mode', 'cloud') = 'cloud'
+        LIMIT 1;
+        """,
+        conversation_id,
+    )
+    if active_cloud is not None:
+        raise ConflictError(
+            "Another response is currently generating in this conversation. Please wait for it to complete.",
+            code="CONVERSATION_CONCURRENCY_LIMIT",
+        )

@@ -134,14 +134,16 @@ end
 - Native browser disconnect detection via `await request.is_disconnected()`. If a student closes their laptop lid or navigates away, the server detects socket closure and halts generation immediately.
 
 ### 3.2 Explicit Client Cancellation
-- **Route**: `POST /api/v1/chat/conversations/{id}/messages/{message_id}/cancel`
+- **Routes**:
+  - Primary: `POST /api/v1/chat/messages/{message_id}/cancel`
+  - Conversation-scoped alias: `POST /api/v1/chat/conversations/{conversation_id}/messages/{message_id}/cancel`
 - **Execution Flow**:
   1. The client aborts the active `fetch()` request via `AbortController`.
-  2. The client fires the cancel endpoint.
-  3. The backend sets an internal `asyncio.Event` cancellation flag.
-  4. The upstream provider HTTP stream is closed via HTTP transport abort.
-  5. The assistant message in `chat_messages` is updated to `status = 'cancelled'` with whatever partial text was emitted up to the abort point.
-  6. The Redis conversation lock and concurrency semaphores are released immediately via the safe Lua release script.
+  2. The client fires either cancel endpoint.
+  3. The backend publishes a Redis cancellation marker (`chat:cancel:{message_id}` + Pub/Sub `chat:cancel:ch:{message_id}`), waking the watcher and setting the stream `asyncio.Event` cancellation flag across worker processes.
+  4. The upstream provider HTTP stream and admission wait abort cleanly, settling active quota reservations once (`cancelled_by_client`).
+  5. Using conditional CAS (`WHERE status IN ('pending', 'streaming', 'cancelled')`), the assistant message in `chat_messages` transitions to `status = 'cancelled'` with any partial text preserved (`409` if already `completed` or `failed`).
+  6. The 3-scope Redis ZSET semaphore leases are released immediately via the owner-verified Lua release script.
 
 ---
 
@@ -178,7 +180,7 @@ end
 ### 5.3 Failure Mode Matrix
 | Failure Scenario | Immediate System Behavior | Student Experience |
 | :--- | :--- | :--- |
-| **Upstream Provider Down** | Router fails over to next candidate in pool; if all fail, throws `PROVIDER_UNAVAILABLE`. | Neutral banner: "All cloud providers temporarily busy. Retrying in 10s or switch to Private Local." |
-| **Redis Server Down** | Concurrency falls back to local in-memory lock; degrades gracefully. | Chat continues with local process limits. |
+| **Upstream Provider Down** | Router fails over to next candidate in pool before first visible token; if all fail, emits `event: generation_failed` (`PROVIDER_UNAVAILABLE`). | Neutral banner / prompt to retry or switch to Private Local. |
+| **Redis Server Down** | Cloud generation **fails closed** with HTTP `503 SERVICE_UNAVAILABLE` BEFORE streaming; Private Local Ollama continues bypassing Redis cloud semaphores. | Clear outage message with Private Local Ollama fallback option. |
 | **Database Pool Full** | Fast failover via connection timeout (5s). | Error message: "Database temporarily saturated; please retry." |
 | **Worker Crash Mid-Stream** | Lease expires after 60s; message marked `failed` on subsequent load. | Student sees "Generation interrupted" with a safe Retry button. |

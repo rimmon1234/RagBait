@@ -648,6 +648,7 @@ async def test_a4_citation_repair_empty_guard_and_token_labels():
                 json={
                     "content": "What do condition variables do?",
                     "model_id": "openrouter/meta-llama/llama-3.3-70b-instruct:free",
+                    "stream": False,
                 },
             )
         assert r_empty.status_code == 422
@@ -685,6 +686,7 @@ async def test_a4_citation_repair_empty_guard_and_token_labels():
                 json={
                     "content": "How are locks synchronized?",
                     "model_id": "openrouter/meta-llama/llama-3.3-70b-instruct:free",
+                    "stream": False,
                 },
             )
         assert r_ok.status_code == 200, r_ok.text

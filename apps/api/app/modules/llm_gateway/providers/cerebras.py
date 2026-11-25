@@ -16,6 +16,7 @@ from app.modules.llm_gateway.interfaces import (
     NormalizedGenerationResult,
     NormalizedStreamChunk,
     NormalizedUsage,
+    raise_for_stream_error_payload,
 )
 from app.modules.llm_gateway.streaming import parse_sse_stream
 
@@ -97,6 +98,8 @@ class CerebrasAdapter(BaseProviderAdapter):
                     chunk_json = json.loads(raw_data)
                 except Exception:
                     continue
+
+                raise_for_stream_error_payload(self.provider_id, chunk_json)
 
                 if "model" in chunk_json:
                     model_returned = chunk_json["model"]

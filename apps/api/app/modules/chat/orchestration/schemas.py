@@ -35,6 +35,10 @@ class ChatMessageCreateRequest(BaseModel):
     credential_id: UUID | None = None
     temperature: float = Field(default=0.7, ge=0.0, le=2.0)
     max_output_tokens: int | None = Field(default=None, gt=0, le=32768)
+    stream: bool = Field(
+        default=True,
+        description="Stream tokens incrementally via SSE when true; return synchronous JSON when false",
+    )
 
     @field_validator("content", mode="before")
     @classmethod
@@ -144,3 +148,14 @@ class FinalizeLocalResponse(BaseModel):
     invalid_citations_stripped: list[str] = Field(default_factory=list)
     citation_validation_status: str
     sources: list[MessageSourceRead] = Field(default_factory=list)
+
+
+class CancelGenerationResponse(BaseModel):
+    """Response envelope returned upon cancelling an active or already-cancelled generation."""
+
+    message_id: UUID
+    conversation_id: UUID
+    status: Literal["cancelled"] = "cancelled"
+    already_cancelled: bool = False
+    retained_length: int = 0
+    reason: str = "user_requested"
