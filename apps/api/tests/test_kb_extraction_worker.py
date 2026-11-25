@@ -1331,3 +1331,33 @@ async def test_worker_shutdown_terminates_active_child_process():
 
     assert dummy_proc.returncode is not None or dummy_proc.wait() is not None
     assert len(worker._active_processes) == 0
+
+
+@pytest.mark.asyncio
+async def test_pdf_nul_bytes_stripped_before_persistence():
+    """PDFs containing embedded NUL (0x00) bytes must be stripped cleanly so PostgreSQL TEXT insert succeeds."""
+    import tempfile
+    from unittest.mock import MagicMock, patch
+
+    from app.modules.knowledge_base.pdf_extractor import extract_pdf_pages
+
+    fake_page = MagicMock()
+    fake_page.extract_text.return_value = "High-Level\x00 Synthesis\x00 Notes"
+    fake_reader = MagicMock()
+    fake_reader.is_encrypted = False
+    fake_reader.pages = [fake_page]
+
+    pdf_path = Path(tempfile.gettempdir()) / f"nul_test_{uuid4().hex}.pdf"
+    pdf_path.write_bytes(b"%PDF-1.4\n%%EOF\n")
+    try:
+        with patch("app.modules.knowledge_base.pdf_extractor.PdfReader", return_value=fake_reader):
+            result = extract_pdf_pages(pdf_path)
+    finally:
+        pdf_path.unlink(missing_ok=True)
+
+    assert result["total_pages"] == 1
+    assert result["has_any_text"] is True
+    raw = result["pages"][0]["raw_text"]
+    assert "\x00" not in raw
+    assert raw == "High-Level Synthesis Notes"
+    assert result["pages"][0]["character_count"] == len(raw)
