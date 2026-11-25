@@ -354,9 +354,9 @@ export default function LocalInferencePage() {
           prev.map((m) =>
             m.id === assistantMessageId
               ? {
-                  ...m,
-                  content: m.content + (m.content ? "\n\n*(Generation stopped by user)*" : "*(Generation stopped)*"),
-                }
+                ...m,
+                content: m.content + (m.content ? "\n\n*(Generation stopped by user)*" : "*(Generation stopped)*"),
+              }
               : m
           )
         );
@@ -453,9 +453,9 @@ export default function LocalInferencePage() {
           prev.map((m) =>
             m.id === assistantMessageId
               ? {
-                  ...m,
-                  content: m.content + (m.content ? "\n\n*(Generation stopped by user)*" : "*(Generation stopped)*"),
-                }
+                ...m,
+                content: m.content + (m.content ? "\n\n*(Generation stopped by user)*" : "*(Generation stopped)*"),
+              }
               : m
           )
         );
@@ -508,8 +508,8 @@ export default function LocalInferencePage() {
               {inferenceMode === "private"
                 ? "Private Local Inference"
                 : inferenceMode === "auto"
-                ? "Intelligent Inference Router"
-                : "Cloud LLM Gateway"}
+                  ? "Intelligent Inference Router"
+                  : "Cloud LLM Gateway"}
             </h1>
             {inferenceMode === "private" ? (
               <span className="inline-flex items-center gap-1 rounded-full bg-emerald-50 px-2.5 py-0.5 text-xs font-semibold text-emerald-700 border border-emerald-200">
@@ -532,8 +532,8 @@ export default function LocalInferencePage() {
             {inferenceMode === "private"
               ? "Execute open-source models on your local hardware via Ollama. Zero server routing, zero latency cost, and zero prompt data leaves your device."
               : inferenceMode === "auto"
-              ? "Unified intelligent routing layer dynamically selecting optimal free or cloud compute with deterministic privacy and quota enforcement."
-              : "Direct inference through authenticated cloud providers with quota enforcement and budget limits."}
+                ? "Unified intelligent routing layer dynamically selecting optimal free or cloud compute with deterministic privacy and quota enforcement."
+                : "Direct inference through authenticated cloud providers with quota enforcement and budget limits."}
           </p>
         </div>
 
@@ -575,11 +575,10 @@ export default function LocalInferencePage() {
             setInferenceMode("private");
             handleClear();
           }}
-          className={`flex items-center gap-2 border-b-2 px-4 py-2.5 text-sm font-medium transition-colors whitespace-nowrap ${
-            inferenceMode === "private"
-              ? "border-blue-600 text-blue-600 font-semibold"
-              : "border-transparent text-gray-500 hover:text-gray-700"
-          }`}
+          className={`flex items-center gap-2 border-b-2 px-4 py-2.5 text-sm font-medium transition-colors whitespace-nowrap ${inferenceMode === "private"
+            ? "border-blue-600 text-blue-600 font-semibold"
+            : "border-transparent text-gray-500 hover:text-gray-700"
+            }`}
         >
           <Cpu className="h-4 w-4" />
           Private (This Computer)
@@ -589,11 +588,10 @@ export default function LocalInferencePage() {
             setInferenceMode("auto");
             handleClear();
           }}
-          className={`flex items-center gap-2 border-b-2 px-4 py-2.5 text-sm font-medium transition-colors whitespace-nowrap ${
-            inferenceMode === "auto"
-              ? "border-blue-600 text-blue-600 font-semibold"
-              : "border-transparent text-gray-500 hover:text-gray-700"
-          }`}
+          className={`flex items-center gap-2 border-b-2 px-4 py-2.5 text-sm font-medium transition-colors whitespace-nowrap ${inferenceMode === "auto"
+            ? "border-blue-600 text-blue-600 font-semibold"
+            : "border-transparent text-gray-500 hover:text-gray-700"
+            }`}
         >
           <Sparkles className="h-4 w-4" />
           Auto (Intelligent Routing)
@@ -603,11 +601,10 @@ export default function LocalInferencePage() {
             setInferenceMode("cloud_only");
             handleClear();
           }}
-          className={`flex items-center gap-2 border-b-2 px-4 py-2.5 text-sm font-medium transition-colors whitespace-nowrap ${
-            inferenceMode === "cloud_only"
-              ? "border-blue-600 text-blue-600 font-semibold"
-              : "border-transparent text-gray-500 hover:text-gray-700"
-          }`}
+          className={`flex items-center gap-2 border-b-2 px-4 py-2.5 text-sm font-medium transition-colors whitespace-nowrap ${inferenceMode === "cloud_only"
+            ? "border-blue-600 text-blue-600 font-semibold"
+            : "border-transparent text-gray-500 hover:text-gray-700"
+            }`}
         >
           <Compass className="h-4 w-4" />
           Cloud Only
@@ -656,229 +653,229 @@ export default function LocalInferencePage() {
       {inferenceMode === "private" && (
         <>
           {connectionState === "connected" ? (
-        <div className="mb-6 flex items-center justify-between rounded-lg border border-emerald-200 bg-emerald-50/70 px-4 py-3 text-sm text-emerald-800">
-          <div className="flex items-center gap-2.5">
-            <div className="relative flex h-2.5 w-2.5">
-              <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-75" />
-              <span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-emerald-500" />
+            <div className="mb-6 flex items-center justify-between rounded-lg border border-emerald-200 bg-emerald-50/70 px-4 py-3 text-sm text-emerald-800">
+              <div className="flex items-center gap-2.5">
+                <div className="relative flex h-2.5 w-2.5">
+                  <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-75" />
+                  <span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-emerald-500" />
+                </div>
+                <span className="font-medium">Ollama Connected</span>
+                <span className="text-emerald-600 text-xs font-mono bg-emerald-100/80 px-2 py-0.5 rounded">
+                  v{ollamaVersion || "unknown"} (127.0.0.1:11434)
+                </span>
+              </div>
+              <span className="text-xs text-emerald-700 font-medium hidden sm:inline">
+                Direct browser-to-local loopback active
+              </span>
             </div>
-            <span className="font-medium">Ollama Connected</span>
-            <span className="text-emerald-600 text-xs font-mono bg-emerald-100/80 px-2 py-0.5 rounded">
-              v{ollamaVersion || "unknown"} (127.0.0.1:11434)
-            </span>
-          </div>
-          <span className="text-xs text-emerald-700 font-medium hidden sm:inline">
-            Direct browser-to-local loopback active
-          </span>
-        </div>
-      ) : connectionState === "loopback_permission_required" ? (
-        <div className="mb-6 rounded-lg border border-blue-200 bg-blue-50 p-4 text-sm text-blue-900">
-          <div className="flex items-start gap-3">
-            <Lock className="h-5 w-5 text-blue-600 shrink-0 mt-0.5" />
-            <div className="flex-1">
-              <p className="font-semibold text-blue-900">
-                Browser Local Network Permission Required
-              </p>
-              <p className="mt-1 text-xs text-blue-800 leading-relaxed">
-                Modern Chrome requires an explicit user click to initiate connection to your local loopback address (<code className="bg-blue-100 px-1 py-0.5 rounded">http://127.0.0.1:11434</code>).
-              </p>
-              <div className="mt-3 flex items-center gap-3">
-                <button
-                  onClick={refreshOllama}
-                  disabled={isRefreshing}
-                  className="rounded-md bg-blue-600 px-4 py-1.5 text-xs font-semibold text-white shadow-xs hover:bg-blue-700 disabled:opacity-50"
-                >
-                  {isRefreshing ? "Connecting..." : "Connect to Local Ollama"}
-                </button>
+          ) : connectionState === "loopback_permission_required" ? (
+            <div className="mb-6 rounded-lg border border-blue-200 bg-blue-50 p-4 text-sm text-blue-900">
+              <div className="flex items-start gap-3">
+                <Lock className="h-5 w-5 text-blue-600 shrink-0 mt-0.5" />
+                <div className="flex-1">
+                  <p className="font-semibold text-blue-900">
+                    Browser Local Network Permission Required
+                  </p>
+                  <p className="mt-1 text-xs text-blue-800 leading-relaxed">
+                    Modern Chrome requires an explicit user click to initiate connection to your local loopback address (<code className="bg-blue-100 px-1 py-0.5 rounded">http://127.0.0.1:11434</code>).
+                  </p>
+                  <div className="mt-3 flex items-center gap-3">
+                    <button
+                      onClick={refreshOllama}
+                      disabled={isRefreshing}
+                      className="rounded-md bg-blue-600 px-4 py-1.5 text-xs font-semibold text-white shadow-xs hover:bg-blue-700 disabled:opacity-50"
+                    >
+                      {isRefreshing ? "Connecting..." : "Connect to Local Ollama"}
+                    </button>
+                  </div>
+                </div>
               </div>
             </div>
-          </div>
-        </div>
-      ) : connectionState === "loopback_permission_denied" ? (
-        <div className="mb-6 rounded-lg border border-rose-200 bg-rose-50 p-4 text-sm text-rose-900">
-          <div className="flex items-start gap-3">
-            <ShieldAlert className="h-5 w-5 text-rose-600 shrink-0 mt-0.5" />
-            <div className="flex-1">
-              <p className="font-semibold text-rose-900">
-                Loopback Access Blocked by Browser
-              </p>
-              <p className="mt-1 text-xs text-rose-800 leading-relaxed">
-                Your browser denied permission to access <code className="bg-rose-100 px-1 py-0.5 rounded">http://127.0.0.1:11434</code>. To resolve this: Click the Site Settings icon (tune or lock symbol) in your browser address bar, set <strong>Local Network</strong> or <strong>Insecure content</strong> to <strong>Allow</strong>, then reload this page.
-              </p>
-              <div className="mt-2.5 flex items-center gap-3">
-                <button
-                  onClick={refreshOllama}
-                  disabled={isRefreshing}
-                  className="rounded-md bg-rose-700 px-3 py-1 text-xs font-medium text-white hover:bg-rose-800"
-                >
-                  Check Permission Again
-                </button>
+          ) : connectionState === "loopback_permission_denied" ? (
+            <div className="mb-6 rounded-lg border border-rose-200 bg-rose-50 p-4 text-sm text-rose-900">
+              <div className="flex items-start gap-3">
+                <ShieldAlert className="h-5 w-5 text-rose-600 shrink-0 mt-0.5" />
+                <div className="flex-1">
+                  <p className="font-semibold text-rose-900">
+                    Loopback Access Blocked by Browser
+                  </p>
+                  <p className="mt-1 text-xs text-rose-800 leading-relaxed">
+                    Your browser denied permission to access <code className="bg-rose-100 px-1 py-0.5 rounded">http://127.0.0.1:11434</code>. To resolve this: Click the Site Settings icon (tune or lock symbol) in your browser address bar, set <strong>Local Network</strong> or <strong>Insecure content</strong> to <strong>Allow</strong>, then reload this page.
+                  </p>
+                  <div className="mt-2.5 flex items-center gap-3">
+                    <button
+                      onClick={refreshOllama}
+                      disabled={isRefreshing}
+                      className="rounded-md bg-rose-700 px-3 py-1 text-xs font-medium text-white hover:bg-rose-800"
+                    >
+                      Check Permission Again
+                    </button>
+                  </div>
+                </div>
               </div>
             </div>
-          </div>
-        </div>
-      ) : connectionState === "insecure_context" ? (
-        <div className="mb-6 rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
-          <div className="flex items-start gap-3">
-            <AlertTriangle className="h-5 w-5 text-amber-600 shrink-0 mt-0.5" />
-            <div className="flex-1">
-              <p className="font-semibold text-amber-900">Secure Context (HTTPS) Required</p>
-              <p className="mt-1 text-xs text-amber-800 leading-relaxed">
-                Modern browsers strictly require a secure HTTPS origin to communicate with local network services. For local development, access RagBait via <code className="bg-amber-100 px-1 py-0.5 rounded">http://localhost:3000</code> or <code className="bg-amber-100 px-1 py-0.5 rounded">http://127.0.0.1:3000</code>.
-              </p>
-            </div>
-          </div>
-        </div>
-      ) : connectionState === "connection_failed" ? (
-        <div className="mb-6 rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
-          <div className="flex items-start gap-3">
-            <AlertTriangle className="h-5 w-5 text-amber-600 shrink-0 mt-0.5" />
-            <div className="flex-1">
-              <p className="font-semibold text-amber-900">Cannot Connect to Ollama</p>
-              <p className="mt-1 text-xs text-amber-800 leading-relaxed">
-                Unable to establish a connection with <code className="bg-amber-100 px-1 py-0.5 rounded">http://127.0.0.1:11434</code>. The browser reported an opaque network failure. Please verify each of the following:
-              </p>
-              <ul className="mt-2 list-disc list-inside text-xs text-amber-900 space-y-1">
-                <li>Ollama is running on your machine (<code className="bg-amber-100 px-1 py-0.5 rounded">ollama serve</code>).</li>
-                <li><code className="bg-amber-100 px-1 py-0.5 rounded">OLLAMA_ORIGINS</code> is configured to allow this web origin.</li>
-                <li>Browser Local Network Access is not blocked in Site Settings.</li>
-              </ul>
-              <div className="mt-3 flex items-center gap-3">
-                <button
-                  onClick={refreshOllama}
-                  disabled={isRefreshing}
-                  className="rounded-md bg-amber-700 px-3 py-1 text-xs font-medium text-white hover:bg-amber-800"
-                >
-                  Retry Connection
-                </button>
-                <button
-                  onClick={() => setShowSetupGuide(true)}
-                  className="text-xs font-medium text-amber-900 underline hover:no-underline"
-                >
-                  View Setup Guide
-                </button>
+          ) : connectionState === "insecure_context" ? (
+            <div className="mb-6 rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
+              <div className="flex items-start gap-3">
+                <AlertTriangle className="h-5 w-5 text-amber-600 shrink-0 mt-0.5" />
+                <div className="flex-1">
+                  <p className="font-semibold text-amber-900">Secure Context (HTTPS) Required</p>
+                  <p className="mt-1 text-xs text-amber-800 leading-relaxed">
+                    Modern browsers strictly require a secure HTTPS origin to communicate with local network services. For local development, access RagBait via <code className="bg-amber-100 px-1 py-0.5 rounded">http://localhost:3000</code> or <code className="bg-amber-100 px-1 py-0.5 rounded">http://127.0.0.1:3000</code>.
+                  </p>
+                </div>
               </div>
             </div>
-          </div>
-        </div>
-      ) : connectionState === "disconnected" ? (
-        <div className="mb-6 rounded-lg border border-rose-200 bg-rose-50 p-4 text-sm text-rose-900">
-          <div className="flex items-start gap-3">
-            <AlertCircle className="h-5 w-5 text-rose-600 shrink-0 mt-0.5" />
-            <div className="flex-1">
-              <p className="font-semibold text-rose-900">Ollama Daemon Offline</p>
-              <p className="mt-1 text-xs text-rose-800 leading-relaxed">
-                The Ollama service returned an error or is offline at <code className="bg-rose-100 px-1 py-0.5 rounded">http://127.0.0.1:11434</code>. Please ensure Ollama is installed and running.
-              </p>
-              <div className="mt-2.5 flex items-center gap-3">
-                <button
-                  onClick={() => setShowSetupGuide(true)}
-                  className="rounded-md bg-rose-700 px-3 py-1 text-xs font-medium text-white hover:bg-rose-800"
-                >
-                  View Setup Guide
-                </button>
-                <button
-                  onClick={refreshOllama}
-                  disabled={isRefreshing}
-                  className="text-xs font-medium text-rose-900 underline hover:no-underline"
-                >
-                  Retry Connection
-                </button>
+          ) : connectionState === "connection_failed" ? (
+            <div className="mb-6 rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
+              <div className="flex items-start gap-3">
+                <AlertTriangle className="h-5 w-5 text-amber-600 shrink-0 mt-0.5" />
+                <div className="flex-1">
+                  <p className="font-semibold text-amber-900">Cannot Connect to Ollama</p>
+                  <p className="mt-1 text-xs text-amber-800 leading-relaxed">
+                    Unable to establish a connection with <code className="bg-amber-100 px-1 py-0.5 rounded">http://127.0.0.1:11434</code>. The browser reported an opaque network failure. Please verify each of the following:
+                  </p>
+                  <ul className="mt-2 list-disc list-inside text-xs text-amber-900 space-y-1">
+                    <li>Ollama is running on your machine (<code className="bg-amber-100 px-1 py-0.5 rounded">ollama serve</code>).</li>
+                    <li><code className="bg-amber-100 px-1 py-0.5 rounded">OLLAMA_ORIGINS</code> is configured to allow this web origin.</li>
+                    <li>Browser Local Network Access is not blocked in Site Settings.</li>
+                  </ul>
+                  <div className="mt-3 flex items-center gap-3">
+                    <button
+                      onClick={refreshOllama}
+                      disabled={isRefreshing}
+                      className="rounded-md bg-amber-700 px-3 py-1 text-xs font-medium text-white hover:bg-amber-800"
+                    >
+                      Retry Connection
+                    </button>
+                    <button
+                      onClick={() => setShowSetupGuide(true)}
+                      className="text-xs font-medium text-amber-900 underline hover:no-underline"
+                    >
+                      View Setup Guide
+                    </button>
+                  </div>
+                </div>
               </div>
             </div>
-          </div>
-        </div>
-      ) : (
-        <div className="mb-6 flex items-center gap-2 rounded-lg border border-gray-200 bg-gray-50 px-4 py-3 text-sm text-gray-600">
-          <Loader2 className="h-4 w-4 animate-spin text-blue-600" />
-          <span>Probing Ollama loopback status at http://127.0.0.1:11434...</span>
-        </div>
-      )}
+          ) : connectionState === "disconnected" ? (
+            <div className="mb-6 rounded-lg border border-rose-200 bg-rose-50 p-4 text-sm text-rose-900">
+              <div className="flex items-start gap-3">
+                <AlertCircle className="h-5 w-5 text-rose-600 shrink-0 mt-0.5" />
+                <div className="flex-1">
+                  <p className="font-semibold text-rose-900">Ollama Daemon Offline</p>
+                  <p className="mt-1 text-xs text-rose-800 leading-relaxed">
+                    The Ollama service returned an error or is offline at <code className="bg-rose-100 px-1 py-0.5 rounded">http://127.0.0.1:11434</code>. Please ensure Ollama is installed and running.
+                  </p>
+                  <div className="mt-2.5 flex items-center gap-3">
+                    <button
+                      onClick={() => setShowSetupGuide(true)}
+                      className="rounded-md bg-rose-700 px-3 py-1 text-xs font-medium text-white hover:bg-rose-800"
+                    >
+                      View Setup Guide
+                    </button>
+                    <button
+                      onClick={refreshOllama}
+                      disabled={isRefreshing}
+                      className="text-xs font-medium text-rose-900 underline hover:no-underline"
+                    >
+                      Retry Connection
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </div>
+          ) : (
+            <div className="mb-6 flex items-center gap-2 rounded-lg border border-gray-200 bg-gray-50 px-4 py-3 text-sm text-gray-600">
+              <Loader2 className="h-4 w-4 animate-spin text-blue-600" />
+              <span>Probing Ollama loopback status at http://127.0.0.1:11434...</span>
+            </div>
+          )}
 
-      {/* Setup Guide Collapsible Accordion */}
-      {showSetupGuide && (
-        <div className="mb-6 rounded-xl border border-blue-200 bg-blue-50/50 p-5 shadow-sm">
-          <div className="flex items-center justify-between pb-3 border-b border-blue-200">
-            <div className="flex items-center gap-2">
-              <Terminal className="h-5 w-5 text-blue-700" />
-              <h2 className="text-base font-semibold text-blue-950">
-                Ollama Local Setup & CORS Configuration Guide
-              </h2>
-            </div>
-            <button
-              onClick={() => setShowSetupGuide(false)}
-              className="text-xs font-medium text-blue-700 hover:text-blue-900"
-            >
-              Close
-            </button>
-          </div>
+          {/* Setup Guide Collapsible Accordion */}
+          {showSetupGuide && (
+            <div className="mb-6 rounded-xl border border-blue-200 bg-blue-50/50 p-5 shadow-sm">
+              <div className="flex items-center justify-between pb-3 border-b border-blue-200">
+                <div className="flex items-center gap-2">
+                  <Terminal className="h-5 w-5 text-blue-700" />
+                  <h2 className="text-base font-semibold text-blue-950">
+                    Ollama Local Setup & CORS Configuration Guide
+                  </h2>
+                </div>
+                <button
+                  onClick={() => setShowSetupGuide(false)}
+                  className="text-xs font-medium text-blue-700 hover:text-blue-900"
+                >
+                  Close
+                </button>
+              </div>
 
-          <div className="mt-4 grid grid-cols-1 md:grid-cols-3 gap-4 text-xs">
-            {/* Windows */}
-            <div className="rounded-lg bg-white p-4 border border-blue-100 shadow-xs">
-              <p className="font-semibold text-gray-900 mb-1.5">Windows Setup</p>
-              <p className="text-gray-600 mb-2 leading-relaxed">
-                Run PowerShell as Administrator to allow this web origin:
-              </p>
-              <pre className="overflow-x-auto rounded bg-gray-900 p-2 text-emerald-400 font-mono text-[11px] select-all">
-                {`[System.Environment]::SetEnvironmentVariable(
+              <div className="mt-4 grid grid-cols-1 md:grid-cols-3 gap-4 text-xs">
+                {/* Windows */}
+                <div className="rounded-lg bg-white p-4 border border-blue-100 shadow-xs">
+                  <p className="font-semibold text-gray-900 mb-1.5">Windows Setup</p>
+                  <p className="text-gray-600 mb-2 leading-relaxed">
+                    Run PowerShell as Administrator to allow this web origin:
+                  </p>
+                  <pre className="overflow-x-auto rounded bg-gray-900 p-2 text-emerald-400 font-mono text-[11px] select-all">
+                    {`[System.Environment]::SetEnvironmentVariable(
   "OLLAMA_ORIGINS",
   "http://localhost:3000,http://127.0.0.1:3000",
   "User"
 )`}
-              </pre>
-              <p className="mt-2 text-gray-500">
-                Then quit Ollama from the system tray and restart it.
-              </p>
-            </div>
+                  </pre>
+                  <p className="mt-2 text-gray-500">
+                    Then quit Ollama from the system tray and restart it.
+                  </p>
+                </div>
 
-            {/* macOS */}
-            <div className="rounded-lg bg-white p-4 border border-blue-100 shadow-xs">
-              <p className="font-semibold text-gray-900 mb-1.5">macOS Setup</p>
-              <p className="text-gray-600 mb-2 leading-relaxed">
-                Set environment variable via terminal:
-              </p>
-              <pre className="overflow-x-auto rounded bg-gray-900 p-2 text-emerald-400 font-mono text-[11px] select-all">
-                {`launchctl setenv OLLAMA_ORIGINS "http://localhost:3000,http://127.0.0.1:3000"`}
-              </pre>
-              <p className="mt-2 text-gray-500">
-                Then restart the Ollama application.
-              </p>
-            </div>
+                {/* macOS */}
+                <div className="rounded-lg bg-white p-4 border border-blue-100 shadow-xs">
+                  <p className="font-semibold text-gray-900 mb-1.5">macOS Setup</p>
+                  <p className="text-gray-600 mb-2 leading-relaxed">
+                    Set environment variable via terminal:
+                  </p>
+                  <pre className="overflow-x-auto rounded bg-gray-900 p-2 text-emerald-400 font-mono text-[11px] select-all">
+                    {`launchctl setenv OLLAMA_ORIGINS "http://localhost:3000,http://127.0.0.1:3000"`}
+                  </pre>
+                  <p className="mt-2 text-gray-500">
+                    Then restart the Ollama application.
+                  </p>
+                </div>
 
-            {/* Linux */}
-            <div className="rounded-lg bg-white p-4 border border-blue-100 shadow-xs">
-              <p className="font-semibold text-gray-900 mb-1.5">Linux (systemd)</p>
-              <p className="text-gray-600 mb-2 leading-relaxed">
-                Edit the systemd service configuration:
-              </p>
-              <pre className="overflow-x-auto rounded bg-gray-900 p-2 text-emerald-400 font-mono text-[11px] select-all">
-                {`sudo systemctl edit ollama.service
+                {/* Linux */}
+                <div className="rounded-lg bg-white p-4 border border-blue-100 shadow-xs">
+                  <p className="font-semibold text-gray-900 mb-1.5">Linux (systemd)</p>
+                  <p className="text-gray-600 mb-2 leading-relaxed">
+                    Edit the systemd service configuration:
+                  </p>
+                  <pre className="overflow-x-auto rounded bg-gray-900 p-2 text-emerald-400 font-mono text-[11px] select-all">
+                    {`sudo systemctl edit ollama.service
 # Add:
 [Service]
 Environment="OLLAMA_ORIGINS=http://localhost:3000,http://127.0.0.1:3000"`}
-              </pre>
-              <p className="mt-2 text-gray-500">
-                Reload: <code className="text-blue-700">sudo systemctl restart ollama</code>
-              </p>
-            </div>
-          </div>
+                  </pre>
+                  <p className="mt-2 text-gray-500">
+                    Reload: <code className="text-blue-700">sudo systemctl restart ollama</code>
+                  </p>
+                </div>
+              </div>
 
-          <div className="mt-4 pt-3 border-t border-blue-200 flex items-center justify-between text-xs text-blue-900">
-            <span>
-              💡 Download recommended lightweight models in terminal:{" "}
-              <code className="bg-blue-100 font-mono px-1.5 py-0.5 rounded text-blue-950 font-semibold">
-                ollama pull llama3.2
-              </code>{" "}
-              or{" "}
-              <code className="bg-blue-100 font-mono px-1.5 py-0.5 rounded text-blue-950 font-semibold">
-                ollama pull qwen2.5-coder:7b
-              </code>
-            </span>
-          </div>
-        </div>
-      )}
-      </>
+              <div className="mt-4 pt-3 border-t border-blue-200 flex items-center justify-between text-xs text-blue-900">
+                <span>
+                  💡 Download recommended lightweight models in terminal:{" "}
+                  <code className="bg-blue-100 font-mono px-1.5 py-0.5 rounded text-blue-950 font-semibold">
+                    ollama pull llama3.2
+                  </code>{" "}
+                  or{" "}
+                  <code className="bg-blue-100 font-mono px-1.5 py-0.5 rounded text-blue-950 font-semibold">
+                    ollama pull qwen2.5-coder:7b
+                  </code>
+                </span>
+              </div>
+            </div>
+          )}
+        </>
       )}
 
       {/* Main Grid: Playground & Local Stats */}
@@ -953,11 +950,10 @@ Environment="OLLAMA_ORIGINS=http://localhost:3000,http://127.0.0.1:3000"`}
             <div className="flex items-center gap-2">
               <button
                 onClick={() => setShowConfig(!showConfig)}
-                className={`inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-xs font-medium transition-colors ${
-                  showConfig
-                    ? "border-blue-300 bg-blue-50 text-blue-700"
-                    : "border-gray-300 bg-white text-gray-700 hover:bg-gray-50"
-                }`}
+                className={`inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-xs font-medium transition-colors ${showConfig
+                  ? "border-blue-300 bg-blue-50 text-blue-700"
+                  : "border-gray-300 bg-white text-gray-700 hover:bg-gray-50"
+                  }`}
               >
                 <Settings2 className="h-3.5 w-3.5" />
                 Parameters
@@ -1046,20 +1042,18 @@ Environment="OLLAMA_ORIGINS=http://localhost:3000,http://127.0.0.1:3000"`}
               messages.map((msg) => (
                 <div
                   key={msg.id}
-                  className={`flex flex-col ${
-                    msg.role === "user" ? "items-end" : "items-start"
-                  }`}
+                  className={`flex flex-col ${msg.role === "user" ? "items-end" : "items-start"
+                    }`}
                 >
                   <div className="text-[11px] font-semibold text-gray-400 mb-1 px-1 uppercase tracking-wider">
                     {msg.role === "user" ? "You" : msg.modelName || "Assistant"}
                   </div>
 
                   <div
-                    className={`rounded-2xl px-4 py-3 text-sm max-w-[85%] leading-relaxed ${
-                      msg.role === "user"
-                        ? "bg-blue-600 text-white rounded-tr-xs"
-                        : "bg-gray-100 text-gray-800 rounded-tl-xs border border-gray-200/80"
-                    }`}
+                    className={`rounded-2xl px-4 py-3 text-sm max-w-[85%] leading-relaxed ${msg.role === "user"
+                      ? "bg-blue-600 text-white rounded-tr-xs"
+                      : "bg-gray-100 text-gray-800 rounded-tl-xs border border-gray-200/80"
+                      }`}
                   >
                     <div className="whitespace-pre-wrap font-sans">
                       {msg.content || (isStreaming && msg.role === "assistant" ? "..." : "")}
@@ -1094,10 +1088,10 @@ Environment="OLLAMA_ORIGINS=http://localhost:3000,http://127.0.0.1:3000"`}
                   inferenceMode === "auto"
                     ? `Ask intelligent router (auto source)... (Enter to send, Shift+Enter for newline)`
                     : inferenceMode === "cloud_only"
-                    ? `Ask cloud LLM gateway... (Enter to send, Shift+Enter for newline)`
-                    : connectionState === "connected" && models.length > 0
-                    ? `Ask ${selectedModel}... (Enter to send, Shift+Enter for newline)`
-                    : "Connect to Ollama to begin inference..."
+                      ? `Ask cloud LLM gateway... (Enter to send, Shift+Enter for newline)`
+                      : connectionState === "connected" && models.length > 0
+                        ? `Ask ${selectedModel}... (Enter to send, Shift+Enter for newline)`
+                        : "Connect to Ollama to begin inference..."
                 }
                 className="w-full resize-none rounded-xl border border-gray-300 bg-gray-50/50 p-3 pr-20 text-sm text-gray-900 shadow-inner placeholder:text-gray-400 focus:border-blue-500 focus:bg-white focus:outline-none focus:ring-1 focus:ring-blue-500 disabled:opacity-50"
               />
@@ -1151,8 +1145,8 @@ Environment="OLLAMA_ORIGINS=http://localhost:3000,http://127.0.0.1:3000"`}
                 {inferenceMode === "auto"
                   ? "Autonomous Multi-Provider Dispatch"
                   : inferenceMode === "cloud_only"
-                  ? "Direct Cloud LLM Dispatch"
-                  : "Non-Billable / Device Native"}
+                    ? "Direct Cloud LLM Dispatch"
+                    : "Non-Billable / Device Native"}
               </span>
 
               {lastRouteHeaders && (
