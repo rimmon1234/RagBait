@@ -5,10 +5,16 @@ import type {
   ConversationListParams,
   ConversationListResponse,
   CreateConversationRequest,
+  FinalizeLocalRequest,
+  FinalizeLocalResponse,
   MessageListParams,
   MessageListResponse,
+  MessageSourcesResponse,
+  PrepareLocalRequest,
+  PrepareLocalResponse,
   RenameConversationRequest,
 } from "@/types/chat";
+import type { AccessStateResponse, ChatEntitlementResponse } from "@/types";
 
 export async function createConversation(
   request: CreateConversationRequest
@@ -104,5 +110,52 @@ export async function cancelGeneration(
 
   return fetchWithAuth<CancelGenerationResponse>(endpoint, {
     method: "POST",
+  });
+}
+
+export async function getMessageSources(messageId: string): Promise<MessageSourcesResponse> {
+  return fetchWithAuth<MessageSourcesResponse>(
+    `/api/v1/chat/messages/${encodeURIComponent(messageId)}/sources`,
+    {
+      method: "GET",
+    }
+  );
+}
+
+export async function prepareLocalTurn(
+  conversationId: string,
+  request: PrepareLocalRequest
+): Promise<PrepareLocalResponse> {
+  return fetchWithAuth<PrepareLocalResponse>(
+    `/api/v1/chat/conversations/${encodeURIComponent(conversationId)}/messages/prepare-local`,
+    {
+      method: "POST",
+      body: JSON.stringify(request),
+    }
+  );
+}
+
+export async function finalizeLocalTurn(
+  conversationId: string,
+  request: FinalizeLocalRequest
+): Promise<FinalizeLocalResponse> {
+  return fetchWithAuth<FinalizeLocalResponse>(
+    `/api/v1/chat/conversations/${encodeURIComponent(conversationId)}/messages/finalize-local`,
+    {
+      method: "POST",
+      body: JSON.stringify(request),
+    }
+  );
+}
+
+export async function getAccessState(): Promise<AccessStateResponse> {
+  return fetchWithAuth<AccessStateResponse>("/api/v1/me/access", {
+    method: "GET",
+  });
+}
+
+export async function getChatEntitlementState(): Promise<ChatEntitlementResponse> {
+  return fetchWithAuth<ChatEntitlementResponse>("/api/v1/me/chat-entitlement", {
+    method: "GET",
   });
 }

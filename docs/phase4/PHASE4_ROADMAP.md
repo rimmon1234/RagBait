@@ -227,34 +227,34 @@ flowchart LR
 
 ---
 
-### Milestone M4.7 — Student AI Chat Interface & Sources & Context Panel
-- **Objective**: Build the full student-facing chat UI, conversation sidebar, citation tags, and Sources & Context drawer.
+### Milestone M4.7 — Student AI Chat Interface & Sources & Context Panel (Completed)
+- **Status**: COMPLETE & VERIFIED (November 25, 2026 — [M4_7_IMPLEMENTATION_REPORT.md](file:///d:/Projects/RagBait/docs/phase4/M4_7_IMPLEMENTATION_REPORT.md))
+- **Objective**: Build the full student-facing chat UI, SSE streaming lifecycle, citation chips, Sources & Context drawer, and Private Local Ollama integration.
 - **Scope**:
-  - Responsive Chat UI at `/chat/[id]` and `/chat`.
-  - Left sidebar: conversation list grouped by subject, new chat action, search, rename, delete.
-  - Subject picker modal when creating a new chat.
-  - Real-time SSE streaming reader with markdown, tables, and code blocks.
-  - Clickable citation chips (`[S1]`, `[S2]`) highlighting referenced source cards.
-  - **Sources & Context drawer** showing title, page number, exact excerpt, and "Open Document at Page X" action.
-  - Tab toggle in Sources drawer: "Referenced in Answer" vs "All Considered Context".
-  - Direct document viewer jump: opens `/knowledge-base/document/[id]?page=X` in a new tab or split view.
-  - Authoritative excerpt masking for archived or moderated documents.
-  - Context limit warning badge when conversations approach capacity.
+  - Responsive Chat UI at `/chat/[id]` and `/chat` with desktop sidebar and mobile slide-over conversation drawer.
+  - Conversation sidebar: active/archived tabs, subject filter, search, cursor pagination, error/retry states, rename/archive/restore/delete, and activity timestamps.
+  - Subject picker modal (`NewConversationModal`) and `RenameConversationModal` with prop sync, double-submit guard, and `CHAT_CONTRIBUTION_REQUIRED` handling.
+  - Real-time SSE streaming reader (`useChatSession`) handling all 8 M4.6 events (`admission_waiting`, `generation_started`, `sources_identified`, `text_delta`, `content_replaced`, `generation_completed`, `generation_failed`, `generation_cancelled`), replay deduplication, unexpected EOF server reconciliation, 409 cancel-vs-complete reconciliation, and idempotent retry reuse.
+  - Safe zero-dependency pure-React Markdown & `[Sn]` citation chip renderer (`MarkdownMessageRenderer`) with XSS sanitization (no `dangerouslySetInnerHTML`, blocks `javascript:` URLs).
+  - **Sources & Context drawer** (`SourcesDrawer`) authoritatively loading `GET /api/v1/chat/messages/{message_id}/sources`, separating `Cited in Answer` (`referenced_in_answer`) from `All Considered` (`included_in_context`), masking unavailable/moderated documents, and linking directly via `"Open at Page X"` to `/knowledge-base/document/[id]?page=X`.
+  - Protected document physical page jump viewer route at `/knowledge-base/document/[id]` wrapping `DocumentPageViewer`.
+  - Isolated **Private Local Ollama** mode (`prepare-local` -> loopback `127.0.0.1:11434` stream -> `finalize-local`) with zero cloud fallback.
+  - Access & entitlement enforcement via `useChatAccessState` + `ChatAccessGate` blocking `pending`/`rejected`/`suspended` accounts while letting approved non-contributors browse/manage existing history.
 - **Dependencies**: M4.1–M4.6 backend endpoints.
 - **Database Changes**: None.
 - **Backend Changes**: None.
-- **Frontend Changes**: New pages and components in `apps/web/src/app/(protected)/chat/` and `apps/web/src/components/chat/`.
+- **Frontend Changes**: Extended chat types/clients and added components/hooks/routes across `apps/web/src/app/(protected)/chat/`, `apps/web/src/app/(protected)/knowledge-base/document/[id]/`, `apps/web/src/components/chat/`, and `apps/web/src/lib/chat/`.
 - **Security Considerations**:
-  - Sanitization of markdown and code blocks to prevent XSS.
-  - Document viewing relies on existing authorized time-limited download URLs.
+  - Zero raw HTML injection (`dangerouslySetInnerHTML` never used); URLs sanitized to `http:`/`https:`/`/`.
+  - Unavailable/moderated catalog documents masked safely in `SourcesDrawer`.
+  - Pending/rejected/suspended students denied chat access; M2 contribution entitlement enforced for new conversations and turns while preserving history management.
 - **Testing**:
-  - React Testing Library & Vitest component tests (`ChatInterface.test.tsx`, `SourcesPanel.test.tsx`, `CitationRenderer.test.tsx`).
-  - Mobile responsiveness and drawer toggle tests.
+  - Full frontend verification (`apps/web`): `pnpm lint` (0 errors), `pnpm typecheck` (0 errors), `pnpm test` (`28/28` test files, `165/165` Vitest specs including `useChatSession.test.ts`, `SourcesDrawer.test.tsx`, `MarkdownAndComposer.test.tsx`, `ChatAccessAndPages.test.tsx`, updated `ChatComponents.test.tsx`, and `streaming-client.test.ts`), and `pnpm build` (26/26 routes compiled).
 - **Acceptance Criteria**:
-  - Clicking a citation chip highlights the corresponding source in the drawer.
-  - Clicking "Open Document at Page X" loads the document viewer on that physical page.
-  - Student can create, switch, and delete conversations cleanly.
-- **Exclusions**: End-to-end certification benchmarks.
+  - Clicking an inline citation badge opens `SourcesDrawer` and highlights the corresponding source card across Cited/Considered tabs.
+  - Clicking `"Open at Page X"` navigates to `/knowledge-base/document/[id]?page=X` initialized at the physical page.
+  - Student can create, switch, stream, cancel, retry, archive, restore, and delete conversations cleanly across Cloud AI and Private Local Ollama modes.
+- **Exclusions**: End-to-end M4.8 golden dataset evaluation and live headless browser screenshots.
 
 ---
 

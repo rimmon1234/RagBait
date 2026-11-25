@@ -1,24 +1,31 @@
 "use client";
 
-import { useEffect, useRef } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
+  AlertCircle,
   Archive,
   ArchiveRestore,
+  ArrowDown,
   BookOpen,
-  Calendar,
-  CheckCircle2,
-  Clock,
   Edit2,
-  Info,
   Loader2,
-  MessageSquare,
+  Menu,
+  RefreshCw,
   Sparkles,
   Trash2,
-  User,
 } from "lucide-react";
-import type { ChatConversation, ChatMessage } from "@/types/chat";
+import { ChatComposer } from "@/components/chat/ChatComposer";
+import { MessageBubble } from "@/components/chat/MessageBubble";
+import type { QueueWaitInfo, StreamErrorState } from "@/lib/chat/useChatSession";
+import type {
+  ChatConversation,
+  ChatMessage,
+  GenerationPhase,
+  InferenceExecutionMode,
+  StreamSourceSummary,
+} from "@/types/chat";
 
-interface ChatInterfaceProps {
+export interface ChatInterfaceProps {
   conversation: ChatConversation;
   messages: ChatMessage[];
   loading: boolean;
@@ -29,7 +36,35 @@ interface ChatInterfaceProps {
   onArchive: () => void;
   onRestore: () => void;
   onDelete: () => void;
+  // M4.7 streaming & grounded citations integration
+  canGenerate?: boolean;
+  contributionReason?: string;
+  phase?: GenerationPhase;
+  isGenerationActive?: boolean;
+  isProvisionalMessage?: (messageId: string) => boolean;
+  wasContentReplaced?: (messageId: string) => boolean;
+  identifiedSourcesForMessage?: (messageId: string) => StreamSourceSummary[] | undefined;
+  queueInfo?: QueueWaitInfo | null;
+  generationError?: StreamErrorState | null;
+  hasRetryPayload?: boolean;
+  draftOverride?: string | null;
+  onClearDraftOverride?: () => void;
+  inferenceMode?: InferenceExecutionMode;
+  onInferenceModeChange?: (mode: InferenceExecutionMode) => void;
+  selectedLocalModel?: string;
+  onLocalModelChange?: (modelId: string) => void;
+  onSendMessage?: (content: string) => Promise<void> | void;
+  onCancelGeneration?: () => void;
+  onRetryGeneration?: () => void;
+  onInspectSources?: (messageId: string, focusedCitationKey?: string) => void;
+  onOpenSidebar?: () => void;
 }
+
+const STARTER_SUGGESTIONS = [
+  "Summarize the core concepts covered in the lecture materials for this subject.",
+  "List the key definitions and formulas I should review with source page citations.",
+  "Quiz me with 3 practice questions based on these course documents.",
+];
 
 export function ChatInterface({
   conversation,
@@ -42,45 +77,100 @@ export function ChatInterface({
   onArchive,
   onRestore,
   onDelete,
+  canGenerate = true,
+  contributionReason,
+  phase = "idle",
+  isGenerationActive = false,
+  isProvisionalMessage = () => false,
+  wasContentReplaced = () => false,
+  identifiedSourcesForMessage = () => undefined,
+  queueInfo = null,
+  generationError = null,
+  hasRetryPayload = false,
+  draftOverride = null,
+  onClearDraftOverride,
+  inferenceMode = "cloud",
+  onInferenceModeChange = () => undefined,
+  selectedLocalModel = "",
+  onLocalModelChange = () => undefined,
+  onSendMessage = () => undefined,
+  onCancelGeneration = () => undefined,
+  onRetryGeneration,
+  onInspectSources = () => undefined,
+  onOpenSidebar,
 }: ChatInterfaceProps) {
+  const scrollContainerRef = useRef<HTMLDivElement>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const nearBottomRef = useRef(true);
+  const [showJumpToBottom, setShowJumpToBottom] = useState(false);
 
-  // Auto-scroll to bottom when new messages arrive
+  const handleScroll = useCallback(() => {
+    const el = scrollContainerRef.current;
+    if (!el) return;
+    const distanceFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
+    const isNear = distanceFromBottom < 120;
+    nearBottomRef.current = isNear;
+    setShowJumpToBottom(!isNear && messages.length > 0);
+  }, [messages.length]);
+
+  const scrollToBottom = useCallback((behavior: ScrollBehavior = "smooth") => {
+    messagesEndRef.current?.scrollIntoView?.({ behavior });
+    nearBottomRef.current = true;
+    setShowJumpToBottom(false);
+  }, []);
+
+  const lastMessage = messages[messages.length - 1];
+  const lastContentLen = lastMessage?.content?.length ?? 0;
+
+  // Smart scroll: stick to bottom during streaming/new messages only when user has not scrolled up
   useEffect(() => {
-    if (!loadingOlder && messagesEndRef.current) {
-      messagesEndRef.current.scrollIntoView?.({ behavior: "smooth" });
+    if (loadingOlder) return;
+    if (phase === "submitting") {
+      scrollToBottom("smooth");
+      return;
     }
-  }, [messages.length, loadingOlder]);
-
-  const formattedDate = new Date(conversation.created_at).toLocaleDateString(undefined, {
-    year: "numeric",
-    month: "short",
-    day: "numeric",
-  });
+    if (nearBottomRef.current && messagesEndRef.current) {
+      messagesEndRef.current.scrollIntoView?.({
+        behavior: isGenerationActive ? "auto" : "smooth",
+      });
+    }
+  }, [messages.length, lastContentLen, loadingOlder, isGenerationActive, phase, scrollToBottom]);
 
   return (
     <section aria-label="Conversation detail" className="flex h-full flex-1 flex-col overflow-hidden bg-white">
       {/* Header */}
-      <header className="flex flex-wrap items-center justify-between gap-3 border-b border-gray-200 bg-white px-6 py-3.5 shadow-sm">
-        <div className="flex flex-col gap-1">
-          <div className="flex items-center gap-2">
-            <span className="inline-flex items-center gap-1 rounded-md bg-blue-50 px-2 py-0.5 text-xs font-semibold text-blue-700">
-              <BookOpen className="h-3 w-3" />
-              {conversation.subject_name}
-            </span>
-            <span
-              className={`inline-flex items-center gap-1 rounded-md px-2 py-0.5 text-[11px] font-medium capitalize ${
-                conversation.status === "active"
-                  ? "bg-green-50 text-green-700 border border-green-200"
-                  : "bg-gray-100 text-gray-700 border border-gray-200"
-              }`}
+      <header className="flex flex-wrap items-center justify-between gap-3 border-b border-gray-200 bg-white px-4 py-3 shadow-sm md:px-6">
+        <div className="flex min-w-0 items-center gap-3">
+          {onOpenSidebar && (
+            <button
+              type="button"
+              onClick={onOpenSidebar}
+              aria-label="Open conversations menu"
+              className="rounded-lg border border-gray-200 p-2 text-gray-600 hover:bg-gray-50 md:hidden"
             >
-              {conversation.status}
-            </span>
+              <Menu className="h-4 w-4" />
+            </button>
+          )}
+          <div className="min-w-0 flex flex-col gap-1">
+            <div className="flex items-center gap-2">
+              <span className="inline-flex items-center gap-1 rounded-md bg-blue-50 px-2 py-0.5 text-xs font-semibold text-blue-700">
+                <BookOpen className="h-3 w-3" />
+                {conversation.subject_name}
+              </span>
+              <span
+                className={`inline-flex items-center gap-1 rounded-md px-2 py-0.5 text-[11px] font-medium capitalize ${
+                  conversation.status === "active"
+                    ? "border border-green-200 bg-green-50 text-green-700"
+                    : "border border-gray-200 bg-gray-100 text-gray-700"
+                }`}
+              >
+                {conversation.status}
+              </span>
+            </div>
+            <h1 className="max-w-xl truncate text-base font-bold text-gray-900 md:text-lg">
+              {conversation.title}
+            </h1>
           </div>
-          <h1 className="text-lg font-bold text-gray-900 truncate max-w-xl">
-            {conversation.title}
-          </h1>
         </div>
 
         {/* Action Buttons */}
@@ -126,8 +216,11 @@ export function ChatInterface({
       </header>
 
       {/* Messages Scroll Area */}
-      <div className="flex-1 overflow-y-auto p-6 space-y-4">
-        {/* Load Older Messages Button */}
+      <div
+        ref={scrollContainerRef}
+        onScroll={handleScroll}
+        className="relative flex-1 space-y-5 overflow-y-auto px-4 py-6 md:px-8"
+      >
         {hasMoreOlder && (
           <div className="flex justify-center pb-2">
             <button
@@ -147,117 +240,128 @@ export function ChatInterface({
             <Loader2 className="h-8 w-8 animate-spin text-blue-600" />
           </div>
         ) : messages.length === 0 ? (
-          /* Empty State & Milestone 4.1 Information */
-          <div className="mx-auto max-w-xl py-12 text-center">
+          <div className="mx-auto max-w-2xl py-8 text-center">
             <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-2xl bg-blue-50 text-blue-600 shadow-inner">
               <Sparkles className="h-7 w-7" />
             </div>
             <h2 className="mt-4 text-xl font-bold text-gray-900">
-              Study Chat: {conversation.subject_name}
+              Grounded Study Chat: {conversation.subject_name}
             </h2>
-            <p className="mt-2 text-sm text-gray-600 leading-relaxed">
-              This persistent conversation is bound to <span className="font-semibold text-gray-800">{conversation.subject_name}</span>.
-              All messages and conversation state are stored directly in PostgreSQL with transactional sequence integrity.
+            <p className="mt-2 text-sm leading-relaxed text-gray-600">
+              Answers are grounded in verified course materials for{" "}
+              <span className="font-semibold text-gray-800">{conversation.subject_name}</span>.
+              Click any inline citation badge like <span className="font-mono text-blue-700">[S1]</span> to inspect exact source excerpts and jump directly to the referenced PDF page.
             </p>
 
-            <div className="mt-6 rounded-2xl border border-blue-100 bg-blue-50/70 p-4 text-left">
-              <div className="flex items-start gap-3">
-                <Info className="h-5 w-5 text-blue-600 shrink-0 mt-0.5" />
-                <div className="text-xs text-blue-900 space-y-1.5">
-                  <p className="font-semibold text-blue-950">
-                    Phase 4 Milestone M4.1 — Infrastructure Ready
-                  </p>
-                  <p className="leading-relaxed">
-                    Persistent conversation CRUD, multi-conversation management, and cursor-based history pagination are operational.
-                  </p>
-                  <p className="leading-relaxed text-blue-800">
-                    Retrieval-Augmented Generation (semantic vector retrieval, citation provenance, and grounded LLM answers) will be wired in subsequent Phase 4 milestones (M4.5 / M4.6).
-                  </p>
-                </div>
+            {conversation.status === "active" && canGenerate && (
+              <div className="mt-6 grid gap-2 text-left sm:grid-cols-1">
+                {STARTER_SUGGESTIONS.map((prompt) => (
+                  <button
+                    key={prompt}
+                    type="button"
+                    disabled={isGenerationActive}
+                    onClick={() => void onSendMessage(prompt)}
+                    className="rounded-xl border border-gray-200 bg-gray-50/70 px-4 py-2.5 text-left text-xs font-medium text-gray-700 transition-colors hover:border-blue-300 hover:bg-blue-50/60 hover:text-blue-900 disabled:opacity-50"
+                  >
+                    {prompt}
+                  </button>
+                ))}
               </div>
-            </div>
+            )}
           </div>
         ) : (
-          /* Message List */
-          messages.map((msg) => {
-            const isUser = msg.role === "user";
-            return (
-              <div
+          <div className="mx-auto max-w-4xl space-y-5">
+            {messages.map((msg) => (
+              <MessageBubble
                 key={msg.id}
-                className={`flex gap-3 ${isUser ? "justify-end" : "justify-start"}`}
-              >
-                {!isUser && (
-                  <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-blue-600 text-white shadow-sm">
-                    <Sparkles className="h-4 w-4" />
-                  </div>
-                )}
-
-                <div
-                  className={`flex max-w-2xl flex-col ${
-                    isUser ? "items-end" : "items-start"
-                  }`}
-                >
-                  <div className="flex items-center gap-2 mb-1 text-[11px] text-gray-500">
-                    <span className="font-medium text-gray-700">
-                      {isUser ? "You" : "Study Assistant"}
-                    </span>
-                    <span className="rounded bg-gray-100 px-1 py-0.2 text-[10px] font-mono text-gray-600">
-                      #{msg.sequence_number}
-                    </span>
-                    <span>
-                      {new Date(msg.created_at).toLocaleTimeString([], {
-                        hour: "2-digit",
-                        minute: "2-digit",
-                      })}
-                    </span>
-                  </div>
-
-                  <div
-                    className={`rounded-2xl px-4 py-2.5 text-sm shadow-sm whitespace-pre-wrap leading-relaxed ${
-                      isUser
-                        ? "bg-blue-600 text-white rounded-tr-none"
-                        : "bg-gray-100 text-gray-900 rounded-tl-none border border-gray-200"
-                    }`}
-                  >
-                    {msg.content}
-                  </div>
-                </div>
-
-                {isUser && (
-                  <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-gray-200 text-gray-700 shadow-sm">
-                    <User className="h-4 w-4" />
-                  </div>
-                )}
-              </div>
-            );
-          })
+                message={msg}
+                isProvisional={isProvisionalMessage(msg.id)}
+                wasContentReplaced={wasContentReplaced(msg.id)}
+                identifiedSourcesCount={identifiedSourcesForMessage(msg.id)?.length}
+                onCitationClick={(citationKey, msgId) => onInspectSources(msgId, citationKey)}
+                onInspectSources={(msgId) => onInspectSources(msgId)}
+              />
+            ))}
+          </div>
         )}
-        <div ref={messagesEndRef} />
-      </div>
 
-      {/* Honest Milestone 4.1 Input Area */}
-      <footer className="border-t border-gray-200 bg-gray-50/80 p-4">
-        <div className="mx-auto max-w-3xl">
-          <div className="flex items-center gap-2 rounded-xl border border-gray-200 bg-white p-2 shadow-inner">
-            <input
-              type="text"
-              disabled
-              placeholder="Grounded RAG study assistant will be activated in Phase 4 Milestone 4.5..."
-              className="flex-1 bg-transparent px-3 py-1.5 text-xs text-gray-500 placeholder:text-gray-400 focus:outline-none disabled:cursor-not-allowed"
-            />
+        {/* Live generation queue / error banners */}
+        <div className="mx-auto max-w-4xl space-y-2" aria-live="polite">
+          {phase === "admission_waiting" && (
+            <div className="flex items-center gap-2.5 rounded-xl border border-blue-200 bg-blue-50 px-4 py-2.5 text-xs text-blue-900">
+              <Loader2 className="h-4 w-4 animate-spin text-blue-600" />
+              <span>
+                Waiting for inference slot
+                {queueInfo
+                  ? ` — queue position #${queueInfo.position} (est. ~${queueInfo.estimatedWaitSeconds}s)`
+                  : "..."}
+              </span>
+            </div>
+          )}
+
+          {phase === "cancelling" && (
+            <div className="flex items-center gap-2.5 rounded-xl border border-amber-200 bg-amber-50 px-4 py-2.5 text-xs text-amber-900">
+              <Loader2 className="h-4 w-4 animate-spin text-amber-700" />
+              <span>Stopping generation and reconciling persisted partial output...</span>
+            </div>
+          )}
+
+          {generationError && (
+            <div
+              role="alert"
+              className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-red-200 bg-red-50 px-4 py-2.5 text-xs text-red-800"
+            >
+              <div className="flex items-start gap-2">
+                <AlertCircle className="mt-0.5 h-4 w-4 shrink-0 text-red-600" />
+                <span>{generationError.message}</span>
+              </div>
+              {generationError.retryable && hasRetryPayload && onRetryGeneration && (
+                <button
+                  type="button"
+                  onClick={onRetryGeneration}
+                  className="inline-flex items-center gap-1 rounded-lg border border-red-300 bg-white px-2.5 py-1 font-semibold text-red-700 hover:bg-red-100"
+                >
+                  <RefreshCw className="h-3 w-3" />
+                  <span>Retry</span>
+                </button>
+              )}
+            </div>
+          )}
+        </div>
+
+        <div ref={messagesEndRef} />
+
+        {showJumpToBottom && (
+          <div className="sticky bottom-3 flex justify-center pointer-events-none">
             <button
               type="button"
-              disabled
-              className="rounded-lg bg-gray-200 px-3 py-1.5 text-xs font-semibold text-gray-400 disabled:cursor-not-allowed"
+              onClick={() => scrollToBottom("smooth")}
+              className="pointer-events-auto inline-flex items-center gap-1.5 rounded-full border border-gray-300 bg-white px-3 py-1.5 text-xs font-medium text-gray-700 shadow-md hover:bg-gray-50"
             >
-              Send
+              <ArrowDown className="h-3.5 w-3.5 text-blue-600" />
+              <span>Jump to latest</span>
             </button>
           </div>
-          <p className="mt-2 text-center text-[11px] text-gray-500">
-            Conversation persistence and subject isolation verified. Full RAG pipeline will be integrated in upcoming milestones.
-          </p>
-        </div>
-      </footer>
+        )}
+      </div>
+
+      {/* M4.7 Composer */}
+      <ChatComposer
+        conversationStatus={conversation.status}
+        subjectName={conversation.subject_name}
+        canGenerate={canGenerate}
+        contributionReason={contributionReason}
+        inferenceMode={inferenceMode}
+        onInferenceModeChange={onInferenceModeChange}
+        selectedLocalModel={selectedLocalModel}
+        onLocalModelChange={onLocalModelChange}
+        isGenerationActive={isGenerationActive}
+        phase={phase}
+        draftOverride={draftOverride}
+        onClearDraftOverride={onClearDraftOverride}
+        onSend={onSendMessage}
+        onCancel={onCancelGeneration}
+      />
     </section>
   );
 }

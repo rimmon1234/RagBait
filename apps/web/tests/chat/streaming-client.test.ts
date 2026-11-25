@@ -167,4 +167,31 @@ describe("SSE Streaming Client Helper (M4.6)", () => {
     expect(controller.signal.aborted).toBe(true);
     expect(cancelGeneration).toHaveBeenCalledWith("msg-1", "conv-1");
   });
+
+  it("skips malformed JSON payloads cleanly and preserves stream flow across unknown SSE event names", async () => {
+    const ssePayload = [
+      ": heartbeat\n\n",
+      "event: future_unknown_event\ndata: {\"foo\":true}\n\n",
+      "event: text_delta\ndata: {not-valid-json\n\n",
+      'event: text_delta\ndata: {"message_id":"asst-1","delta":"Valid"}\n\n',
+    ].join("");
+
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValueOnce(
+        new Response(streamFromChunks([new TextEncoder().encode(ssePayload)]), {
+          status: 200,
+          headers: { "Content-Type": "text/event-stream" },
+        })
+      )
+    );
+
+    const events = [];
+    for await (const ev of streamConversationMessage("conv-1", { content: "Test" })) {
+      events.push(ev);
+    }
+
+    expect(events.map((e) => e.event)).toEqual(["future_unknown_event", "text_delta"]);
+    expect((events[1].data as { delta: string }).delta).toBe("Valid");
+  });
 });

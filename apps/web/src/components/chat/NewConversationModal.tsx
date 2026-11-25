@@ -1,8 +1,10 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import Link from "next/link";
 import { Loader2, MessageSquarePlus, X } from "lucide-react";
 import type { SubjectRead } from "@/lib/knowledge-base/knowledge-base-types";
+import { ApiError } from "@/lib/api";
 import { createConversation } from "@/lib/chat-client";
 import type { ChatConversation } from "@/types/chat";
 
@@ -27,11 +29,25 @@ export function NewConversationModal({
   const [title, setTitle] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [contributionRequired, setContributionRequired] = useState(false);
+
+  useEffect(() => {
+    if (!isOpen) return;
+    setError(null);
+    setContributionRequired(false);
+    setTitle("");
+    setSelectedSubjectId((prev) => {
+      if (defaultSubjectId) return defaultSubjectId;
+      if (prev && subjects.some((s) => s.id === prev)) return prev;
+      return subjects.length > 0 ? subjects[0].id : "";
+    });
+  }, [isOpen, defaultSubjectId, subjects]);
 
   if (!isOpen) return null;
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (loading) return;
     if (!selectedSubjectId) {
       setError("Please select an academic subject.");
       return;
@@ -40,6 +56,7 @@ export function NewConversationModal({
     try {
       setLoading(true);
       setError(null);
+      setContributionRequired(false);
       const conversation = await createConversation({
         subject_id: selectedSubjectId,
         title: title.trim() || undefined,
@@ -48,6 +65,13 @@ export function NewConversationModal({
       onConversationCreated(conversation);
       onClose();
     } catch (err) {
+      if (
+        err instanceof ApiError &&
+        err.status === 403 &&
+        err.code === "CHAT_CONTRIBUTION_REQUIRED"
+      ) {
+        setContributionRequired(true);
+      }
       setError(err instanceof Error ? err.message : "Failed to create conversation");
     } finally {
       setLoading(false);
@@ -78,8 +102,26 @@ export function NewConversationModal({
         </div>
 
         {error && (
-          <div className="mt-4 rounded-xl bg-red-50 p-3 text-sm text-red-700 border border-red-200">
-            {error}
+          <div className="mt-4 rounded-xl bg-red-50 p-3 text-sm text-red-700 border border-red-200 space-y-2">
+            <p>{error}</p>
+            {contributionRequired && (
+              <div className="flex flex-wrap gap-3 text-xs font-semibold">
+                <Link
+                  href="/access/contribution-required"
+                  onClick={onClose}
+                  className="text-red-800 underline hover:text-red-900"
+                >
+                  View contribution requirements
+                </Link>
+                <Link
+                  href="/credentials"
+                  onClick={onClose}
+                  className="text-blue-700 underline hover:text-blue-800"
+                >
+                  Connect OpenRouter key
+                </Link>
+              </div>
+            )}
           </div>
         )}
 

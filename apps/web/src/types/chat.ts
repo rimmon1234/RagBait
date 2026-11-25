@@ -28,10 +28,107 @@ export interface ChatMessage {
   role: ChatMessageRole;
   content: string;
   status: ChatMessageStatus;
-  client_message_id: string | null;
+  client_message_id?: string | null;
+  model_id?: string | null;
+  provider_id?: string | null;
+  finish_reason?: string | null;
+  error_message?: string | null;
   created_at: string;
   updated_at: string;
 }
+
+export interface MessageSourceRead {
+  id: string;
+  citation_key: string;
+  document_id: string | null;
+  document_title: string;
+  file_type?: string | null;
+  page_number_start: number;
+  page_number_end: number;
+  excerpt: string;
+  relevance_score: number;
+  included_in_context: boolean;
+  referenced_in_answer: boolean;
+  is_available: boolean;
+  document_viewer_url?: string | null;
+}
+
+export interface MessageSourcesResponse {
+  message_id: string;
+  conversation_id: string;
+  sources: MessageSourceRead[];
+}
+
+export interface TokenAccountingBreakdown {
+  model_effective_ceiling: number;
+  reserved_output_tokens: number;
+  system_prompt_tokens: number;
+  guardrail_overhead_tokens: number;
+  safety_margin_tokens: number;
+  available_working_budget: number;
+  current_question_tokens: number;
+  evidence_budget_ceiling: number;
+  evidence_token_count: number;
+  summary_token_count: number;
+  recent_history_token_count: number;
+  total_input_token_count: number;
+  total_reserved_tokens: number;
+  utilization_ratio: number;
+  count_source?: "exact_tokenizer" | "local_estimate";
+  counting_strategy?: string;
+  is_approximate?: boolean;
+}
+
+export interface PrepareLocalRequest {
+  content: string;
+  model_id?: string | null;
+  idempotency_key?: string;
+  max_output_tokens?: number | null;
+}
+
+export interface PrepareLocalResponse {
+  message_id: string;
+  user_message_id: string;
+  prepared_request_id: string;
+  conversation_id: string;
+  model_id: string;
+  expires_at: string;
+  prompt: string;
+  messages: Array<{ role: "system" | "user" | "assistant"; content: string }>;
+  sources: StreamSourceSummary[];
+  accounting: TokenAccountingBreakdown;
+  evidence_omitted_count: number;
+}
+
+export interface FinalizeLocalRequest {
+  message_id: string;
+  prepared_request_id: string;
+  completion_text: string;
+  finish_reason?: string;
+  token_usage?: Record<string, unknown>;
+}
+
+export interface FinalizeLocalResponse {
+  message_id: string;
+  status: "completed";
+  citations_reconciled: number;
+  valid_citations: string[];
+  invalid_citations_stripped: string[];
+  citation_validation_status: string;
+  sources: MessageSourceRead[];
+}
+
+export type GenerationPhase =
+  | "idle"
+  | "submitting"
+  | "admission_waiting"
+  | "generating"
+  | "cancelling"
+  | "completed"
+  | "failed"
+  | "cancelled";
+
+export type InferenceExecutionMode = "cloud" | "private_local";
 
 export interface ConversationListResponse {
   items: ChatConversation[];

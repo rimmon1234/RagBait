@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Edit2, Loader2, X } from "lucide-react";
 import { renameConversation } from "@/lib/chat-client";
 import type { ChatConversation } from "@/types/chat";
@@ -21,6 +21,13 @@ export function RenameConversationModal({
   const [title, setTitle] = useState(conversation?.title || "");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (isOpen && conversation) {
+      setTitle(conversation.title || "");
+      setError(null);
+    }
+  }, [isOpen, conversation]);
 
   if (!isOpen || !conversation) return null;
 

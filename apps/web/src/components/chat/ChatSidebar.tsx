@@ -1,8 +1,9 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useMemo } from "react";
 import Link from "next/link";
 import {
+  AlertCircle,
   Archive,
   ArchiveRestore,
   BookOpen,
@@ -11,11 +12,13 @@ import {
   Loader2,
   MessageSquare,
   Plus,
+  RefreshCw,
   Search,
   Trash2,
+  X,
 } from "lucide-react";
 import type { SubjectRead } from "@/lib/knowledge-base/knowledge-base-types";
-import type { ChatConversation, ChatConversationStatus } from "@/types/chat";
+import type { ChatConversation } from "@/types/chat";
 
 interface ChatSidebarProps {
   conversations: ChatConversation[];
@@ -36,6 +39,10 @@ interface ChatSidebarProps {
   onLoadMore: () => void;
   loading: boolean;
   loadingMore: boolean;
+  error?: string | null;
+  onRetry?: () => void;
+  canCreateChat?: boolean;
+  onCloseMobile?: () => void;
 }
 
 export function ChatSidebar({
@@ -57,6 +64,10 @@ export function ChatSidebar({
   onLoadMore,
   loading,
   loadingMore,
+  error = null,
+  onRetry,
+  canCreateChat = true,
+  onCloseMobile,
 }: ChatSidebarProps) {
   const filteredConversations = useMemo(() => {
     return conversations.filter((c) => {
@@ -82,14 +93,32 @@ export function ChatSidebar({
             <MessageSquare className="h-5 w-5 text-blue-600" />
             <h2 className="text-base font-bold text-gray-900">Study Chats</h2>
           </div>
-          <button
-            type="button"
-            onClick={onNewChat}
-            className="inline-flex items-center gap-1.5 rounded-xl bg-blue-600 px-3 py-1.5 text-xs font-semibold text-white shadow-sm hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2"
-          >
-            <Plus className="h-3.5 w-3.5" />
-            <span>New Chat</span>
-          </button>
+          <div className="flex items-center gap-1.5">
+            <button
+              type="button"
+              onClick={onNewChat}
+              disabled={!canCreateChat}
+              title={
+                canCreateChat
+                  ? "Start a new conversation"
+                  : "Connect an OpenRouter key to start new chats"
+              }
+              className="inline-flex items-center gap-1.5 rounded-xl bg-blue-600 px-3 py-1.5 text-xs font-semibold text-white shadow-sm hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 disabled:cursor-not-allowed disabled:bg-gray-300 disabled:text-gray-500"
+            >
+              <Plus className="h-3.5 w-3.5" />
+              <span>New Chat</span>
+            </button>
+            {onCloseMobile && (
+              <button
+                type="button"
+                onClick={onCloseMobile}
+                aria-label="Close sidebar"
+                className="rounded-lg p-1.5 text-gray-500 hover:bg-gray-100 hover:text-gray-700 md:hidden"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            )}
+          </div>
         </div>
 
         {/* Status Tabs: Active / Archived */}
@@ -154,9 +183,38 @@ export function ChatSidebar({
 
       {/* Conversation List */}
       <div className="flex-1 overflow-y-auto p-3 space-y-1.5">
+        {error && (
+          <div className="mb-2 rounded-xl border border-red-200 bg-red-50 p-3 text-xs text-red-800">
+            <div className="flex items-start gap-2">
+              <AlertCircle className="mt-0.5 h-4 w-4 shrink-0 text-red-600" />
+              <div className="flex-1 space-y-1.5">
+                <p>{error}</p>
+                {onRetry && (
+                  <button
+                    type="button"
+                    onClick={onRetry}
+                    className="inline-flex items-center gap-1 rounded-md border border-red-300 bg-white px-2 py-0.5 font-medium text-red-700 hover:bg-red-100"
+                  >
+                    <RefreshCw className="h-3 w-3" />
+                    <span>Retry</span>
+                  </button>
+                )}
+              </div>
+            </div>
+          </div>
+        )}
+
         {loading && conversations.length === 0 ? (
-          <div className="flex h-32 items-center justify-center">
-            <Loader2 className="h-6 w-6 animate-spin text-blue-600" />
+          <div className="space-y-2 py-1" role="status" aria-label="Loading conversations">
+            <div className="flex justify-center py-2">
+              <Loader2 className="h-5 w-5 animate-spin text-blue-600" />
+            </div>
+            {[1, 2, 3].map((idx) => (
+              <div
+                key={idx}
+                className="h-14 animate-pulse rounded-xl border border-gray-200 bg-white/80"
+              />
+            ))}
           </div>
         ) : filteredConversations.length === 0 ? (
           <div className="py-8 text-center px-4">
@@ -175,6 +233,9 @@ export function ChatSidebar({
         ) : (
           filteredConversations.map((conv) => {
             const isActive = conv.id === activeConversationId;
+            const activityDate = new Date(
+              conv.last_message_at || conv.updated_at
+            ).toLocaleDateString(undefined, { month: "short", day: "numeric" });
             return (
               <div
                 key={conv.id}
@@ -186,6 +247,7 @@ export function ChatSidebar({
               >
                 <Link
                   href={`/chat/${conv.id}`}
+                  onClick={() => onCloseMobile?.()}
                   className="flex min-w-0 flex-1 flex-col pr-2 text-left"
                 >
                   <div className="flex items-center gap-1.5">
@@ -193,7 +255,7 @@ export function ChatSidebar({
                       {conv.title}
                     </span>
                   </div>
-                  <div className="mt-1 flex items-center gap-2 text-[10px] text-gray-500">
+                  <div className="mt-1 flex flex-wrap items-center gap-1.5 text-[10px] text-gray-500">
                     <span className="inline-flex items-center gap-0.5 rounded bg-gray-100 px-1.5 py-0.5 font-medium text-gray-600">
                       <BookOpen className="h-2.5 w-2.5" />
                       {conv.subject_name}
@@ -202,6 +264,8 @@ export function ChatSidebar({
                     <span>
                       {conv.message_count} {conv.message_count === 1 ? "msg" : "msgs"}
                     </span>
+                    <span>•</span>
+                    <span>{activityDate}</span>
                   </div>
                 </Link>
 

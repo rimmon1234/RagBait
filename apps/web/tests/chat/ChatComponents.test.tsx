@@ -192,7 +192,7 @@ describe("ChatInterface Component", () => {
     );
 
     expect(screen.getByText("TCP Handshake Discussion")).toBeInTheDocument();
-    expect(screen.getByText("Computer Networks")).toBeInTheDocument();
+    expect(screen.getAllByText("Computer Networks").length).toBeGreaterThanOrEqual(1);
     expect(screen.getByText("active")).toBeInTheDocument();
   });
 
@@ -218,7 +218,7 @@ describe("ChatInterface Component", () => {
     expect(screen.getByText("#2")).toBeInTheDocument();
   });
 
-  it("renders informative M4.1 infrastructure banner when messages are empty", () => {
+  it("renders grounded empty state and starter prompts when messages are empty", () => {
     render(
       <ChatInterface
         conversation={mockConversation}
@@ -234,8 +234,8 @@ describe("ChatInterface Component", () => {
       />
     );
 
-    expect(screen.getByText("Study Chat: Computer Networks")).toBeInTheDocument();
-    expect(screen.getByText(/Phase 4 Milestone M4.1 — Infrastructure Ready/)).toBeInTheDocument();
+    expect(screen.getByText("Grounded Study Chat: Computer Networks")).toBeInTheDocument();
+    expect(screen.getByLabelText("Study question input")).toBeInTheDocument();
   });
 
   it("renders load older messages button when hasMoreOlder is true", () => {

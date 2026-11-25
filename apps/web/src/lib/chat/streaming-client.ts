@@ -1,7 +1,11 @@
 import { ApiError } from "@/lib/api";
 import { cancelGeneration } from "@/lib/chat-client";
 import { createClient } from "@/lib/supabase/client";
-import type { ChatStreamEvent, CloudStreamMessageRequest } from "@/types/chat";
+import type {
+  CancelGenerationResponse,
+  ChatStreamEvent,
+  CloudStreamMessageRequest,
+} from "@/types/chat";
 
 const DEFAULT_API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000";
 
@@ -206,9 +210,10 @@ export async function abortAndCancelGeneration(
   controller: AbortController,
   messageId: string | null | undefined,
   conversationId?: string
-): Promise<void> {
+): Promise<CancelGenerationResponse | null> {
   controller.abort();
-  if (messageId) {
-    await cancelGeneration(messageId, conversationId);
+  if (!messageId) {
+    return null;
   }
+  return cancelGeneration(messageId, conversationId);
 }
