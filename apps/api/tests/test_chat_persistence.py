@@ -211,8 +211,8 @@ async def test_non_contributor_create_conversation_rejected(client: httpx.AsyncC
 
 
 @pytest.mark.asyncio
-async def test_non_contributor_can_list_and_read_conversations(client: httpx.AsyncClient):
-    """Approved student without current key CAN list and read their past conversations."""
+async def test_revoked_contributor_locked_out_with_history_preserved(client: httpx.AsyncClient):
+    """Disabling/revoking qualifying credential locks ALL /chat/* endpoints while preserving DB history."""
     user_id, token, _ = await create_user_fixture("past_contributor", with_qualifying_key=True)
     subject_id = await create_subject_fixture("Theory of Computation", "toc-past")
 
@@ -233,37 +233,56 @@ async def test_non_contributor_can_list_and_read_conversations(client: httpx.Asy
             user_id,
         )
 
-    # 3. Listing conversations must STILL succeed (historical access permitted)
-    list_resp = await client.get(
+    # 3. ALL /chat/* endpoints must fail closed with 403 CHAT_CONTRIBUTION_REQUIRED
+    for method, url, payload in (
+        ("GET", "/api/v1/chat/conversations", None),
+        ("GET", f"/api/v1/chat/conversations/{conv_id}", None),
+        ("PATCH", f"/api/v1/chat/conversations/{conv_id}", {"title": "Blocked Rename"}),
+        ("GET", f"/api/v1/chat/conversations/{conv_id}/messages", None),
+        (
+            "POST",
+            "/api/v1/chat/conversations",
+            {"subject_id": str(subject_id), "title": "Decidability"},
+        ),
+    ):
+        resp = await client.request(
+            method,
+            url,
+            json=payload,
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        assert resp.status_code == 403, f"Expected 403 for {method} {url}, got {resp.status_code}"
+        assert resp.json()["error"]["code"] == "CHAT_CONTRIBUTION_REQUIRED"
+
+    # 4. Historical conversation rows MUST remain preserved in PostgreSQL
+    async with pool.acquire() as conn:
+        preserved = await conn.fetchrow(
+            "SELECT id, title FROM public.chat_conversations WHERE id = $1",
+            UUID(conv_id),
+        )
+        assert preserved is not None
+        assert preserved["title"] == "Turing Machines"
+
+    # 5. Re-activating the qualifying credential immediately restores full history access
+    async with pool.acquire() as conn:
+        await conn.execute(
+            "UPDATE public.api_key_metadata SET status = 'active' WHERE owner_id = $1",
+            user_id,
+        )
+
+    restored_list = await client.get(
         "/api/v1/chat/conversations",
         headers={"Authorization": f"Bearer {token}"},
     )
-    assert list_resp.status_code == 200
-    conv_titles = [c["title"] for c in list_resp.json()["items"]]
-    assert "Turing Machines" in conv_titles
+    assert restored_list.status_code == 200
+    assert "Turing Machines" in [c["title"] for c in restored_list.json()["items"]]
 
-    # 4. Reading conversation metadata and message transcript must STILL succeed
-    detail_resp = await client.get(
+    restored_detail = await client.get(
         f"/api/v1/chat/conversations/{conv_id}",
         headers={"Authorization": f"Bearer {token}"},
     )
-    assert detail_resp.status_code == 200
-    assert detail_resp.json()["title"] == "Turing Machines"
-
-    msg_resp = await client.get(
-        f"/api/v1/chat/conversations/{conv_id}/messages",
-        headers={"Authorization": f"Bearer {token}"},
-    )
-    assert msg_resp.status_code == 200
-
-    # 5. But creating a NEW conversation must fail!
-    new_fail_resp = await client.post(
-        "/api/v1/chat/conversations",
-        json={"subject_id": str(subject_id), "title": "Decidability"},
-        headers={"Authorization": f"Bearer {token}"},
-    )
-    assert new_fail_resp.status_code == 403
-    assert new_fail_resp.json()["error"]["code"] == "CHAT_CONTRIBUTION_REQUIRED"
+    assert restored_detail.status_code == 200
+    assert restored_detail.json()["title"] == "Turing Machines"
 
 
 @pytest.mark.asyncio

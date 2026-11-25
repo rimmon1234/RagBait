@@ -810,6 +810,7 @@ async def test_historical_source_visibility_revalidation_and_masking():
     owner_id, owner_token = await _create_user(prefix="hist_owner")
     await _grant_contributor_credential(owner_id)
     other_id, other_token = await _create_user(prefix="hist_other")
+    await _grant_contributor_credential(other_id)
 
     passage = "Virtual memory separates logical address space from physical DRAM pages using a page table."
     kb = await _seed_subject_with_kb(

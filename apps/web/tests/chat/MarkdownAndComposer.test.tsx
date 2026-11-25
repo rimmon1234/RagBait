@@ -145,4 +145,33 @@ describe("ChatComposer", () => {
     fireEvent.click(stopBtn);
     expect(onCancel).toHaveBeenCalledTimes(1);
   });
+
+  it("toggles inline Private Local Ollama setup guide without navigating away from /chat", async () => {
+    vi.mocked(ollamaClient.checkConnection).mockResolvedValueOnce({
+      state: "disconnected",
+    });
+
+    render(
+      <ChatComposer
+        conversationStatus="active"
+        subjectName="Operating Systems"
+        canGenerate={true}
+        inferenceMode="private_local"
+        onInferenceModeChange={vi.fn()}
+        selectedLocalModel=""
+        onLocalModelChange={vi.fn()}
+        isGenerationActive={false}
+        phase="idle"
+        onSend={vi.fn()}
+        onCancel={vi.fn()}
+      />
+    );
+
+    const setupBtn = await screen.findByRole("button", { name: /Setup Guide/i });
+    expect(screen.queryByRole("link", { name: /Setup/i })).not.toBeInTheDocument();
+    fireEvent.click(setupBtn);
+
+    expect(screen.getByText(/Local Ollama & CORS Setup \(127\.0\.0\.1:11434\)/i)).toBeInTheDocument();
+    expect(screen.getByText(/OLLAMA_ORIGINS=\*/i)).toBeInTheDocument();
+  });
 });

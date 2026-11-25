@@ -100,7 +100,7 @@ async def setup_test_environment():
 
 async def create_db_user(
     email: str | None = None,
-    role: str = "user",
+    role: str = "admin",
     status: str = "approved",
 ) -> UUID:
     """Create real user in auth.users and public.profiles."""
@@ -137,8 +137,8 @@ async def create_db_user(
 
 def setup_auth_context(
     user_id: UUID,
-    email: str = "student@university.edu",
-    role: UserRole = "user",
+    email: str = "admin@university.edu",
+    role: UserRole = "admin",
     status: ApprovalStatus = "approved",
 ) -> dict[str, str]:
     """Configure dependency overrides for authenticated user and return auth headers."""
@@ -211,8 +211,8 @@ async def test_kb_auth_unauthenticated_fails(client: httpx.AsyncClient):
 @pytest.mark.asyncio
 async def test_kb_auth_unapproved_student_forbidden(client: httpx.AsyncClient):
     """Students who are not approved cannot access Knowledge Base (403)."""
-    user_id = await create_db_user(status="pending")
-    headers = setup_auth_context(user_id=user_id, status="pending")
+    user_id = await create_db_user(role="user", status="pending")
+    headers = setup_auth_context(user_id=user_id, role="user", status="pending")
 
     resp = await client.get("/api/v1/kb/subjects", headers=headers)
     assert resp.status_code == 403
@@ -221,9 +221,10 @@ async def test_kb_auth_unapproved_student_forbidden(client: httpx.AsyncClient):
 
 @pytest.mark.asyncio
 async def test_kb_auth_non_contributor_approved_student_allowed(client: httpx.AsyncClient):
-    """Approved student with ZERO contributed cloud keys CAN access Knowledge Base."""
-    user_id = await create_db_user(status="approved")
-    headers = setup_auth_context(user_id=user_id, status="approved")
+    """Approved student with ZERO contributed cloud keys CAN read Knowledge Base, but CANNOT upload."""
+    subject_id, topic_id, _ = await create_test_taxonomy()
+    user_id = await create_db_user(role="user", status="approved")
+    headers = setup_auth_context(user_id=user_id, role="user", status="approved")
 
     # Confirm user has no credentials in DB
     pool = get_pool()
@@ -236,6 +237,21 @@ async def test_kb_auth_non_contributor_approved_student_allowed(client: httpx.As
     resp = await client.get("/api/v1/kb/subjects", headers=headers)
     assert resp.status_code == 200
     assert isinstance(resp.json(), list)
+
+    upload_resp = await client.post(
+        "/api/v1/kb/documents/upload-intent",
+        json={
+            "subject_id": str(subject_id),
+            "topic_id": str(topic_id),
+            "title": "Untrusted Upload",
+            "original_filename": "untrusted.pdf",
+            "mime_type": "application/pdf",
+            "file_size_bytes": 1024,
+        },
+        headers=headers,
+    )
+    assert upload_resp.status_code == 403
+    assert upload_resp.json()["error"]["code"] == "ADMIN_REQUIRED"
 
 
 # ------------------------------------------------------------------------------
@@ -435,10 +451,10 @@ async def test_kb_upload_intent_topic_subject_mismatch_rejected(client: httpx.As
 
 @pytest.mark.asyncio
 async def test_kb_upload_intent_daily_rate_limit(client: httpx.AsyncClient):
-    """Exceeding 20 uploads in 24 hours triggers 429 RateLimitError."""
+    """Exceeding daily admin upload quota (100 in 24h) triggers 429 RateLimitError."""
     subject_id, topic_id, _ = await create_test_taxonomy()
-    user_id = await create_db_user(status="approved")
-    headers = setup_auth_context(user_id=user_id)
+    user_id = await create_db_user(role="admin", status="approved")
+    headers = setup_auth_context(user_id=user_id, role="admin")
 
     payload = {
         "subject_id": str(subject_id),
@@ -449,12 +465,12 @@ async def test_kb_upload_intent_daily_rate_limit(client: httpx.AsyncClient):
         "file_size_bytes": 10,
     }
 
-    # Simulate 20 successful intents
+    # Simulate 100 successful admin intents
     r = get_redis()
     if r:
-        await r.set(f"ragbait:ratelimit:kb_upload_daily:{user_id}", 20)
+        await r.set(f"ragbait:ratelimit:kb_upload_daily:{user_id}", 100)
 
-    # 21st attempt should be rejected
+    # 101st attempt should be rejected
     resp = await client.post("/api/v1/kb/documents/upload-intent", json=payload, headers=headers)
     assert resp.status_code == 429
     assert resp.json()["error"]["code"] == "RATE_LIMIT_EXCEEDED"
@@ -789,13 +805,13 @@ async def test_kb_confirm_upload_unauthorized_user_rejected(client: httpx.AsyncC
     )
     doc_id = intent_resp.json()["document_id"]
 
-    # Switch to User B
-    headers_b = setup_auth_context(user_id=user_b)
+    # Switch to non-admin User B
+    headers_b = setup_auth_context(user_id=user_b, role="user")
     confirm_resp = await client.post(
         f"/api/v1/kb/documents/{doc_id}/confirm-upload", headers=headers_b
     )
-    assert confirm_resp.status_code == 400
-    assert confirm_resp.json()["error"]["code"] == "UNAUTHORIZED_CONFIRMATION"
+    assert confirm_resp.status_code == 403
+    assert confirm_resp.json()["error"]["code"] == "ADMIN_REQUIRED"
 
 
 # ------------------------------------------------------------------------------
@@ -890,7 +906,7 @@ async def test_kb_document_visibility_lifecycle(client: httpx.AsyncClient):
     assert r_a.json()["upload_status"] == "pending_upload"
 
     # User B cannot view User A's pending document (returns 404)
-    headers_b = setup_auth_context(user_id=user_b)
+    headers_b = setup_auth_context(user_id=user_b, role="user")
     r_b = await client.get(f"/api/v1/kb/documents/{doc_id}", headers=headers_b)
     assert r_b.status_code == 404
 
@@ -1067,8 +1083,10 @@ async def test_kb_delete_document_lifecycle(client: httpx.AsyncClient):
     del_resp = await client.delete(f"/api/v1/kb/documents/{doc_id}", headers=headers)
     assert del_resp.status_code == 204
 
-    # Subsequent GET returns 404
-    get_resp = await client.get(f"/api/v1/kb/documents/{doc_id}", headers=headers)
+    # Subsequent student GET returns 404
+    student_id = await create_db_user(role="user", status="approved")
+    student_headers = setup_auth_context(user_id=student_id, role="user")
+    get_resp = await client.get(f"/api/v1/kb/documents/{doc_id}", headers=student_headers)
     assert get_resp.status_code == 404
 
     # DB state: is_archived = true, upload_status = deleted

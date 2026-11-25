@@ -361,7 +361,7 @@ async def test_topic_management_lifecycle():
 @pytest.mark.asyncio
 async def test_archived_taxonomy_blocks_student_document_and_page_access():
     """Verify that archiving a subject or topic completely hides its documents and pages from students."""
-    _, admin_token = await create_user_helper(role="admin", status="approved")
+    admin_id, admin_token = await create_user_helper(role="admin", status="approved")
     student_id, student_token = await create_user_helper(role="user", status="approved")
 
     transport = ASGITransport(app=app)
@@ -405,7 +405,7 @@ async def test_archived_taxonomy_blocks_student_document_and_page_access():
                 doc_id,
                 sub_id,
                 top_id,
-                student_id,
+                admin_id,
                 storage_path,
             )
             await conn.execute(
@@ -468,7 +468,7 @@ async def test_archived_taxonomy_blocks_student_document_and_page_access():
 @pytest.mark.asyncio
 async def test_document_moderation_archive_and_safe_deletion():
     """Verify document archival with reason, worker lease fencing, restore, and safe deletion."""
-    _, admin_token = await create_user_helper(role="admin", status="approved")
+    admin_id, admin_token = await create_user_helper(role="admin", status="approved")
     student_id, student_token = await create_user_helper(role="user", status="approved")
 
     transport = ASGITransport(app=app)
@@ -512,7 +512,7 @@ async def test_document_moderation_archive_and_safe_deletion():
                 doc_id,
                 sub_id,
                 top_id,
-                student_id,
+                admin_id,
                 storage_path,
             )
             job_id = uuid4()
@@ -593,8 +593,8 @@ async def test_document_moderation_archive_and_safe_deletion():
 @pytest.mark.asyncio
 async def test_job_monitoring_and_retry_lifecycle():
     """Verify job listing, sanitized detail (no lease_token), failure categorization, and bounded retry."""
-    _, admin_token = await create_user_helper(role="admin", status="approved")
-    student_id, _ = await create_user_helper(role="user", status="approved")
+    admin_id, admin_token = await create_user_helper(role="admin", status="approved")
+    student_id, _ = await create_user_helper(role="admin", status="approved")
 
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as client:
@@ -637,7 +637,7 @@ async def test_job_monitoring_and_retry_lifecycle():
                 doc_id,
                 sub_id,
                 top_id,
-                student_id,
+                admin_id,
                 storage_path,
             )
             await conn.execute(
@@ -820,7 +820,7 @@ async def test_interrupted_extraction_archive_restore_and_retry_lifecycle():
                 doc_id,
                 sub_id,
                 top_id,
-                student_id,
+                admin_id,
                 storage_path,
             )
             await conn.execute(
@@ -954,7 +954,7 @@ async def test_interrupted_extraction_archive_restore_and_retry_lifecycle():
 async def test_worker_taxonomy_fencing_lifecycle():
     """Verify worker does not claim or complete work under inactive taxonomy."""
     admin_id, admin_token = await create_user_helper(role="admin", status="approved")
-    student_id, _ = await create_user_helper(role="user", status="approved")
+    student_id, _ = await create_user_helper(role="admin", status="approved")
     transport = ASGITransport(app=app)
 
     async with AsyncClient(transport=transport, base_url="http://test") as client:
@@ -1000,7 +1000,7 @@ async def test_worker_taxonomy_fencing_lifecycle():
                 doc_id,
                 sub_id,
                 top_id,
-                student_id,
+                admin_id,
                 storage_path,
             )
             await conn.execute(
@@ -1108,9 +1108,9 @@ async def test_worker_taxonomy_fencing_lifecycle():
 
 @pytest.mark.asyncio
 async def test_uploader_pending_visibility_and_taxonomy_enforcement():
-    """Verify approved uploader can view own pending document, other students cannot, and inactive taxonomy blocks."""
+    """Verify trusted uploader can view own pending document, students cannot, and inactive taxonomy blocks."""
     admin_id, admin_token = await create_user_helper(role="admin", status="approved")
-    uploader_id, uploader_token = await create_user_helper(role="user", status="approved")
+    uploader_id, uploader_token = await create_user_helper(role="admin", status="approved")
     other_id, other_token = await create_user_helper(role="user", status="approved")
     transport = ASGITransport(app=app)
 
@@ -1166,27 +1166,26 @@ async def test_uploader_pending_visibility_and_taxonomy_enforcement():
         other_res = await client.get(f"/api/v1/kb/documents/{doc_id}", headers=other_headers)
         assert other_res.status_code == 404
 
-        # 3. Inactivate topic -> uploader can no longer view own pending document -> 404
+        # 3. Inactivate topic -> students can no longer view pending/topic documents -> 404
         await client.post(f"/api/v1/kb/admin/topics/{top_id}/archive", headers=admin_headers)
-        doc_res_archived = await client.get(
-            f"/api/v1/kb/documents/{doc_id}", headers=uploader_headers
-        )
+        doc_res_archived = await client.get(f"/api/v1/kb/documents/{doc_id}", headers=other_headers)
         assert doc_res_archived.status_code == 404
 
-        # 4. Inactive taxonomy also prevents confirmation
+        # 4. Non-admin student cannot confirm uploads -> 403 ADMIN_REQUIRED
         confirm_res = await client.post(
             f"/api/v1/kb/documents/{doc_id}/confirm-upload",
-            headers=uploader_headers,
+            headers=other_headers,
             json={"file_size_bytes": 100},
         )
-        assert confirm_res.status_code == 404
+        assert confirm_res.status_code == 403
+        assert confirm_res.json()["error"]["code"] == "ADMIN_REQUIRED"
 
 
 @pytest.mark.asyncio
 async def test_admin_audit_atomicity_and_rollback():
     """Verify that if audit log insertion fails, the administrative mutation completely rolls back."""
     admin_id, admin_token = await create_user_helper(role="admin", status="approved")
-    student_id, _ = await create_user_helper(role="user", status="approved")
+    student_id, _ = await create_user_helper(role="admin", status="approved")
     transport = ASGITransport(app=app, raise_app_exceptions=False)
 
     async with AsyncClient(transport=transport, base_url="http://test") as client:
@@ -1262,7 +1261,7 @@ async def test_admin_audit_atomicity_and_rollback():
                 doc_id,
                 sub_id,
                 top_id,
-                student_id,
+                admin_id,
                 storage_path,
             )
             await conn.execute(
@@ -1351,7 +1350,7 @@ async def test_admin_audit_atomicity_and_rollback():
 async def test_taxonomy_restoration_no_job_duplication_and_deletion_fencing():
     """Verify that restoring taxonomy never duplicates extraction jobs, and deletion fencing prevents claim/completion."""
     admin_id, admin_token = await create_user_helper(role="admin", status="approved")
-    student_id, _ = await create_user_helper(role="user", status="approved")
+    student_id, _ = await create_user_helper(role="admin", status="approved")
     transport = ASGITransport(app=app)
 
     async with AsyncClient(transport=transport, base_url="http://test") as client:
@@ -1398,7 +1397,7 @@ async def test_taxonomy_restoration_no_job_duplication_and_deletion_fencing():
                 doc_id,
                 sub_id,
                 top_id,
-                student_id,
+                admin_id,
                 storage_path,
             )
             await conn.execute(

@@ -239,7 +239,8 @@ flowchart LR
   - **Sources & Context drawer** (`SourcesDrawer`) authoritatively loading `GET /api/v1/chat/messages/{message_id}/sources`, separating `Cited in Answer` (`referenced_in_answer`) from `All Considered` (`included_in_context`), masking unavailable/moderated documents, and linking directly via `"Open at Page X"` to `/knowledge-base/document/[id]?page=X`.
   - Protected document physical page jump viewer route at `/knowledge-base/document/[id]` wrapping `DocumentPageViewer`.
   - Isolated **Private Local Ollama** mode (`prepare-local` -> loopback `127.0.0.1:11434` stream -> `finalize-local`) with zero cloud fallback.
-  - Access & entitlement enforcement via `useChatAccessState` + `ChatAccessGate` blocking `pending`/`rejected`/`suspended` accounts while letting approved non-contributors browse/manage existing history.
+  - Access & entitlement enforcement via `useChatAccessState` + `ChatAccessGate` blocking `pending`/`rejected`/`suspended` accounts AND enforcing the hard Contribution Gate (`403 CHAT_CONTRIBUTION_REQUIRED`) across all `/api/v1/chat/*`, `/api/v1/llm/chat/completions`, and `/api/v1/routing/preview` endpoints while preserving DB history untouched until a qualifying free-tier credential is active.
+  - Navigation unified to a single canonical `"AI Chat"` link (`/chat`) with `/local-inference*` & `/community-nodes*` redirecting to `/chat` and inline Ollama CORS setup inside `ChatComposer`.
 - **Dependencies**: M4.1–M4.6 backend endpoints.
 - **Database Changes**: None.
 - **Backend Changes**: None.
@@ -247,9 +248,9 @@ flowchart LR
 - **Security Considerations**:
   - Zero raw HTML injection (`dangerouslySetInnerHTML` never used); URLs sanitized to `http:`/`https:`/`/`.
   - Unavailable/moderated catalog documents masked safely in `SourcesDrawer`.
-  - Pending/rejected/suspended students denied chat access; M2 contribution entitlement enforced for new conversations and turns while preserving history management.
+  - Pending/rejected/suspended students denied chat access; M2 contribution entitlement enforced on ALL `/chat/*`, `/llm/chat/completions`, and `/routing/preview` routes with DB history safely preserved.
 - **Testing**:
-  - Full frontend verification (`apps/web`): `pnpm lint` (0 errors), `pnpm typecheck` (0 errors), `pnpm test` (`28/28` test files, `165/165` Vitest specs including `useChatSession.test.ts`, `SourcesDrawer.test.tsx`, `MarkdownAndComposer.test.tsx`, `ChatAccessAndPages.test.tsx`, updated `ChatComponents.test.tsx`, and `streaming-client.test.ts`), and `pnpm build` (26/26 routes compiled).
+  - Full frontend verification (`apps/web`): `pnpm lint` (0 errors), `pnpm typecheck` (0 errors), `pnpm test` (`29/29` test files, `169/169` Vitest specs including `UnifiedNavigation.test.tsx`, `useChatSession.test.ts`, `SourcesDrawer.test.tsx`, `MarkdownAndComposer.test.tsx`, `ChatAccessAndPages.test.tsx`, updated `ChatComponents.test.tsx`, `KnowledgeBasePages.test.tsx`, and `streaming-client.test.ts`), and `pnpm build` (26/26 routes compiled).
 - **Acceptance Criteria**:
   - Clicking an inline citation badge opens `SourcesDrawer` and highlights the corresponding source card across Cited/Considered tabs.
   - Clicking `"Open at Page X"` navigates to `/knowledge-base/document/[id]?page=X` initialized at the physical page.
@@ -271,8 +272,8 @@ flowchart LR
   - **Empirical FTS Gap**: `plainto_tsquery` conjunctive `AND` returned `0` hits across full natural-language questions (while `5/5` concise technical keyword probes hit cleanly), making Hybrid RRF match Vector-only on full questions.
   - **Generation (`n=50`)**: `100%` citation validity, `100%` abstention correctness (`8/8`), `100%` prompt-injection resistance, `100%` budget compliance, `95.24%` physical page accuracy (`40/42`), `94.0%` rubric grounded rate (`mean 2.82/3.0`).
   - **Multi-Process Burst (`2` OS workers)**: `20/20` completed (`10` queued, `peak_global = 10`, `0` permit leaks, `p50 = 914.0 ms`, `p95 = 1475.0 ms`).
-  - **Security Blocker Disclosed**: `POST /api/v1/kb/documents/upload-intent` returned `HTTP 201` for an approved non-admin contributor while `parser_process.py` lacks container/OS network-namespace sandboxing; unconstrained public uploads remain blocked pending parser isolation or admin-only upload gating.
-- **Full Regression Suite**:
+  - **Post-Audit KB Upload Remediation**: Restricted `POST /api/v1/kb/documents/upload-intent` and `POST /api/v1/kb/documents/{id}/confirm-upload` to trusted `admin`/`super_admin` accounts (`require_trusted_kb_uploader` returning `403 ADMIN_REQUIRED` for non-admins), hardened `job_repository.claim_next_job`, `complete_job_success`, and `AdminKBService.retry_job` (`UNTRUSTED_DOCUMENT_PARSER_BLOCKED`), and hid non-admin upload CTAs on `/knowledge-base*` until OS/container parser sandboxing is implemented.
+- **Full Regression Suite (Post-Audit Remediation)**:
   - `npx supabase test db`: **PASS (`16 files, 352 tests`)**.
-  - `apps/api`: M4.8 suite `5/5 passed` (`88.52s`), `mypy` (`73` files, `0` errors), `ruff` (`0` errors); full `pytest` `429 passed, 5 failed, 6 skipped` (`5` failures & `6` skips strictly from discontinued Phase 2 community-pooling tests/`test_gateway_live_smoke.py`).
-  - `apps/web`: `pnpm lint`, `pnpm typecheck`, `pnpm test` (`28 files, 165 specs`), `pnpm build` (`26` routes) all exited `0`.
+  - `apps/api`: `ruff check` (`0` errors), `ruff format --check` (`58` files clean), `mypy` (`46` files in scope, `0` errors); full `pytest` `432 passed, 5 failed, 6 skipped` (`5` failures & `6` skips strictly from discontinued Phase 2 community-pooling tests/`test_gateway_live_smoke.py`).
+  - `apps/web`: `pnpm lint`, `pnpm typecheck`, `pnpm test` (`29 files, 169 specs`), `pnpm build` (`26` routes) all exited `0`.

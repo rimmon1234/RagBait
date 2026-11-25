@@ -11,9 +11,9 @@ vi.mock("next/navigation", () => ({
 }));
 
 describe("CommunityNodesPage", () => {
-  it("renders redirect notice and redirects to /local-inference", () => {
+  it("renders redirect notice and redirects to /chat", () => {
     render(<CommunityNodesPage />);
-    expect(screen.getByText("Redirecting to Local Inference...")).toBeInTheDocument();
-    expect(replaceMock).toHaveBeenCalledWith("/local-inference");
+    expect(screen.getByText("Redirecting to AI Chat...")).toBeInTheDocument();
+    expect(replaceMock).toHaveBeenCalledWith("/chat");
   });
 });

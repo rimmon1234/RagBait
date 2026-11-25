@@ -94,17 +94,17 @@ async def setup_test_environment():
 # ------------------------------------------------------------------------------
 
 
-async def create_db_user() -> UUID:
-    """Create test student user in auth.users and public.profiles."""
+async def create_db_user(role: str = "admin") -> UUID:
+    """Create test user in auth.users and public.profiles (defaults to trusted admin uploader)."""
     pool = get_pool()
     user_id = uuid4()
-    unique_email = f"student_{user_id.hex[:8]}@university.edu"
+    unique_email = f"uploader_{user_id.hex[:8]}@university.edu"
 
     async with pool.acquire() as conn:
         await conn.execute(
             """
             INSERT INTO auth.users (id, instance_id, email, aud, role, raw_user_meta_data)
-            VALUES ($1, '00000000-0000-0000-0000-000000000000', $2, 'authenticated', 'authenticated', '{"full_name": "Test Student"}'::jsonb)
+            VALUES ($1, '00000000-0000-0000-0000-000000000000', $2, 'authenticated', 'authenticated', '{"full_name": "Test Admin"}'::jsonb)
             """,
             user_id,
             unique_email,
@@ -112,9 +112,10 @@ async def create_db_user() -> UUID:
         await conn.execute(
             """
             UPDATE public.profiles
-            SET role = 'user', approval_status = 'approved'
-            WHERE id = $1
+            SET role = $1, approval_status = 'approved'
+            WHERE id = $2
             """,
+            role,
             user_id,
         )
     CREATED_TEST_USERS.append(user_id)

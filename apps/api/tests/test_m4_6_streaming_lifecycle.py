@@ -465,8 +465,9 @@ class TestCancellationDisconnectAndAdmissionWait:
 
     async def test_owner_cancel_mid_stream_and_terminal_409_protection(self) -> None:
         uid, owner_jwt = await _create_user(prefix="owner")
-        _, other_jwt = await _create_user(prefix="intruder")
+        other_uid, other_jwt = await _create_user(prefix="intruder")
         await _grant_contributor_credential(uid)
+        await _grant_contributor_credential(other_uid)
         seeded = await _seed_kb_and_conversation(user_id=uid)
         conv_id = seeded["conversation_id"]
         owner_headers = {"Authorization": f"Bearer {owner_jwt}"}

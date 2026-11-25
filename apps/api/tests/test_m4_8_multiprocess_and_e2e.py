@@ -718,6 +718,9 @@ async def test_e2e_auth_matrix_source_revocation_upload_gate_and_live_ollama():
     """Verify full E2E auth matrix, source revocation masking, direct upload API state, and real local Ollama."""
     kb = await _provision_subject_kb()
     contrib_id, contrib_tok = await _provision_student(prefix="e2e_contrib", contributor=True)
+    other_contrib_id, other_contrib_tok = await _provision_student(
+        prefix="e2e_othercontrib", contributor=True
+    )
     non_contrib_id, non_contrib_tok = await _provision_student(
         prefix="e2e_noncontrib", contributor=False
     )
@@ -765,38 +768,51 @@ async def test_e2e_auth_matrix_source_revocation_upload_gate_and_live_ollama():
                 )
                 assert r_bad.status_code == 403
 
-            # Approved non-contributor: KB browse OK + history list/rename OK, new chat/generation gated 403
+            # Approved non-contributor: KB browse OK; ALL Chat/LLM/Routing gated 403 CHAT_CONTRIBUTION_REQUIRED
             assert (
                 await client.get(
                     f"{base}/api/v1/kb/subjects",
                     headers={"Authorization": f"Bearer {non_contrib_tok}"},
                 )
             ).status_code == 200
-            assert (
-                await client.get(
-                    f"{base}/api/v1/chat/conversations",
-                    headers={"Authorization": f"Bearer {non_contrib_tok}"},
-                )
-            ).status_code == 200
-            assert (
-                await client.patch(
+            for method, url, payload in (
+                ("GET", f"{base}/api/v1/chat/conversations", None),
+                (
+                    "PATCH",
                     f"{base}/api/v1/chat/conversations/{non_contrib_conv}",
+                    {"title": "Blocked Rename"},
+                ),
+                (
+                    "POST",
+                    f"{base}/api/v1/chat/conversations",
+                    {"subject_id": str(kb["subject_id"]), "title": "Blocked"},
+                ),
+                (
+                    "POST",
+                    f"{base}/api/v1/chat/conversations/{non_contrib_conv}/messages",
+                    {"content": "Should be gated", "stream": False},
+                ),
+                (
+                    "POST",
+                    f"{base}/api/v1/llm/chat/completions",
+                    {"messages": [{"role": "user", "content": "hi"}], "stream": False},
+                ),
+                (
+                    "POST",
+                    f"{base}/api/v1/routing/preview",
+                    {"messages": [{"role": "user", "content": "hi"}], "stream": False},
+                ),
+            ):
+                r_nc = await client.request(
+                    method,
+                    url,
                     headers={"Authorization": f"Bearer {non_contrib_tok}"},
-                    json={"title": "Renamed History"},
+                    json=payload,
                 )
-            ).status_code == 200
-            r_nc_create = await client.post(
-                f"{base}/api/v1/chat/conversations",
-                headers={"Authorization": f"Bearer {non_contrib_tok}"},
-                json={"subject_id": str(kb["subject_id"]), "title": "Blocked"},
-            )
-            assert r_nc_create.status_code == 403
-            r_nc_msg = await client.post(
-                f"{base}/api/v1/chat/conversations/{non_contrib_conv}/messages",
-                headers={"Authorization": f"Bearer {non_contrib_tok}"},
-                json={"content": "Should be gated", "stream": False},
-            )
-            assert r_nc_msg.status_code == 403
+                assert r_nc.status_code == 403, (
+                    f"Expected 403 for {method} {url}, got {r_nc.status_code}"
+                )
+                assert r_nc.json()["error"]["code"] == "CHAT_CONTRIBUTION_REQUIRED"
 
             # 2. Contributor creates conversation, completes RAG turn, inspects sources & page URL
             r_conv = await client.post(
@@ -819,17 +835,23 @@ async def test_e2e_auth_matrix_source_revocation_upload_gate_and_live_ollama():
             assert r_turn.status_code == 200
             asst_msg_id = r_turn.json()["assistant_message"]["id"]
 
-            # Other user blocked from inspecting conversation or source snapshot (404)
+            # Non-contributor gets 403 at Gate 2; entitled other user blocked from inspecting conversation or source snapshot (404)
             assert (
                 await client.get(
                     f"{base}/api/v1/chat/conversations/{conv_id}",
                     headers={"Authorization": f"Bearer {non_contrib_tok}"},
                 )
+            ).status_code == 403
+            assert (
+                await client.get(
+                    f"{base}/api/v1/chat/conversations/{conv_id}",
+                    headers={"Authorization": f"Bearer {other_contrib_tok}"},
+                )
             ).status_code == 404
             assert (
                 await client.get(
                     f"{base}/api/v1/chat/messages/{asst_msg_id}/sources",
-                    headers={"Authorization": f"Bearer {non_contrib_tok}"},
+                    headers={"Authorization": f"Bearer {other_contrib_tok}"},
                 )
             ).status_code == 404
 
@@ -904,9 +926,20 @@ async def test_e2e_auth_matrix_source_revocation_upload_gate_and_live_ollama():
                 headers={"Authorization": f"Bearer {contrib_tok}"},
                 json=upload_payload,
             )
-            print(
-                f"[M4.8 Upload Gate Audit] approved non-admin upload-intent HTTP {r_contrib_upload.status_code}"
+            assert r_contrib_upload.status_code == 403
+            assert r_contrib_upload.json()["error"]["code"] == "ADMIN_REQUIRED"
+
+            r_admin_upload = await client.post(
+                f"{base}/api/v1/kb/documents/upload-intent",
+                headers={"Authorization": f"Bearer {admin_tok}"},
+                json=upload_payload,
             )
+            assert r_admin_upload.status_code == 201
+            async with pool.acquire() as conn:
+                await conn.execute(
+                    "DELETE FROM public.kb_documents WHERE id = $1",
+                    UUID(r_admin_upload.json()["document_id"]),
+                )
 
             # 5. Live Local Ollama Private Local End-to-End (127.0.0.1:11434)
             try:

@@ -1,29 +1,33 @@
 # RagBait Phase 4 — API and Event Contracts
 
-**Document Version:** 1.1.0  
+**Document Version:** 1.2.0  
 **Phase:** Phase 4 — AI Study Assistant and Retrieval-Augmented Generation (RAG)  
-**Date:** November 22, 2026  
-**Status:** Approved API Specification (Remediated Baseline)  
+**Date:** November 25, 2026  
+**Status:** Approved API Specification (Post-Audit Hardened Baseline)  
 
 ---
 
 ## 1. REST API Overview & Namespacing
 
-All Phase 4 conversational endpoints are mounted under `/api/v1/chat/` within the FastAPI application. All requests require standard Bearer token authentication via Supabase JWT (`Authorization: Bearer <token>`).
+All Phase 4 conversational endpoints are mounted under `/api/v1/chat/` within the FastAPI application. All requests require standard Bearer token authentication via Supabase JWT (`Authorization: Bearer <token>`), approved account status, AND active free-tier cloud API contribution entitlement (`require_chat_entitlement`, returning `403 CHAT_CONTRIBUTION_REQUIRED` when locked while preserving saved DB conversation history). Legacy `POST /api/v1/llm/chat/completions` and `POST /api/v1/routing/preview` also enforce `require_chat_entitlement`.
 
 | Method | Endpoint | Description | Auth Requirement |
 | :--- | :--- | :--- | :--- |
-| `POST` | `/api/v1/chat/conversations` | Create a new subject-scoped conversation | Approved Student |
-| `GET` | `/api/v1/chat/conversations` | List user's conversations (paginated, subject filter) | Approved Student |
-| `GET` | `/api/v1/chat/conversations/{id}` | Retrieve conversation metadata and state | Conversation Owner |
-| `PATCH` | `/api/v1/chat/conversations/{id}` | Rename title or update status (`active`, `archived`) | Conversation Owner |
-| `DELETE` | `/api/v1/chat/conversations/{id}` | Soft-delete conversation thread | Conversation Owner |
-| `GET` | `/api/v1/chat/conversations/{id}/messages` | Paginated message history (cursor-based) | Conversation Owner |
+| `POST` | `/api/v1/chat/conversations` | Create a new subject-scoped conversation | Approved Student + Entitled |
+| `GET` | `/api/v1/chat/conversations` | List user's conversations (paginated, subject filter) | Approved Student + Entitled |
+| `GET` | `/api/v1/chat/conversations/{id}` | Retrieve conversation metadata and state | Conversation Owner + Entitled |
+| `PATCH` | `/api/v1/chat/conversations/{id}` | Rename title or update status (`active`, `archived`) | Conversation Owner + Entitled |
+| `POST` | `/api/v1/chat/conversations/{id}/archive` | Archive conversation thread | Conversation Owner + Entitled |
+| `POST` | `/api/v1/chat/conversations/{id}/restore` | Restore archived conversation thread | Conversation Owner + Entitled |
+| `DELETE` | `/api/v1/chat/conversations/{id}` | Soft-delete conversation thread | Conversation Owner + Entitled |
+| `GET` | `/api/v1/chat/conversations/{id}/messages` | Paginated message history (cursor-based) | Conversation Owner + Entitled |
 | `POST` | `/api/v1/chat/conversations/{id}/messages` | Post user prompt & stream assistant answer (SSE) | Conversation Owner + Entitled |
-| `POST` | `/api/v1/chat/conversations/{id}/messages/{msg_id}/cancel` | Abort active generation stream | Conversation Owner |
+| `POST` | `/api/v1/chat/conversations/{id}/messages/{msg_id}/cancel` | Abort active generation stream | Conversation Owner + Entitled |
 | `POST` | `/api/v1/chat/conversations/{id}/messages/prepare-local` | Prepare prompt & hybrid context for local Ollama | Conversation Owner + Entitled |
-| `POST` | `/api/v1/chat/conversations/{id}/messages/finalize-local` | Reconcile citations & persist local completion | Conversation Owner |
-| `GET` | `/api/v1/chat/messages/{message_id}/sources` | Retrieve immutable Sources & Context evidence | Conversation Owner |
+| `POST` | `/api/v1/chat/conversations/{id}/messages/finalize-local` | Reconcile citations & persist local completion | Conversation Owner + Entitled |
+| `GET` | `/api/v1/chat/messages/{message_id}/sources` | Retrieve immutable Sources & Context evidence | Conversation Owner + Entitled |
+| `POST` | `/api/v1/kb/documents/upload-intent` | Reserve signed upload URL (currently restricted while parser lacks OS sandbox) | Approved Admin / Super Admin |
+| `POST` | `/api/v1/kb/documents/{id}/confirm-upload` | Confirm uploaded document and enqueue extraction | Approved Admin / Super Admin |
 | `POST` | `/api/v1/kb/admin/documents/{id}/reindex` | Trigger document re-chunking and re-embedding | Admin / Super Admin |
 
 ---
@@ -282,5 +286,6 @@ All Phase 4 API errors strictly adhere to the unified RagBait JSON error schema:
 - `USER_CONCURRENCY_LIMIT`: Student has reached maximum 2 concurrent streams across all tabs (HTTP 429).
 - `CONCURRENCY_TIMEOUT`: Request timed out waiting for a free generation slot after 30 seconds (HTTP 429).
 - `CHAT_CONTRIBUTION_REQUIRED`: Student account is approved but has not satisfied the M2 free-tier contribution policy (HTTP 403).
+- `ADMIN_REQUIRED`: Endpoint requires administrator privileges; non-admin KB uploads are currently restricted while parser lacks OS/container isolation (HTTP 403).
 - `PROMPT_BUDGET_EXCEEDED`: User prompt alone exceeds model context ceiling (HTTP 422).
 - `STREAM_CANCELLED_BY_CLIENT`: Client requested abortion.

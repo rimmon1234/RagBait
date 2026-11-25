@@ -156,7 +156,7 @@ async def create_taxonomy_helper() -> tuple[UUID, UUID]:
 @pytest.mark.asyncio
 async def test_storage_object_missing_canonical_error_code():
     """Verify missing Storage object is recorded as STORAGE_OBJECT_MISSING rather than CORRUPTED_FILE."""
-    student_id, _ = await create_user_helper(role="user", status="approved")
+    admin_id, _ = await create_user_helper(role="admin", status="approved")
     sub_id, top_id = await create_taxonomy_helper()
     pool = get_pool()
 
@@ -177,7 +177,7 @@ async def test_storage_object_missing_canonical_error_code():
             doc_id,
             sub_id,
             top_id,
-            student_id,
+            admin_id,
             storage_path,
         )
         await conn.execute(
@@ -225,7 +225,7 @@ async def test_storage_object_missing_canonical_error_code():
 @pytest.mark.asyncio
 async def test_lease_expiration_at_completion_prevents_page_persistence():
     """Verify that if locked_until <= now() at completion time, complete_job_success rejects publishing pages."""
-    student_id, _ = await create_user_helper(role="user", status="approved")
+    admin_id, _ = await create_user_helper(role="admin", status="approved")
     sub_id, top_id = await create_taxonomy_helper()
     pool = get_pool()
 
@@ -245,7 +245,7 @@ async def test_lease_expiration_at_completion_prevents_page_persistence():
             doc_id,
             sub_id,
             top_id,
-            student_id,
+            admin_id,
             storage_path,
         )
         await conn.execute(
@@ -321,7 +321,7 @@ async def test_lease_expiration_at_completion_prevents_page_persistence():
 @pytest.mark.asyncio
 async def test_concurrent_worker_claim_atomicity():
     """Verify two concurrent worker claims lock atomically without duplicate assignment."""
-    student_id, _ = await create_user_helper(role="user", status="approved")
+    admin_id, _ = await create_user_helper(role="admin", status="approved")
     sub_id, top_id = await create_taxonomy_helper()
     pool = get_pool()
 
@@ -341,7 +341,7 @@ async def test_concurrent_worker_claim_atomicity():
             doc_id,
             sub_id,
             top_id,
-            student_id,
+            admin_id,
             storage_path,
         )
         await conn.execute(

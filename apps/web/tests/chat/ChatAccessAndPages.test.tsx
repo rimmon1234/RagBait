@@ -70,7 +70,7 @@ describe("Chat Access Control & Product Rules (/chat)", () => {
     expect(chatClient.listConversations).not.toHaveBeenCalled();
   });
 
-  it("allows approved non-contributors to browse existing history while gating new chats", async () => {
+  it("blocks approved non-contributors from AI Chat history and generation until qualifying credential is active", async () => {
     vi.mocked(chatClient.getAccessState).mockResolvedValueOnce({
       approval_status: "approved",
       effective_state: "contribution_required",
@@ -81,38 +81,25 @@ describe("Chat Access Control & Product Rules (/chat)", () => {
       reason_code: "CHAT_CONTRIBUTION_REQUIRED",
       reason: "Connect an active OpenRouter API key to unlock new chat generation.",
     });
-    vi.mocked(chatClient.listConversations).mockResolvedValueOnce({
-      items: [
-        {
-          id: "conv-existing",
-          user_id: "user-1",
-          subject_id: "sub-1",
-          subject_name: "Databases",
-          subject_slug: "db",
-          title: "Previous Study Session",
-          status: "active",
-          message_count: 4,
-          last_message_at: "2026-03-01T10:00:00Z",
-          archived_at: null,
-          created_at: "2026-03-01T09:00:00Z",
-          updated_at: "2026-03-01T10:00:00Z",
-        },
-      ],
-      has_more: false,
-      next_cursor: null,
-    });
 
     render(<ChatLandingPage />);
 
     await waitFor(() => {
-      expect(screen.getByText("Previous Study Session")).toBeInTheDocument();
       expect(
-        screen.getByText(/Chat contribution required to start new conversations or send messages/i)
+        screen.getByRole("heading", { name: /API Contribution Required to Unlock AI Chat/i })
       ).toBeInTheDocument();
+      expect(screen.getByRole("link", { name: /Manage API Credentials/i })).toHaveAttribute(
+        "href",
+        "/credentials"
+      );
+      expect(screen.getByRole("link", { name: /Browse Knowledge Base/i })).toHaveAttribute(
+        "href",
+        "/knowledge-base"
+      );
     });
 
-    expect(screen.getByRole("button", { name: /New Chat/i })).toBeDisabled();
-    expect(screen.getByRole("button", { name: /Start New Conversation/i })).toBeDisabled();
+    expect(chatClient.listConversations).not.toHaveBeenCalled();
+    expect(screen.queryByText("Previous Study Session")).not.toBeInTheDocument();
   });
 });
 
