@@ -456,3 +456,24 @@ async def test_kb_uploads_and_parser_restricted_to_trusted_admins(
     )
     assert retry_resp.status_code == 400
     assert retry_resp.json()["error"]["code"] == "UNTRUSTED_DOCUMENT_PARSER_BLOCKED"
+
+
+@pytest.mark.asyncio
+async def test_llm_providers_endpoint_exposes_allows_community_sharing_accurately(
+    client: httpx.AsyncClient,
+):
+    """GET /api/v1/llm/providers returns true for openrouter/gemini/groq and false for paid/local providers."""
+    _, token = await create_user_with_token("prov_reader", role="user", approval_status="approved")
+    resp = await client.get(
+        "/api/v1/llm/providers?only_enabled=true",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert resp.status_code == 200
+    by_id = {p["id"]: p for p in resp.json()}
+    assert by_id["openrouter"]["allows_community_sharing"] is True
+    assert by_id["gemini"]["allows_community_sharing"] is True
+    assert by_id["groq"]["allows_community_sharing"] is True
+    assert by_id["openai"]["allows_community_sharing"] is False
+    assert by_id["xai"]["allows_community_sharing"] is False
+    assert by_id["cerebras"]["allows_community_sharing"] is False
+    assert by_id["ollama"]["allows_community_sharing"] is False
