@@ -13,6 +13,7 @@ export interface ChatAccessStateResult {
   error: string | null;
   isApproved: boolean;
   isRestrictedAccount: boolean;
+  requiresContribution: boolean;
   canBrowseHistory: boolean;
   canGenerate: boolean;
   refresh: () => Promise<void>;
@@ -21,8 +22,8 @@ export interface ChatAccessStateResult {
 
 /**
  * Authoritatively checks student approval status and M2 contribution entitlement.
- * Pending/rejected/suspended users are denied access; approved non-contributors retain
- * read/management access to existing conversation history while new generation stays gated.
+ * Pending/rejected/suspended users are denied access; approved non-contributors are gated
+ * from Chat until contributing a qualifying free-tier cloud credential (history stays safe in DB).
  */
 export function useChatAccessState(): ChatAccessStateResult {
   const [loading, setLoading] = useState(true);
@@ -101,8 +102,9 @@ export function useChatAccessState(): ChatAccessStateResult {
         accessState.effective_state === "contribution_required")
   );
   const isRestrictedAccount = Boolean(accessState && !isApproved);
-  const canBrowseHistory = isApproved;
   const canGenerate = isApproved && Boolean(entitlement?.eligible);
+  const requiresContribution = isApproved && !canGenerate;
+  const canBrowseHistory = canGenerate;
 
   return {
     loading,
@@ -112,6 +114,7 @@ export function useChatAccessState(): ChatAccessStateResult {
     error,
     isApproved,
     isRestrictedAccount,
+    requiresContribution,
     canBrowseHistory,
     canGenerate,
     refresh,

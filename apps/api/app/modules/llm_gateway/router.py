@@ -12,7 +12,7 @@ from app.core.dependencies import (
     rate_limit_admin_read,
     rate_limit_general,
     require_admin,
-    require_approved_user,
+    require_chat_entitlement,
     require_not_suspended,
 )
 from app.modules.llm_gateway import service
@@ -100,7 +100,7 @@ async def list_active_quotas(
 )
 async def chat_completions(
     req: ChatCompletionRequest,
-    current_user: Annotated[UserProfile, Depends(require_approved_user)],
+    current_user: Annotated[UserProfile, Depends(require_chat_entitlement)],
 ) -> Response:
     """Execute unified AI chat completion through intelligent inference routing with streaming or non-streaming."""
     from app.modules.routing import route_and_dispatch

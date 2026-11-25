@@ -42,6 +42,7 @@ async def claim_next_job(
             JOIN public.kb_extraction_jobs j ON j.document_id = d.id
             JOIN public.kb_topics t ON t.id = d.topic_id
             JOIN public.kb_subjects s ON s.id = t.subject_id
+            JOIN public.profiles up ON up.id = d.uploader_id
             WHERE (
                 (j.status = 'queued' AND j.scheduled_at <= timezone('utc'::text, now()))
                 OR (j.status = 'processing' AND j.locked_until < timezone('utc'::text, now()))
@@ -50,6 +51,8 @@ async def claim_next_job(
             AND d.is_archived = false
             AND t.is_active = true
             AND s.is_active = true
+            AND up.role IN ('admin', 'super_admin')
+            AND up.approval_status = 'approved'
             AND j.attempts < j.max_attempts
             ORDER BY j.scheduled_at ASC
             LIMIT 1
@@ -155,10 +158,12 @@ async def complete_job_success(
         doc = await conn.fetchrow(
             """
             SELECT d.id, d.upload_status, d.is_archived, d.extraction_version,
-                   t.is_active AS topic_active, s.is_active AS subject_active
+                   t.is_active AS topic_active, s.is_active AS subject_active,
+                   up.role AS uploader_role, up.approval_status AS uploader_status
             FROM public.kb_documents d
             JOIN public.kb_topics t ON t.id = d.topic_id
             JOIN public.kb_subjects s ON s.id = t.subject_id
+            JOIN public.profiles up ON up.id = d.uploader_id
             WHERE d.id = $1
             FOR UPDATE OF d;
             """,
@@ -170,9 +175,11 @@ async def complete_job_success(
             or doc["is_archived"]
             or not doc["topic_active"]
             or not doc["subject_active"]
+            or doc["uploader_role"] not in ("admin", "super_admin")
+            or doc["uploader_status"] != "approved"
         ):
             logger.warning(
-                f"Document {document_id} was deleted/archived or taxonomy inactive during processing. Aborting completion."
+                f"Document {document_id} was deleted/archived, taxonomy inactive, or uploader untrusted during processing. Aborting completion."
             )
             return False
 

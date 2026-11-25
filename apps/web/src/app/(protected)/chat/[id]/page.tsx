@@ -15,7 +15,7 @@ import {
 } from "@/lib/chat-client";
 import { useChatAccessState } from "@/lib/chat/useChatAccessState";
 import { useChatSession } from "@/lib/chat/useChatSession";
-import { ChatAccessGate, ContributionGateBanner } from "@/components/chat/ChatAccessGate";
+import { ChatAccessGate } from "@/components/chat/ChatAccessGate";
 import { ChatSidebar } from "@/components/chat/ChatSidebar";
 import { ChatInterface } from "@/components/chat/ChatInterface";
 import { SourcesDrawer } from "@/components/chat/SourcesDrawer";
@@ -97,6 +97,10 @@ export default function ChatDetailPage() {
           void access.refresh();
           return;
         }
+        if (err instanceof ApiError && err.status === 403 && err.code === "CHAT_CONTRIBUTION_REQUIRED") {
+          access.markContributionRequired(err.message);
+          return;
+        }
         setSidebarError(err instanceof Error ? err.message : "Failed to load conversations");
       } finally {
         setSidebarLoading(false);
@@ -127,6 +131,10 @@ export default function ChatDetailPage() {
     } catch (err) {
       if (err instanceof ApiError && err.status === 401) {
         void access.refresh();
+        return;
+      }
+      if (err instanceof ApiError && err.status === 403 && err.code === "CHAT_CONTRIBUTION_REQUIRED") {
+        access.markContributionRequired(err.message);
         return;
       }
       setErrorConv(err instanceof Error ? err.message : "Conversation not found or inaccessible");
@@ -241,10 +249,6 @@ export default function ChatDetailPage() {
   return (
     <ChatAccessGate access={access}>
       <div className="flex h-[calc(100vh-4rem)] w-full flex-col overflow-hidden bg-white">
-        {!access.canGenerate && (
-          <ContributionGateBanner reason={access.entitlement?.reason} />
-        )}
-
         <div className="relative flex flex-1 overflow-hidden">
           {/* Desktop Sidebar */}
           <div className="hidden md:flex md:shrink-0">

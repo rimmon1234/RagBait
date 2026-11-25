@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
-import { BookOpen, Cpu, Key, LogOut, MessageSquare, Shield, Sparkles, User } from "lucide-react";
+import { BookOpen, Key, LogOut, MessageSquare, Shield, User } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 import { fetchWithAuth } from "@/lib/api";
 import type { UserProfile } from "@/types";
@@ -88,7 +88,7 @@ export function Navbar() {
   return (
     <nav className="border-b border-gray-200 bg-white shadow-sm">
       <div className="mx-auto flex max-w-7xl items-center justify-between px-4 py-3 sm:px-6 lg:px-8">
-        <div className="flex items-center gap-6">
+        <div className="flex flex-wrap items-center gap-4 sm:gap-6">
           <Link href="/" className="flex items-center gap-2 text-xl font-bold text-blue-600">
             <span className="rounded bg-blue-600 px-2 py-0.5 text-white">RB</span>
             <span>RagBait</span>
@@ -107,7 +107,7 @@ export function Navbar() {
                 className="flex items-center gap-1.5 text-sm font-medium text-gray-700 hover:text-blue-600"
               >
                 <MessageSquare className="h-4 w-4" />
-                Study Chat
+                AI Chat
               </Link>
               <Link
                 href="/credentials"
@@ -115,13 +115,6 @@ export function Navbar() {
               >
                 <Key className="h-4 w-4" />
                 API Credentials
-              </Link>
-              <Link
-                href="/local-inference"
-                className="flex items-center gap-1.5 text-sm font-medium text-gray-700 hover:text-blue-600"
-              >
-                <Sparkles className="h-4 w-4" />
-                AI Inference
               </Link>
             </>
           )}

@@ -6,12 +6,14 @@ import {
   AlertTriangle,
   ArchiveRestore,
   Cloud,
+  HelpCircle,
   Laptop,
   Loader2,
   RefreshCw,
   Send,
   ShieldCheck,
   Square,
+  X,
 } from "lucide-react";
 import { ollamaClient } from "@/lib/local-inference/ollama-client";
 import type { OllamaConnectionInfo, OllamaTagModel } from "@/lib/local-inference/ollama-types";
@@ -60,6 +62,7 @@ export function ChatComposer({
   const [localStatus, setLocalStatus] = useState<OllamaConnectionInfo | null>(null);
   const [localModels, setLocalModels] = useState<OllamaTagModel[]>([]);
   const [checkingLocal, setCheckingLocal] = useState(false);
+  const [showLocalSetupGuide, setShowLocalSetupGuide] = useState(false);
 
   // Sync draft override (e.g. after pre-stream failure) without stripping user input
   useEffect(() => {
@@ -230,9 +233,14 @@ export function ChatComposer({
                     <RefreshCw className="h-2.5 w-2.5" />
                     Retry
                   </button>
-                  <Link href="/local-inference" className="underline text-blue-700">
-                    Setup
-                  </Link>
+                  <button
+                    type="button"
+                    onClick={() => setShowLocalSetupGuide((prev) => !prev)}
+                    className="inline-flex items-center gap-1 underline text-blue-700 hover:text-blue-900"
+                  >
+                    <HelpCircle className="h-3 w-3" />
+                    <span>{showLocalSetupGuide ? "Hide Setup" : "Setup Guide"}</span>
+                  </button>
                 </div>
               )}
             </div>
@@ -242,6 +250,30 @@ export function ChatComposer({
             </span>
           )}
         </div>
+
+        {/* Inline Private Local Ollama Setup & CORS Guide (no external playground redirect) */}
+        {inferenceMode === "private_local" && showLocalSetupGuide && (
+          <div className="rounded-xl border border-blue-200 bg-blue-50/80 p-3 text-xs text-blue-950">
+            <div className="flex items-center justify-between">
+              <span className="font-semibold">Local Ollama &amp; CORS Setup (127.0.0.1:11434)</span>
+              <button
+                type="button"
+                aria-label="Close setup guide"
+                onClick={() => setShowLocalSetupGuide(false)}
+                className="rounded p-0.5 text-blue-700 hover:bg-blue-100"
+              >
+                <X className="h-3.5 w-3.5" />
+              </button>
+            </div>
+            <p className="mt-1 text-[11px] text-blue-900 leading-relaxed">
+              Private Local streams directly from your browser to{" "}
+              <code className="rounded bg-blue-100 px-1 py-0.5">http://127.0.0.1:11434</code> with
+              zero cloud fallback. Allow Local Network access if prompted by Chrome, and set{" "}
+              <code className="rounded bg-blue-100 px-1 py-0.5">OLLAMA_ORIGINS=*</code> when
+              running Ollama so browser requests succeed.
+            </p>
+          </div>
+        )}
 
         {/* Status / Validation Notice */}
         {isArchived && (

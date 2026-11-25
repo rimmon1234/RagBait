@@ -101,9 +101,6 @@ async def check_user_chat_entitlement(
       free-tier cloud credential (allows_community_sharing = true on a cloud_api provider).
       Private local Ollama, paid keys, or unvalidated keys do NOT qualify.
     """
-    if profile.role in ("admin", "super_admin"):
-        return True, None, "Admin account has full access to AI chat.", 1
-
     if profile.approval_status != "approved":
         return (
             False,
@@ -111,6 +108,9 @@ async def check_user_chat_entitlement(
             f"Account approval status is {profile.approval_status}.",
             0,
         )
+
+    if profile.role in ("admin", "super_admin"):
+        return True, None, "Admin account has full access to AI chat.", 1
 
     pool = get_pool()
     async with pool.acquire() as conn:
@@ -266,7 +266,9 @@ async def require_chat_entitlement(
     if not eligible:
         raise AuthorizationError(
             message=message,
-            code="CHAT_CONTRIBUTION_REQUIRED",
+            code="ACCOUNT_NOT_APPROVED"
+            if reason_code == "ACCOUNT_NOT_APPROVED"
+            else "CHAT_CONTRIBUTION_REQUIRED",
         )
     return profile
 
@@ -289,6 +291,18 @@ async def require_super_admin(
     if profile.role != "super_admin":
         raise AuthorizationError(
             "Super-administrator privileges required", code="SUPER_ADMIN_REQUIRED"
+        )
+    return profile
+
+
+async def require_trusted_kb_uploader(
+    profile: UserProfile = Depends(require_approved_user),
+) -> UserProfile:
+    """Restrict Knowledge Base uploads/parsing to trusted administrators while parser lacks OS sandbox."""
+    if profile.role not in ("admin", "super_admin"):
+        raise AuthorizationError(
+            "Knowledge Base document uploads are currently restricted to administrators.",
+            code="ADMIN_REQUIRED",
         )
     return profile
 

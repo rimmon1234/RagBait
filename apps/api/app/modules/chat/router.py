@@ -9,7 +9,6 @@ from fastapi.responses import StreamingResponse
 from app.core.dependencies import (
     get_current_user,
     rate_limit_general,
-    require_approved_user,
     require_chat_entitlement,
 )
 from app.core.security import AuthenticatedUser
@@ -78,7 +77,7 @@ async def list_conversations(
     cursor: str | None = Query(None, description="Opaque pagination cursor"),
     search: str | None = Query(None, description="Search term filtering conversation titles"),
     current_user: AuthenticatedUser = Depends(get_current_user),
-    _: UserProfile = Depends(require_approved_user),
+    _: UserProfile = Depends(require_chat_entitlement),
 ) -> ConversationListResponse:
     """List authenticated user's conversations."""
     return await ChatService.list_conversations(
@@ -101,7 +100,7 @@ async def list_conversations(
 async def get_conversation(
     conversation_id: UUID,
     current_user: AuthenticatedUser = Depends(get_current_user),
-    _: UserProfile = Depends(require_approved_user),
+    _: UserProfile = Depends(require_chat_entitlement),
 ) -> ConversationRead:
     """Retrieve metadata for an owned conversation."""
     return await ChatService.get_conversation(
@@ -121,7 +120,7 @@ async def rename_conversation(
     conversation_id: UUID,
     body: ConversationRename,
     current_user: AuthenticatedUser = Depends(get_current_user),
-    _: UserProfile = Depends(require_approved_user),
+    _: UserProfile = Depends(require_chat_entitlement),
 ) -> ConversationRead:
     """Update title of an owned conversation."""
     return await ChatService.rename_conversation(
@@ -141,7 +140,7 @@ async def rename_conversation(
 async def archive_conversation(
     conversation_id: UUID,
     current_user: AuthenticatedUser = Depends(get_current_user),
-    _: UserProfile = Depends(require_approved_user),
+    _: UserProfile = Depends(require_chat_entitlement),
 ) -> ConversationRead:
     """Archive conversation thread, removing it from default active list."""
     return await ChatService.archive_conversation(
@@ -160,7 +159,7 @@ async def archive_conversation(
 async def restore_conversation(
     conversation_id: UUID,
     current_user: AuthenticatedUser = Depends(get_current_user),
-    _: UserProfile = Depends(require_approved_user),
+    _: UserProfile = Depends(require_chat_entitlement),
 ) -> ConversationRead:
     """Restore conversation thread back to active list."""
     return await ChatService.restore_conversation(
@@ -179,7 +178,7 @@ async def restore_conversation(
 async def delete_conversation(
     conversation_id: UUID,
     current_user: AuthenticatedUser = Depends(get_current_user),
-    _: UserProfile = Depends(require_approved_user),
+    _: UserProfile = Depends(require_chat_entitlement),
 ) -> None:
     """Permanently delete an owned conversation thread."""
     await ChatService.delete_conversation(
@@ -202,7 +201,7 @@ async def get_conversation_messages(
         None, ge=1, description="Sequence number cursor for loading older messages"
     ),
     current_user: AuthenticatedUser = Depends(get_current_user),
-    _: UserProfile = Depends(require_approved_user),
+    _: UserProfile = Depends(require_chat_entitlement),
 ) -> MessageListResponse:
     """Load paginated messages for an owned conversation."""
     return await ChatService.get_conversation_messages(
@@ -268,7 +267,7 @@ async def create_grounded_message(
 async def cancel_generation_message(
     message_id: UUID,
     current_user: AuthenticatedUser = Depends(get_current_user),
-    _: UserProfile = Depends(require_approved_user),
+    _: UserProfile = Depends(require_chat_entitlement),
 ) -> CancelGenerationResponse:
     """Signal distributed cancellation for an owned active generation message."""
     res = await request_generation_cancellation(
@@ -294,7 +293,7 @@ async def cancel_conversation_generation_message(
     conversation_id: UUID,
     message_id: UUID,
     current_user: AuthenticatedUser = Depends(get_current_user),
-    _: UserProfile = Depends(require_approved_user),
+    _: UserProfile = Depends(require_chat_entitlement),
 ) -> CancelGenerationResponse:
     """Signal distributed cancellation scoped explicitly by conversation_id and message_id."""
     res = await request_generation_cancellation(
@@ -341,7 +340,7 @@ async def finalize_local_message(
     conversation_id: UUID,
     body: FinalizeLocalRequest,
     current_user: AuthenticatedUser = Depends(get_current_user),
-    _: UserProfile = Depends(require_approved_user),
+    _: UserProfile = Depends(require_chat_entitlement),
 ) -> FinalizeLocalResponse:
     """Reconcile citations against server-stored sources and persist Private Local answer."""
     return await ChatOrchestrationService.finalize_local_chat_turn(
@@ -360,7 +359,7 @@ async def finalize_local_message(
 async def get_message_sources(
     message_id: UUID,
     current_user: AuthenticatedUser = Depends(get_current_user),
-    _: UserProfile = Depends(require_approved_user),
+    _: UserProfile = Depends(require_chat_entitlement),
 ) -> MessageSourcesResponse:
     """Return message sources revalidated against current document/topic/subject status."""
     conv_id, sources = await ChatOrchestrationService.get_message_sources(

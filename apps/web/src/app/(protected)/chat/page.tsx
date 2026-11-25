@@ -12,7 +12,7 @@ import {
   restoreConversation,
 } from "@/lib/chat-client";
 import { useChatAccessState } from "@/lib/chat/useChatAccessState";
-import { ChatAccessGate, ContributionGateBanner } from "@/components/chat/ChatAccessGate";
+import { ChatAccessGate } from "@/components/chat/ChatAccessGate";
 import { ChatSidebar } from "@/components/chat/ChatSidebar";
 import { NewConversationModal } from "@/components/chat/NewConversationModal";
 import { RenameConversationModal } from "@/components/chat/RenameConversationModal";
@@ -78,6 +78,10 @@ function ChatLandingContent() {
           void access.refresh();
           return;
         }
+        if (err instanceof ApiError && err.status === 403 && err.code === "CHAT_CONTRIBUTION_REQUIRED") {
+          access.markContributionRequired(err.message);
+          return;
+        }
         setListError(err instanceof Error ? err.message : "Failed to load conversations");
       } finally {
         setLoading(false);
@@ -131,10 +135,6 @@ function ChatLandingContent() {
   return (
     <ChatAccessGate access={access}>
       <div className="flex h-[calc(100vh-4rem)] w-full flex-col overflow-hidden bg-white">
-        {!access.canGenerate && (
-          <ContributionGateBanner reason={access.entitlement?.reason} />
-        )}
-
         <div className="flex flex-1 overflow-hidden">
           <ChatSidebar
             conversations={conversations}

@@ -901,10 +901,13 @@ class KBAdminService:
                 # 2. Document-first lock
                 doc = await conn.fetchrow(
                     """
-                    SELECT id, title, subject_id, topic_id, upload_status, is_archived, storage_path
-                    FROM public.kb_documents
-                    WHERE id = $1
-                    FOR UPDATE
+                    SELECT d.id, d.title, d.subject_id, d.topic_id, d.upload_status,
+                           d.is_archived, d.storage_path,
+                           up.role AS uploader_role, up.approval_status AS uploader_status
+                    FROM public.kb_documents d
+                    JOIN public.profiles up ON up.id = d.uploader_id
+                    WHERE d.id = $1
+                    FOR UPDATE OF d
                     """,
                     doc_id,
                 )
@@ -922,6 +925,14 @@ class KBAdminService:
                     raise BadRequestError(
                         "Cannot retry extraction on an archived document. Restore the document first.",
                         code="DOCUMENT_ARCHIVED",
+                    )
+                if (
+                    doc["uploader_role"] not in ("admin", "super_admin")
+                    or doc["uploader_status"] != "approved"
+                ):
+                    raise BadRequestError(
+                        "Cannot retry parser extraction on a document uploaded by a non-admin account until parser sandboxing is enabled.",
+                        code="UNTRUSTED_DOCUMENT_PARSER_BLOCKED",
                     )
 
                 # 3. Check taxonomy is active

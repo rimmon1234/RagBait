@@ -6,6 +6,7 @@ import { useParams } from "next/navigation";
 import { BookOpen, FolderOpen, Loader2, MessageSquare, UploadCloud } from "lucide-react";
 import { useKnowledgeSubjects } from "@/lib/knowledge-base/useKnowledgeSubjects";
 import { useKnowledgeTopics } from "@/lib/knowledge-base/useKnowledgeTopics";
+import { useCurrentUser } from "@/lib/knowledge-base/useCurrentUser";
 import { TopicBreadcrumbs } from "@/components/knowledge-base/TopicBreadcrumbs";
 import { KnowledgeSearch } from "@/components/knowledge-base/KnowledgeSearch";
 import { TopicCard } from "@/components/knowledge-base/TopicCard";
@@ -14,6 +15,8 @@ import { DocumentUploadModal } from "@/components/knowledge-base/DocumentUploadM
 export default function SubjectDetailPage() {
   const routeParams = useParams<{ subjectSlug: string }>();
   const subjectSlug = routeParams?.subjectSlug;
+  const { user: currentUser } = useCurrentUser();
+  const isAdmin = currentUser?.role === "admin" || currentUser?.role === "super_admin";
 
   const { subjects, loading: subjectsLoading } = useKnowledgeSubjects();
   const currentSubject = subjects.find((s) => s.slug === subjectSlug);
@@ -78,16 +81,18 @@ export default function SubjectDetailPage() {
             className="inline-flex items-center gap-2 rounded-xl border border-blue-600 bg-blue-50 px-4 py-2.5 text-sm font-semibold text-blue-700 shadow-sm hover:bg-blue-100 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2"
           >
             <MessageSquare className="h-4 w-4" />
-            <span>Study Chat</span>
+            <span>AI Chat</span>
           </Link>
-          <button
-            type="button"
-            onClick={() => setIsUploadModalOpen(true)}
-            className="inline-flex items-center gap-2 rounded-xl bg-blue-600 px-4 py-2.5 text-sm font-semibold text-white shadow-sm hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2"
-          >
-            <UploadCloud className="h-4 w-4" />
-            <span>Upload Material</span>
-          </button>
+          {isAdmin && (
+            <button
+              type="button"
+              onClick={() => setIsUploadModalOpen(true)}
+              className="inline-flex items-center gap-2 rounded-xl bg-blue-600 px-4 py-2.5 text-sm font-semibold text-white shadow-sm hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2"
+            >
+              <UploadCloud className="h-4 w-4" />
+              <span>Upload Material</span>
+            </button>
+          )}
         </div>
       </div>
 
