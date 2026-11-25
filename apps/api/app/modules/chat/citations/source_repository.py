@@ -118,26 +118,34 @@ async def mark_referenced_citations(
     message_id: UUID,
     referenced_keys: list[str],
 ) -> int:
-    """Update `referenced_in_answer = true` only for server-verified included citation keys."""
+    """Update `referenced_in_answer = true` strictly via controlled backend transition."""
     if not referenced_keys:
         return 0
 
-    res = await conn.execute(
+    unique_keys = list(dict.fromkeys(referenced_keys))
+    rows = await conn.fetch(
         """
-        UPDATE public.chat_message_sources
-        SET referenced_in_answer = true,
-            updated_at = timezone('utc'::text, now())
+        SELECT citation_key, included_in_context
+        FROM public.chat_message_sources
         WHERE message_id = $1
-          AND included_in_context = true
           AND citation_key = ANY($2::text[]);
         """,
         message_id,
-        referenced_keys,
+        unique_keys,
     )
-    try:
-        return int(str(res).split()[-1])
-    except Exception:
-        return 0
+    included_map = {str(r["citation_key"]): bool(r["included_in_context"]) for r in rows}
+    invalid = [k for k in unique_keys if not included_map.get(k, False)]
+    if invalid:
+        raise ValueError(
+            f"Cannot mark unincluded or unknown citations as referenced_in_answer: {invalid}"
+        )
+
+    updated = await conn.fetchval(
+        "SELECT public.mark_chat_message_sources_referenced($1, $2::text[]);",
+        message_id,
+        unique_keys,
+    )
+    return int(updated or 0)
 
 
 async def get_message_sources_with_revalidation(

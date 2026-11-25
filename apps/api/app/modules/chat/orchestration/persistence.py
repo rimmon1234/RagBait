@@ -113,7 +113,7 @@ async def reserve_turn_messages(
                 "Generation for this idempotency key is already completed",
                 code="ALREADY_COMPLETED",
             )
-        if existing_asst and existing_asst["status"] == "pending":
+        if existing_asst and existing_asst["status"] in ("pending", "streaming"):
             raise ConflictError(
                 "Generation for this idempotency key is already in progress",
                 code="GENERATION_IN_PROGRESS",
@@ -163,19 +163,25 @@ async def reserve_turn_messages(
     seq_user = int(conv["next_sequence_number"])
     seq_asst = seq_user + 1
 
-    user_row = await conn.fetchrow(
-        """
-        INSERT INTO public.chat_messages (
-            conversation_id, sequence_number, role, content, status, idempotency_key
+    try:
+        user_row = await conn.fetchrow(
+            """
+            INSERT INTO public.chat_messages (
+                conversation_id, sequence_number, role, content, status, idempotency_key
+            )
+            VALUES ($1, $2, 'user', $3, 'completed', $4)
+            RETURNING *;
+            """,
+            conversation_id,
+            seq_user,
+            user_content,
+            idempotency_key,
         )
-        VALUES ($1, $2, 'user', $3, 'completed', $4)
-        RETURNING *;
-        """,
-        conversation_id,
-        seq_user,
-        user_content,
-        idempotency_key,
-    )
+    except asyncpg.UniqueViolationError as uve:
+        raise ConflictError(
+            "Generation for this idempotency key is already in progress",
+            code="GENERATION_IN_PROGRESS",
+        ) from uve
 
     asst_meta = {
         "mode": mode,
@@ -317,14 +323,18 @@ async def lock_and_verify_prepared_local_message(
     message_id: UUID,
     conversation_id: UUID,
     user_id: UUID,
-    prepared_request_id: str | None = None,
+    prepared_request_id: str,
 ) -> dict[str, Any]:
-    """Lock a prepared-local assistant placeholder and validate ownership, mode, state, and TTL."""
+    """Lock a prepared-local assistant placeholder and enforce ownership, active status, mode, token, and TTL."""
+    import hmac
+
     row = await conn.fetchrow(
         """
-        SELECT m.*, c.user_id AS owner_id, c.status AS conv_status
+        SELECT m.*, c.user_id AS owner_id, c.status AS conv_status,
+               c.subject_id AS conv_subject_id, subj.is_active AS subject_active
         FROM public.chat_messages m
         JOIN public.chat_conversations c ON c.id = m.conversation_id
+        JOIN public.kb_subjects subj ON subj.id = c.subject_id
         WHERE m.id = $1
           AND m.conversation_id = $2
           AND m.role = 'assistant'
@@ -348,7 +358,8 @@ async def lock_and_verify_prepared_local_message(
             code="INVALID_PREPARED_MODE",
         )
 
-    if prepared_request_id and meta.get("prepared_request_id") != prepared_request_id:
+    expected_prep_id = str(meta.get("prepared_request_id") or "")
+    if not expected_prep_id or not hmac.compare_digest(expected_prep_id, prepared_request_id):
         raise ConflictError(
             "Prepared request identifier mismatch",
             code="PREPARED_REQUEST_MISMATCH",
@@ -359,28 +370,42 @@ async def lock_and_verify_prepared_local_message(
             "Prepared local request has already been finalized",
             code="ALREADY_FINALIZED",
         )
+    if row["status"] == "cancelled":
+        raise ConflictError(
+            "Prepared local request was cancelled and cannot be finalized",
+            code="PREPARED_REQUEST_CANCELLED",
+        )
     if row["status"] != "pending":
         raise ConflictError(
             f"Prepared local request cannot be finalized from status '{row['status']}'",
             code="INVALID_PREPARED_STATUS",
         )
 
+    if row["conv_status"] != "active":
+        raise ConflictError(
+            f"Cannot finalize message in an {row['conv_status']} conversation",
+            code="CONVERSATION_NOT_ACTIVE",
+        )
+    if not row["subject_active"]:
+        raise AuthorizationError(
+            "Cannot finalize message because the conversation subject is inactive",
+            code="SUBJECT_INACTIVE",
+        )
+
     expires_raw = meta.get("prepared_expires_at")
-    if expires_raw:
-        expires_dt = datetime.fromisoformat(str(expires_raw))
-        if expires_dt.tzinfo is None:
-            expires_dt = expires_dt.replace(tzinfo=UTC)
-        if datetime.now(UTC) > expires_dt:
-            await mark_assistant_message_failed(
-                conn,
-                assistant_message_id=message_id,
-                error_code="PREPARED_REQUEST_EXPIRED",
-                error_message="Prepared local request expired before finalization",
-            )
-            raise ConflictError(
-                "Prepared local request has expired; please submit a new question",
-                code="PREPARED_REQUEST_EXPIRED",
-            )
+    if not expires_raw:
+        raise ConflictError(
+            "Prepared local request lacks a valid expiration lease",
+            code="PREPARED_REQUEST_EXPIRED",
+        )
+    expires_dt = datetime.fromisoformat(str(expires_raw))
+    if expires_dt.tzinfo is None:
+        expires_dt = expires_dt.replace(tzinfo=UTC)
+    if datetime.now(UTC) > expires_dt:
+        raise ConflictError(
+            "Prepared local request has expired; please submit a new question",
+            code="PREPARED_REQUEST_EXPIRED",
+        )
 
     res = dict(row)
     res["metadata"] = meta

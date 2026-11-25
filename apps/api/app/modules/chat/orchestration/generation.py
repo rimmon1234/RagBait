@@ -1,6 +1,7 @@
 """Cloud generation adapter delegating strictly to M2.9 route_and_dispatch()."""
 
 import logging
+from typing import Any
 from uuid import UUID
 
 from app.modules.chat.citations.schemas import CitationValidationError, CitationValidationResult
@@ -17,6 +18,53 @@ from app.modules.routing.service import route_and_dispatch
 logger = logging.getLogger("ragbait.chat.orchestration.generation")
 
 
+def normalize_token_usage_record(
+    raw_usage: dict[str, Any] | None,
+    *,
+    fallback_source: str = "exact_provider_reported",
+    repair_usage: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Label token usage honestly across provider-reported, tokenizer, and local estimates."""
+    usage = dict(raw_usage or {})
+    raw_src = str(usage.get("usage_source") or fallback_source)
+    label_map = {
+        "authoritative": "exact_provider_reported",
+        "exact_provider_reported": "exact_provider_reported",
+        "provider_reported": "exact_provider_reported",
+        "exact_tokenizer": "exact_tokenizer",
+        "derived": "local_estimate",
+        "estimated": "local_estimate",
+        "local_estimate": "local_estimate",
+        "device_reported": "device_reported",
+        "unknown": "local_estimate",
+    }
+    count_label = label_map.get(raw_src, "local_estimate")
+
+    inp = int(usage.get("input_tokens") or usage.get("prompt_tokens") or 0)
+    out = int(usage.get("output_tokens") or usage.get("completion_tokens") or 0)
+    tot = int(usage.get("total_tokens") or (inp + out))
+    out_dict: dict[str, Any] = {
+        **usage,
+        "input_tokens": inp,
+        "output_tokens": out,
+        "total_tokens": tot,
+        "usage_source": raw_src,
+        "count_label": count_label,
+        "is_approximate": count_label == "local_estimate",
+    }
+    if repair_usage is not None:
+        rep_in = int(repair_usage.get("input_tokens") or 0)
+        rep_out = int(repair_usage.get("output_tokens") or 0)
+        out_dict["initial_input_tokens"] = inp
+        out_dict["initial_output_tokens"] = out
+        out_dict["repair_input_tokens"] = rep_in
+        out_dict["repair_output_tokens"] = rep_out
+        out_dict["input_tokens"] = inp + rep_in
+        out_dict["output_tokens"] = out + rep_out
+        out_dict["total_tokens"] = inp + rep_in + out + rep_out
+    return out_dict
+
+
 class CloudGenerationOutput:
     """Normalized cloud generation and citation validation output."""
 
@@ -28,12 +76,14 @@ class CloudGenerationOutput:
         response: ChatCompletionResponse,
         decision: RouteDecision,
         repair_attempted: bool,
+        normalized_usage: dict[str, Any],
     ) -> None:
         self.final_text = final_text
         self.validation = validation
         self.response = response
         self.decision = decision
         self.repair_attempted = repair_attempted
+        self.normalized_usage = normalized_usage
 
 
 async def execute_grounded_cloud_generation(
@@ -85,12 +135,14 @@ async def execute_grounded_cloud_generation(
     answer_text = raw_result.content
     validation = validate_citations(answer_text, included_citation_keys)
     repair_attempted = False
+    repair_usage_dict: dict[str, Any] | None = None
+    initial_usage_dict = dict(raw_result.usage or {})
 
     if not validation.is_valid and context_settings.CITATION_REPAIR_ATTEMPTS > 0:
         repair_attempted = True
         logger.info(
             f"Citation validation failed for request {generation_request_id}; "
-            f"attempting bounded single repair pass (unknown={validation.unknown_keys})"
+            f"attempting bounded single repair pass (status={validation.status}, unknown={validation.unknown_keys})"
         )
         repair_msgs = build_citation_repair_messages(
             original_answer=answer_text,
@@ -118,6 +170,8 @@ async def execute_grounded_cloud_generation(
                 correlation_id=f"{generation_request_id}-repair",
             )
             if not rep_streaming and isinstance(rep_res, ChatCompletionResponse):
+                repair_usage_dict = dict(rep_res.usage or {})
+                # Re-run FULL citation + emptiness validation on repaired output
                 repaired_validation = validate_citations(rep_res.content, included_citation_keys)
                 validation = repaired_validation
                 answer_text = rep_res.content
@@ -129,13 +183,19 @@ async def execute_grounded_cloud_generation(
 
     if not validation.is_valid:
         raise CitationValidationError(
-            message="Generated response contained unsupported citation references that failed validation",
+            message="Generated response contained unsupported citation references or empty output that failed validation",
             details={
+                "status": validation.status,
                 "unknown_keys": validation.unknown_keys,
                 "malformed_tokens": validation.malformed_tokens,
                 "repair_attempted": repair_attempted,
             },
         )
+
+    normalized_usage = normalize_token_usage_record(
+        initial_usage_dict,
+        repair_usage=repair_usage_dict,
+    )
 
     return CloudGenerationOutput(
         final_text=answer_text.strip(),
@@ -143,4 +203,5 @@ async def execute_grounded_cloud_generation(
         response=raw_result,
         decision=decision,
         repair_attempted=repair_attempted,
+        normalized_usage=normalized_usage,
     )

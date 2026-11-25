@@ -123,7 +123,7 @@ class FinalizeLocalRequest(BaseModel):
     """Payload posted by browser after completing local Ollama generation."""
 
     message_id: UUID
-    prepared_request_id: str | None = None
+    prepared_request_id: str = Field(..., min_length=8, max_length=128)
     completion_text: str = Field(..., min_length=1, max_length=32768)
     finish_reason: str = Field(default="stop", max_length=64)
     token_usage: dict[str, Any] = Field(default_factory=dict)

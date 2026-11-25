@@ -44,6 +44,18 @@ def validate_citations(
     - Malformed markers (e.g. [SOURCE1]) are flagged.
     - Multi-digit keys like [S10] match exact full IDs and never collide with [S1].
     """
+    if not answer_text or not answer_text.strip():
+        return CitationValidationResult(
+            is_valid=False,
+            status="invalid_empty_response",
+            valid_keys=[],
+            unknown_keys=[],
+            duplicate_keys=[],
+            malformed_tokens=[],
+            sanitized_text="",
+            total_occurrences=0,
+        )
+
     allowed = set(included_keys)
     parsed = parse_citations(answer_text)
 

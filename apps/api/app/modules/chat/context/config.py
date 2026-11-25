@@ -31,6 +31,9 @@ class ContextSettings(BaseSettings):
     SUMMARY_TRIGGER_TOKEN_THRESHOLD: int = Field(default=1500, ge=200, le=16000)
     SUMMARY_SEGMENT_MAX_TOKENS: int = Field(default=1200, ge=300, le=8000)
     SUMMARY_LOCK_TTL_SECONDS: int = Field(default=30, ge=5, le=300)
+    SUMMARY_WORKER_LEASE_SECONDS: int = Field(default=60, ge=10, le=600)
+    SUMMARY_RETRY_BASE_SECONDS: float = Field(default=5.0, ge=0.0, le=300.0)
+    SUMMARY_RETRY_MAX_SECONDS: float = Field(default=120.0, ge=1.0, le=3600.0)
     SUMMARY_MAX_RETRIES: int = Field(default=3, ge=1, le=10)
 
     # Citation validation & bounded repair

@@ -4,7 +4,7 @@
 -- ==============================================================================
 
 BEGIN;
-SELECT plan(31);
+SELECT plan(42);
 
 -- ------------------------------------------------------------------------------
 -- 1. Schema, Index, and RLS Existence
@@ -222,12 +222,68 @@ PREPARE tamper_title AS
   WHERE id = (SELECT source_id FROM m4_5_vars);
 SELECT throws_ok('tamper_title', '22000', NULL, 'Immutable document_title_snapshot update must be rejected');
 
--- Allowed state progression: referenced_in_answer = true MUST succeed
+-- Allowed state progression: referenced_in_answer = true MUST succeed via backend function or valid update
 PREPARE mark_referenced AS
+  SELECT public.mark_chat_message_sources_referenced(
+    (SELECT msg_asst_id FROM m4_5_vars),
+    ARRAY['S1']
+  );
+SELECT results_eq('mark_referenced', $$VALUES (1)$$, 'Approved backend provenance function marks S1 referenced');
+
+-- Invalid provenance transition: reverting referenced_in_answer true -> false MUST fail
+PREPARE revert_referenced AS
   UPDATE public.chat_message_sources
-  SET referenced_in_answer = true
+  SET referenced_in_answer = false
   WHERE id = (SELECT source_id FROM m4_5_vars);
-SELECT lives_ok('mark_referenced', 'Updating referenced_in_answer flag on existing snapshot must succeed');
+SELECT throws_ok('revert_referenced', '22000', NULL, 'Reverting referenced_in_answer from true to false must fail');
+
+-- Invalid provenance transition: excluded source cannot become referenced_in_answer = true
+PREPARE insert_excluded_and_referenced AS
+  INSERT INTO public.chat_message_sources (
+    message_id, citation_key, chunk_id, document_id, source_chunk_id, source_document_id,
+    document_title_snapshot, page_number_start, page_number_end,
+    excerpt, content_hash, chunk_version, retrieval_rank, relevance_score,
+    included_in_context, referenced_in_answer
+  )
+  SELECT msg_asst_id, 'S8', chunk_id, doc_id, chunk_id, doc_id,
+    'Excluded', 1, 1, 'Text', 'hash', 1, 2, 0.2, false, true FROM m4_5_vars;
+SELECT throws_ok('insert_excluded_and_referenced', '23514', NULL, 'Cannot insert referenced_in_answer = true when included_in_context = false');
+
+-- Invalid keys rejected cleanly by mark_chat_message_sources_referenced
+PREPARE bad_provenance_fn AS
+  SELECT public.mark_chat_message_sources_referenced(
+    (SELECT msg_asst_id FROM m4_5_vars),
+    ARRAY['S99']
+  );
+SELECT throws_ok('bad_provenance_fn', '22000', NULL, 'Marking unknown key referenced must fail cleanly');
+
+-- Cannot tamper id, created_at, citation_key, page_number_start, content_hash, or reassign/nullify live document_id
+PREPARE tamper_hash AS
+  UPDATE public.chat_message_sources SET content_hash = 'forged_hash' WHERE id = (SELECT source_id FROM m4_5_vars);
+SELECT throws_ok('tamper_hash', '22000', NULL, 'Immutable content_hash update must be rejected');
+
+PREPARE tamper_citation_key AS
+  UPDATE public.chat_message_sources SET citation_key = 'S9' WHERE id = (SELECT source_id FROM m4_5_vars);
+SELECT throws_ok('tamper_citation_key', '22000', NULL, 'Immutable citation_key update must be rejected');
+
+PREPARE tamper_pages AS
+  UPDATE public.chat_message_sources SET page_number_start = 1 WHERE id = (SELECT source_id FROM m4_5_vars);
+SELECT throws_ok('tamper_pages', '22000', NULL, 'Immutable page_number_start update must be rejected');
+
+PREPARE tamper_source_ids AS
+  UPDATE public.chat_message_sources SET source_document_id = gen_random_uuid() WHERE id = (SELECT source_id FROM m4_5_vars);
+SELECT throws_ok('tamper_source_ids', '22000', NULL, 'Immutable source_document_id reassignment must be rejected');
+
+PREPARE tamper_live_doc_null AS
+  UPDATE public.chat_message_sources SET document_id = NULL WHERE id = (SELECT source_id FROM m4_5_vars);
+SELECT throws_ok('tamper_live_doc_null', '22000', NULL, 'Manually nullifying live document_id while doc exists must be rejected');
+
+-- Running status without lease_token rejected cleanly by constraint
+PREPARE bad_running_no_lease AS
+  UPDATE public.chat_conversation_summaries
+  SET compaction_status = 'running', lease_token = NULL, locked_until = NULL
+  WHERE conversation_id = (SELECT conv_id FROM m4_5_vars);
+SELECT throws_ok('bad_running_no_lease', '23514', NULL, 'Compaction running state requires non-null lease_token and locked_until');
 
 -- Invalid summary status & negative watermark rejected
 PREPARE bad_summary_status AS
@@ -276,6 +332,14 @@ PREPARE s1_forged_source_insert AS
   SELECT msg_asst_id, 'S9', chunk_id, doc_id, chunk_id, doc_id,
     'Forged', 1, 1, 'Text', 'hash', 1, 1, 0.5 FROM m4_5_vars;
 SELECT throws_ok('s1_forged_source_insert', '42501', NULL, 'Student 1 cannot directly insert source snapshots');
+
+PREPARE s1_forged_source_update AS
+  UPDATE public.chat_message_sources SET referenced_in_answer = true WHERE id = (SELECT source_id FROM m4_5_vars);
+SELECT throws_ok('s1_forged_source_update', '42501', NULL, 'Student 1 cannot directly update source snapshots');
+
+PREPARE s1_forged_provenance_rpc AS
+  SELECT public.mark_chat_message_sources_referenced((SELECT msg_asst_id FROM m4_5_vars), ARRAY['S1']);
+SELECT throws_ok('s1_forged_provenance_rpc', '42501', NULL, 'Authenticated user cannot directly execute backend provenance RPC');
 
 PREPARE s1_advance_watermark AS
   UPDATE public.chat_conversation_summaries SET compacted_through_sequence = 999;

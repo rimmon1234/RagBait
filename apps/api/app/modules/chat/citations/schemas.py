@@ -48,6 +48,7 @@ class CitationValidationResult(BaseModel):
         "valid_no_sources",
         "invalid_unknown_citations",
         "invalid_malformed_citations",
+        "invalid_empty_response",
     ]
     valid_keys: list[str] = Field(default_factory=list)
     unknown_keys: list[str] = Field(default_factory=list)

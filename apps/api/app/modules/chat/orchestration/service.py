@@ -25,7 +25,10 @@ from app.modules.chat.context.compaction import (
 )
 from app.modules.chat.context.config import context_settings
 from app.modules.chat.context.context_service import ContextService
-from app.modules.chat.orchestration.generation import execute_grounded_cloud_generation
+from app.modules.chat.orchestration.generation import (
+    execute_grounded_cloud_generation,
+    normalize_token_usage_record,
+)
 from app.modules.chat.orchestration.persistence import (
     complete_cloud_turn_atomically,
     compute_prepared_expiry,
@@ -102,6 +105,11 @@ class ChatOrchestrationService:
                     raise ConflictError(
                         f"Idempotency key '{request.idempotency_key}' already used with different content",
                         code="IDEMPOTENCY_KEY_CONFLICT",
+                    )
+                if existing_asst and existing_asst["status"] in ("pending", "streaming"):
+                    raise ConflictError(
+                        "Generation for this idempotency key is already in progress",
+                        code="GENERATION_IN_PROGRESS",
                     )
                 if existing_asst and existing_asst["status"] == "completed":
                     _, sources = await get_message_sources_with_revalidation(
@@ -217,7 +225,7 @@ class ChatOrchestrationService:
                     final_content=gen_out.final_text,
                     model_id=gen_out.response.model_id,
                     provider_id=gen_out.response.provider_id,
-                    token_usage=gen_out.response.usage,
+                    token_usage=gen_out.normalized_usage,
                     finish_reason=gen_out.response.finish_reason,
                     selected_evidence=prepared.selected_evidence,
                     referenced_keys=referenced_set,
@@ -310,6 +318,11 @@ class ChatOrchestrationService:
                     raise ConflictError(
                         "Prepared local request has already been finalized",
                         code="ALREADY_FINALIZED",
+                    )
+                if existing_asst["status"] in ("pending", "streaming"):
+                    raise ConflictError(
+                        "Prepared local request for this idempotency key is already in progress",
+                        code="GENERATION_IN_PROGRESS",
                     )
 
             # 2. Prepare context in 'local' mode
@@ -455,14 +468,17 @@ class ChatOrchestrationService:
                         "revoked_sources_at_finalize": revoked_count,
                     }
 
-                    safe_usage = {
-                        "input_tokens": int(request.token_usage.get("prompt_tokens") or 0),
-                        "output_tokens": int(request.token_usage.get("completion_tokens") or 0),
-                        "total_tokens": int(request.token_usage.get("total_tokens") or 0),
-                        "usage_source": "device_reported",
-                    }
+                    safe_usage = normalize_token_usage_record(
+                        {
+                            "input_tokens": int(request.token_usage.get("prompt_tokens") or 0),
+                            "output_tokens": int(request.token_usage.get("completion_tokens") or 0),
+                            "total_tokens": int(request.token_usage.get("total_tokens") or 0),
+                            "usage_source": "device_reported",
+                        },
+                        fallback_source="device_reported",
+                    )
 
-                    await db_conn.execute(
+                    updated_row = await db_conn.fetchrow(
                         """
                         UPDATE public.chat_messages
                         SET content = $2,
@@ -471,14 +487,23 @@ class ChatOrchestrationService:
                             token_usage = $4::jsonb,
                             metadata = $5::jsonb,
                             updated_at = timezone('utc'::text, now())
-                        WHERE id = $1;
+                        WHERE id = $1
+                          AND status = 'pending'
+                          AND metadata->>'prepared_request_id' = $6
+                        RETURNING id;
                         """,
                         request.message_id,
                         final_text,
                         request.finish_reason,
                         json.dumps(safe_usage),
                         json.dumps(updated_meta),
+                        request.prepared_request_id,
                     )
+                    if not updated_row:
+                        raise ConflictError(
+                            "Prepared local request could not be finalized due to concurrent state change",
+                            code="ALREADY_FINALIZED",
+                        )
 
                     await db_conn.execute(
                         """

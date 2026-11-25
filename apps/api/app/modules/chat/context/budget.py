@@ -406,6 +406,11 @@ def allocate_context_budget(
         total_input_token_count=total_input_tokens,
         total_reserved_tokens=total_input_tokens + t_out,
         utilization_ratio=utilization,
+        count_source="exact_tokenizer"
+        if capability.exact_tokenizer_available
+        else "local_estimate",
+        counting_strategy=capability.token_counting_strategy,
+        is_approximate=not capability.exact_tokenizer_available,
     )
 
     return ContextBudgetAllocation(

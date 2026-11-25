@@ -64,6 +64,9 @@ class TokenAccountingBreakdown(BaseModel):
     total_input_token_count: int = Field(..., ge=0)
     total_reserved_tokens: int = Field(..., ge=0)
     utilization_ratio: float = Field(..., ge=0.0)
+    count_source: Literal["exact_tokenizer", "local_estimate"] = "local_estimate"
+    counting_strategy: str = "conservative_multilingual_upper_bound_v2"
+    is_approximate: bool = True
 
 
 class SelectedEvidenceSource(BaseModel):
