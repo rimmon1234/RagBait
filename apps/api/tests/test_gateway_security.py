@@ -273,7 +273,7 @@ async def test_community_sharing_gated_by_provider_policy(client: httpx.AsyncCli
             await conn.execute(
                 """
                 UPDATE public.llm_providers
-                SET allows_community_sharing = false
+                SET allows_community_sharing = true
                 WHERE id = 'groq'
                 """
             )
@@ -327,6 +327,7 @@ async def test_missing_contributor_consent_rejected(client: httpx.AsyncClient):
 async def test_admin_cannot_dispatch_other_users_private_credential(client: httpx.AsyncClient):
     """Administrator role alone does not bypass ownership isolation or authorize foreign private keys."""
     admin_id = await create_db_user(email="admin_user@ragbait.app", role="admin")
+    await _grant_qualifying_contribution(admin_id)
     student_id = await create_db_user(email="student_user@ragbait.app", role="user")
 
     unique_key = f"student-private-key-{uuid4().hex}"

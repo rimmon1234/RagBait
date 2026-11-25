@@ -306,7 +306,7 @@ async def test_credential_tier_consent_and_quota_exhausted_entitlement_rules(
     conv_resp = await client.get("/api/v1/chat/conversations", headers=headers)
     assert conv_resp.status_code == 200
 
-    # 3. Unapproved admin must still be rejected by approval status check (no bypass)
+    # 3. Unapproved admin still rejected by Gate 1 (ACCOUNT_NOT_APPROVED); approved admin WITHOUT qualifying key gated (no exemption)
     _, pending_admin_tok = await create_user_with_token(
         "pending_admin", role="admin", approval_status="pending"
     )
@@ -316,6 +316,35 @@ async def test_credential_tier_consent_and_quota_exhausted_entitlement_rules(
     )
     assert pend_resp.status_code == 403
     assert pend_resp.json()["error"]["code"] == "ACCOUNT_NOT_APPROVED"
+
+    approved_admin_id, approved_admin_tok = await create_user_with_token(
+        "approved_admin_nokey", role="admin", approval_status="approved"
+    )
+    admin_locked_resp = await client.get(
+        "/api/v1/chat/conversations",
+        headers={"Authorization": f"Bearer {approved_admin_tok}"},
+    )
+    assert admin_locked_resp.status_code == 403
+    assert admin_locked_resp.json()["error"]["code"] == "CHAT_CONTRIBUTION_REQUIRED"
+
+    # Paid/owner-only xAI or OpenAI credential does NOT unlock chat for admin either
+    await insert_credential(approved_admin_id, provider_id="xai", billing_tier="verified_free_only")
+    admin_xai_resp = await client.get(
+        "/api/v1/chat/conversations",
+        headers={"Authorization": f"Bearer {approved_admin_tok}"},
+    )
+    assert admin_xai_resp.status_code == 403
+    assert admin_xai_resp.json()["error"]["code"] == "CHAT_CONTRIBUTION_REQUIRED"
+
+    # Contributing a qualifying community-shared Gemini or Groq free-tier key unlocks chat
+    await insert_credential(
+        approved_admin_id, provider_id="groq", billing_tier="verified_free_only"
+    )
+    admin_unlocked_resp = await client.get(
+        "/api/v1/chat/conversations",
+        headers={"Authorization": f"Bearer {approved_admin_tok}"},
+    )
+    assert admin_unlocked_resp.status_code == 200
 
 
 @pytest.mark.asyncio

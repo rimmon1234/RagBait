@@ -45,18 +45,18 @@ Forensic inspection of documentation (`docs/M2_7_IMPLEMENTATION_PLAN.md`, `docs/
 1. **Gate 1 — Application Approval (`require_approved_user`)**:
    - `pending`, `rejected`, `suspended` accounts receive `HTTP 403` (`ACCOUNT_NOT_APPROVED` / `ACCOUNT_SUSPENDED`) on all protected routes.
 2. **Gate 2 — Shared Chat Contribution Entitlement (`require_chat_entitlement`)**:
-   - Approved non-admin students (`role == 'user'`) must hold at least **1 credential** in `public.api_key_metadata` satisfying **ALL** conditions (`app/core/dependencies.py::check_user_chat_entitlement`):
+   - **All approved accounts (`user`, `admin`, `super_admin` — zero admin exemption)** must hold at least **1 credential** in `public.api_key_metadata` satisfying **ALL** conditions (`app/core/dependencies.py::check_user_chat_entitlement`):
      1. `c.owner_id == current_user.id`
      2. `p.runtime_type == 'cloud_api'`
-     3. `p.allows_community_sharing is True`
+     3. `p.allows_community_sharing is True` *(enabled via migration `20260308000000` for free-tier capable `openrouter`, `gemini`, and `groq`; paid-only `openai` and `xai` remain excluded)*
      4. `p.is_enabled is True`
      5. `c.sharing_scope == 'community_shared'`
      6. `c.shared_consent is True`
      7. `c.validation_status == 'valid'`
      8. `c.status in ('active', 'rate_limited', 'quota_exhausted')` *(quota exhaustion pauses pool dispatch while preserving Chat entitlement)*
-     9. `c.billing_tier == 'verified_free_only'` *(verified via OpenRouter `GET https://openrouter.ai/api/v1/key` strict boolean `data.is_free_tier == True`; excludes `paid` and `unknown`)*
+     9. `c.billing_tier == 'verified_free_only'` *(verified via OpenRouter `/api/v1/key` `data.is_free_tier == True`, or free-tier eligible probe on `gemini` / `groq`; excludes `paid` and `unknown`)*
      10. Freshness: `c.billing_verified_at >= now() - 30 days`
-   - Approved `admin` and `super_admin` accounts remain exempt (`eligible = True`). Any non-approved admin (`pending`/`suspended`) fails Gate 1.
+   - Any non-approved user or admin (`pending`/`rejected`/`suspended`) fails Gate 1 (`ACCOUNT_NOT_APPROVED` / `ACCOUNT_SUSPENDED`).
 
 ### 2.2 Authoritative Backend Enforcement Surface (No Bypasses)
 `Depends(require_chat_entitlement)` is enforced across **every** conversational and direct-inference endpoint:

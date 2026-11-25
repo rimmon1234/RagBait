@@ -11,11 +11,11 @@ SELECT has_column(
   'public.llm_providers must have allows_community_sharing column'
 );
 
--- 2. Verify approved community providers
+-- 2. Verify approved community providers (OpenRouter, Gemini, Groq enabled; paid-only excluded)
 SELECT is(
   (SELECT allows_community_sharing FROM public.llm_providers WHERE id = 'groq'),
-  false,
-  'Groq provider operates in Owner-Only mode (allows_community_sharing = false)'
+  true,
+  'Groq provider allows community sharing for free-tier key pooling (allows_community_sharing = true)'
 );
 SELECT is(
   (SELECT allows_community_sharing FROM public.llm_providers WHERE id = 'openrouter'),
@@ -24,8 +24,8 @@ SELECT is(
 );
 SELECT is(
   (SELECT allows_community_sharing FROM public.llm_providers WHERE id = 'gemini'),
-  false,
-  'Gemini provider should default to allows_community_sharing = false'
+  true,
+  'Gemini provider allows community sharing for free-tier key pooling (allows_community_sharing = true)'
 );
 
 -- 3. Verify validation and consent columns on public.api_key_metadata

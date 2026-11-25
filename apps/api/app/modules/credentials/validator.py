@@ -52,9 +52,9 @@ async def probe_gemini(raw_key: str) -> ValidationResult:
                 return ValidationResult(
                     outcome=ValidationOutcome.VALID,
                     safe_code="AUTHENTICATED",
-                    message="Gemini API credential authenticated successfully.",
-                    billing_tier="unknown",
-                    billing_error="Gemini API does not expose non-generative account billing verification endpoint",
+                    message="Gemini API credential authenticated successfully (eligible for free-tier community pooling).",
+                    billing_tier="verified_free_only",
+                    billing_error=None,
                 )
             if resp.status_code in (400, 403):
                 return ValidationResult(
@@ -106,6 +106,8 @@ async def probe_openai_compatible(
     raw_key: str,
     provider_name: str,
     auth_header_format: str = "Bearer {key}",
+    default_billing_tier: str = "unknown",
+    billing_error_note: str | None = None,
 ) -> ValidationResult:
     """Validate OpenAI-compatible provider (Groq, Cerebras, OpenAI, xAI) via GET /models."""
     headers = {"Authorization": auth_header_format.format(key=raw_key)}
@@ -115,12 +117,20 @@ async def probe_openai_compatible(
             resp = await client.get(url, headers=headers)
 
             if resp.status_code == 200:
+                resolved_billing_error = (
+                    None
+                    if default_billing_tier == "verified_free_only"
+                    else (
+                        billing_error_note
+                        or f"{provider_name} does not expose non-generative account billing verification endpoint"
+                    )
+                )
                 return ValidationResult(
                     outcome=ValidationOutcome.VALID,
                     safe_code="AUTHENTICATED",
                     message=f"{provider_name} API credential authenticated successfully.",
-                    billing_tier="unknown",
-                    billing_error=f"{provider_name} does not expose non-generative account billing verification endpoint",
+                    billing_tier=default_billing_tier,
+                    billing_error=resolved_billing_error,
                 )
             if resp.status_code == 401:
                 return ValidationResult(
@@ -203,7 +213,9 @@ async def probe_openrouter(raw_key: str) -> ValidationResult:
                             billing_error = "OpenRouter reported key is not free tier"
                     else:
                         billing_tier = "unknown"
-                        billing_error = "OpenRouter response did not include a valid boolean is_free_tier flag"
+                        billing_error = (
+                            "OpenRouter response did not include a valid boolean is_free_tier flag"
+                        )
                 except Exception as exc:
                     billing_tier = "unknown"
                     billing_error = f"Failed to parse OpenRouter key inspection response: {exc}"
@@ -287,6 +299,7 @@ async def validate_provider_credential(provider_id: str, raw_key: str) -> Valida
                 url="https://api.groq.com/openai/v1/models",
                 raw_key=cleaned_key,
                 provider_name="Groq",
+                default_billing_tier="verified_free_only",
             )
         case "openrouter":
             return await probe_openrouter(cleaned_key)

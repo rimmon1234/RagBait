@@ -327,23 +327,34 @@ async def test_chat_entitlement_endpoint(client: httpx.AsyncClient):
     assert data_valid["can_chat"] is True
     assert data_valid["reason_code"] is None
 
-    # 3. Admin account
-    _, admin_token, _ = await create_user_fixture(
+    # 3. Admin account without qualifying contribution is ALSO blocked (no admin exemption)
+    admin_id, admin_token, _ = await create_user_fixture(
         "admin_entitle", role="admin", with_qualifying_key=False
     )
-    res_admin = await client.get(
+    res_admin_locked = await client.get(
         "/api/v1/me/chat-entitlement",
         headers={"Authorization": f"Bearer {admin_token}"},
     )
-    assert res_admin.status_code == 200
-    assert res_admin.json()["eligible"] is True
+    assert res_admin_locked.status_code == 200
+    assert res_admin_locked.json()["eligible"] is False
+
+    # Adding a qualifying credential unlocks chat for admin too
+    await add_qualifying_credential(
+        admin_id, provider_id="gemini", billing_tier="verified_free_only"
+    )
+    res_admin_ok = await client.get(
+        "/api/v1/me/chat-entitlement",
+        headers={"Authorization": f"Bearer {admin_token}"},
+    )
+    assert res_admin_ok.status_code == 200
+    assert res_admin_ok.json()["eligible"] is True
 
 
 @pytest.mark.asyncio
-async def test_local_ollama_and_unapproved_providers_do_not_grant_entitlement(
+async def test_local_ollama_and_paid_providers_do_not_grant_entitlement(
     client: httpx.AsyncClient,
 ):
-    """Local Ollama runtime and unapproved cloud providers do NOT satisfy contribution entitlement."""
+    """Local Ollama runtime and paid-only cloud providers (OpenAI/xAI) do NOT satisfy contribution entitlement."""
     user_id, token, _ = await create_user_fixture("ollama_user", with_qualifying_key=False)
     pool = get_pool()
 
@@ -370,7 +381,7 @@ async def test_local_ollama_and_unapproved_providers_do_not_grant_entitlement(
     assert res_ollama.json()["eligible"] is False
     assert res_ollama.json()["reason_code"] == "PROVIDER_NOT_ELIGIBLE_FOR_SHARING"
 
-    # Provision active & valid Gemini credential (Gemini has allows_community_sharing = false)
+    # Provision active & valid OpenAI (paid-only, allows_community_sharing = false) credential
     async with pool.acquire() as conn:
         await conn.execute(
             """
@@ -378,20 +389,20 @@ async def test_local_ollama_and_unapproved_providers_do_not_grant_entitlement(
                 id, owner_id, provider_id, nickname, masked_key, key_fingerprint,
                 status, validation_status, sharing_scope, shared_consent
             )
-            VALUES ($1, $2, 'gemini', 'Private Gemini', 'AIza_test', $3, 'active', 'valid', 'community_shared', true);
+            VALUES ($1, $2, 'openai', 'Private OpenAI', 'sk-proj-test', $3, 'active', 'valid', 'community_shared', true);
             """,
             uuid4(),
             user_id,
             uuid4().hex[:16],
         )
 
-    res_gemini = await client.get(
+    res_openai = await client.get(
         "/api/v1/me/chat-entitlement",
         headers={"Authorization": f"Bearer {token}"},
     )
-    assert res_gemini.status_code == 200
-    assert res_gemini.json()["eligible"] is False
-    assert res_gemini.json()["reason_code"] == "PROVIDER_NOT_ELIGIBLE_FOR_SHARING"
+    assert res_openai.status_code == 200
+    assert res_openai.json()["eligible"] is False
+    assert res_openai.json()["reason_code"] == "PROVIDER_NOT_ELIGIBLE_FOR_SHARING"
 
 
 @pytest.mark.asyncio

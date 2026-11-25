@@ -94,12 +94,11 @@ async def check_user_chat_entitlement(
 ) -> tuple[bool, str | None, str, int]:
     """Authoritatively evaluate whether a user satisfies the Chat contribution requirement.
 
-    Rules:
-    - Administrator (admin, super_admin): exempt, eligible = True.
+    Rules (applies uniformly to all approved accounts, including admins):
     - Non-approved user: eligible = False, code = ACCOUNT_NOT_APPROVED.
-    - Approved regular user: MUST have at least one active, validated, explicitly consented
-      free-tier cloud credential (allows_community_sharing = true on a cloud_api provider).
-      Private local Ollama, paid keys, or unvalidated keys do NOT qualify.
+    - Approved user (any role): MUST have at least one active, validated, explicitly consented
+      free-tier cloud credential (allows_community_sharing = true on an approved cloud_api provider).
+      Owner-only private keys, paid keys, and Private local Ollama do NOT qualify.
     """
     if profile.approval_status != "approved":
         return (
@@ -108,9 +107,6 @@ async def check_user_chat_entitlement(
             f"Account approval status is {profile.approval_status}.",
             0,
         )
-
-    if profile.role in ("admin", "super_admin"):
-        return True, None, "Admin account has full access to AI chat.", 1
 
     pool = get_pool()
     async with pool.acquire() as conn:

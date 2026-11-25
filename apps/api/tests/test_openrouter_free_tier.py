@@ -181,9 +181,7 @@ async def test_openrouter_missing_or_non_bool_free_tier():
     assert res1.billing_tier == "unknown"
 
     # Non-boolean (string "true")
-    t2 = httpx.MockTransport(
-        lambda r: httpx.Response(200, json={"data": {"is_free_tier": "true"}})
-    )
+    t2 = httpx.MockTransport(lambda r: httpx.Response(200, json={"data": {"is_free_tier": "true"}}))
     with patch("httpx.AsyncClient", return_value=httpx.AsyncClient(transport=t2)):
         res2 = await probe_openrouter("sk-or-key")
     assert res2.billing_tier == "unknown"
@@ -231,9 +229,10 @@ async def test_openrouter_error_status_codes():
 def test_is_approved_free_model_rules():
     """Verify free model rules: must end with :free or be in allowlist; openrouter/free is rejected."""
     # Approved models ending with :free
-    assert is_approved_free_model(
-        "openrouter", "openrouter/meta-llama/llama-3.3-70b-instruct:free"
-    ) is True
+    assert (
+        is_approved_free_model("openrouter", "openrouter/meta-llama/llama-3.3-70b-instruct:free")
+        is True
+    )
     assert is_approved_free_model("openrouter", "meta-llama/llama-3.2-3b-instruct:free") is True
     assert is_approved_free_model("openrouter", "google/gemini-2.0-flash-exp:free") is True
 
@@ -245,9 +244,58 @@ def test_is_approved_free_model_rules():
     # Dynamic router openrouter/free without verified fallback
     assert is_approved_free_model("openrouter", "openrouter/free") is False
 
-    # Other providers
-    assert is_approved_free_model("groq", "openai/gpt-oss-120b") is False
+    # Approved free-tier Gemini and Groq models
+    assert is_approved_free_model("gemini", "gemini-3.8-flash") is True
+    assert is_approved_free_model("gemini", "gemini-3.5-flash-lite") is True
+    assert is_approved_free_model("groq", "openai/gpt-oss-120b") is True
+    assert is_approved_free_model("groq", "openai/gpt-oss-20b") is True
+
+    # Paid-only providers and unapproved paid models remain rejected
     assert is_approved_free_model("openai", "gpt-4o") is False
+    assert is_approved_free_model("xai", "grok-2") is False
+    assert is_approved_free_model("gemini", "gemini-2.5-pro-paid") is False
+
+
+@pytest.mark.asyncio
+async def test_community_pool_failover_skips_cooling_key_to_next_healthy_key():
+    """When one community-shared key in the pool is in cooldown, discovery provides the next healthy pooled key."""
+    requester_id, _ = await create_test_user("pool_req")
+    contrib1, _ = await create_test_user("pool_c1")
+    contrib2, _ = await create_test_user("pool_c2")
+
+    cred1 = await insert_test_credential(
+        user_id=contrib1,
+        provider_id="groq",
+        sharing_scope="community_shared",
+        shared_consent=True,
+        billing_tier="verified_free_only",
+    )
+    cred2 = await insert_test_credential(
+        user_id=contrib2,
+        provider_id="groq",
+        sharing_scope="community_shared",
+        shared_consent=True,
+        billing_tier="verified_free_only",
+    )
+
+    async def _fake_cooldown(scopes):
+        if ("credential", str(cred1)) in scopes:
+            return (True, 30, "cooldown")
+        return (False, 0, None)
+
+    with patch(
+        "app.modules.routing.discovery.check_cooldown",
+        side_effect=_fake_cooldown,
+    ):
+        candidates = await discover_cloud_candidates(
+            user_id=requester_id,
+            requested_provider_id="groq",
+            requested_model_id="openai/gpt-oss-120b",
+        )
+
+    healthy_shared = [c for c in candidates if c.is_shared_credential and not c.is_cooling_down]
+    assert len(healthy_shared) == 1
+    assert healthy_shared[0].credential_id == cred2
 
 
 # ==============================================================================
