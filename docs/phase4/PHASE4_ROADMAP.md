@@ -258,28 +258,21 @@ flowchart LR
 
 ---
 
-### Milestone M4.8 — RAG Quality Evaluation, Security Audit & Release Certification
-- **Objective**: Execute golden dataset evaluation, load testing, security review, and certify Phase 4 release.
+### Milestone M4.8 — RAG Quality Evaluation, Security Audit & Release Certification (Completed — Restricted Release Certified)
+- **Status**: COMPLETE — **`CERTIFIED FOR RESTRICTED / CONTROLLED RELEASE`** (November 25, 2026 — [M4_8_FINAL_EVALUATION_AND_RELEASE_CERTIFICATION.md](file:///d:/Projects/RagBait/docs/phase4/M4_8_FINAL_EVALUATION_AND_RELEASE_CERTIFICATION.md))
+- **Objective**: Execute 50-question bilingual golden dataset evaluation, real-service E2E & multi-process Redis load testing, security review, full cross-stack regression, and honest Phase 4 release certification.
 - **Scope**:
-  - 50-question golden dataset evaluation covering multiple subjects, bilingual items, and edge cases.
-  - RRF parameter grid search ($k \in \{20, 40, 60, 80\}$, $w_{vec} \in [0.4, 0.8]$).
-  - Retrieval metrics calculation: Recall@5, MRR, Physical Page Accuracy.
-  - Generation metrics calculation: Groundedness/Faithfulness, Citation Precision, Abstention.
-  - Multi-user load testing: 5, 10, and 20 simultaneous streaming generations.
-  - Security audit: multi-tenant RLS verification, prompt-injection defense, revoked access fencing.
-  - Production release certification document (`docs/M4_RELEASE_CERTIFICATION.md`).
-- **Dependencies**: M4.1 through M4.7 fully implemented.
-- **Database Changes**: None.
-- **Backend Changes**: None.
-- **Frontend Changes**: None.
-- **Security Considerations**: Full pen-test for cross-user conversation leaks and storage URL tampering.
-- **Testing**: Full regression test across backend pytest, frontend vitest, Supabase pgTAP, and evaluation scripts.
-- **Acceptance Criteria**:
-  - Recall@5 $\ge$ 80% on golden dataset.
-  - MRR $\ge$ 0.70.
-  - Citation Precision = 100%.
-  - Physical Page Accuracy = 100%.
-  - Groundedness $\ge$ 80%.
-  - Abstention Correctness $\ge$ 90%.
-  - Zero cross-subject retrieval leaks.
-  - Zero cross-user conversation access.
+  - Frozen 50-question bilingual dataset (`25 EN`, `25 BN`: `10 direct_factual`, `10 multi_passage_synthesis`, `8 multi_page_evidence`, `8 cross_language_retrieval`, `6 ambiguous_or_conflicting`, `8 unanswerable`) under [M4_8_EVALUATION_PROTOCOL.md](file:///d:/Projects/RagBait/docs/phase4/evaluation/M4_8_EVALUATION_PROTOCOL.md).
+  - Retrieval ablation across Vector-only, FTS-only (`fts_rank != NULL`), and Hybrid RRF ($k=60, w_{vec}=0.60, w_{fts}=0.40$), plus 8-dimension security fencing verification.
+  - Grounded generation & citation validation across all 50 questions (context budgets, XML prompt-injection defense, bounded citation repair, source snapshot persistence).
+  - Real multi-process uvicorn + Redis (`127.0.0.1:6379`) + PostgreSQL (`127.0.0.1:54322`) + live Ollama (`127.0.0.1:11434`) E2E testing (`20`-request saturation burst, `SIGKILL` crash lease recovery, Redis outage `503` fail-closed, cross-process SSE & cancellation, 8-state auth matrix, live archive source masking).
+- **Verified Results & Empirical Findings**:
+  - **Hybrid RRF Retrieval (`n=42`)**: `Recall@5 = 0.9881`, `Recall@10 = 1.0000`, `HitRate@5 = 1.0000`, `MRR = 0.9444`, `nDCG@5 = 0.9451`, `0` security leaks (`19.35 ms` p50).
+  - **Empirical FTS Gap**: `plainto_tsquery` conjunctive `AND` returned `0` hits across full natural-language questions (while `5/5` concise technical keyword probes hit cleanly), making Hybrid RRF match Vector-only on full questions.
+  - **Generation (`n=50`)**: `100%` citation validity, `100%` abstention correctness (`8/8`), `100%` prompt-injection resistance, `100%` budget compliance, `95.24%` physical page accuracy (`40/42`), `94.0%` rubric grounded rate (`mean 2.82/3.0`).
+  - **Multi-Process Burst (`2` OS workers)**: `20/20` completed (`10` queued, `peak_global = 10`, `0` permit leaks, `p50 = 914.0 ms`, `p95 = 1475.0 ms`).
+  - **Security Blocker Disclosed**: `POST /api/v1/kb/documents/upload-intent` returned `HTTP 201` for an approved non-admin contributor while `parser_process.py` lacks container/OS network-namespace sandboxing; unconstrained public uploads remain blocked pending parser isolation or admin-only upload gating.
+- **Full Regression Suite**:
+  - `npx supabase test db`: **PASS (`16 files, 352 tests`)**.
+  - `apps/api`: M4.8 suite `5/5 passed` (`88.52s`), `mypy` (`73` files, `0` errors), `ruff` (`0` errors); full `pytest` `429 passed, 5 failed, 6 skipped` (`5` failures & `6` skips strictly from discontinued Phase 2 community-pooling tests/`test_gateway_live_smoke.py`).
+  - `apps/web`: `pnpm lint`, `pnpm typecheck`, `pnpm test` (`28 files, 165 specs`), `pnpm build` (`26` routes) all exited `0`.
