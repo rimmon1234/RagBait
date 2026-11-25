@@ -12,6 +12,16 @@ from app.core.dependencies import (
     require_chat_entitlement,
 )
 from app.core.security import AuthenticatedUser
+from app.modules.chat.citations.schemas import MessageSourcesResponse
+from app.modules.chat.orchestration.schemas import (
+    ChatMessageCreateRequest,
+    ChatTurnResponse,
+    FinalizeLocalRequest,
+    FinalizeLocalResponse,
+    PrepareLocalRequest,
+    PrepareLocalResponse,
+)
+from app.modules.chat.orchestration.service import ChatOrchestrationService
 from app.modules.chat.schemas import (
     ConversationCreate,
     ConversationListResponse,
@@ -194,4 +204,87 @@ async def get_conversation_messages(
         conversation_id=conversation_id,
         limit=limit,
         cursor=cursor,
+    )
+
+
+@chat_router.post(
+    "/conversations/{conversation_id}/messages",
+    response_model=ChatTurnResponse,
+    dependencies=[Depends(rate_limit_general)],
+    summary="Submit user question and generate grounded cloud answer (M4.5 synchronous)",
+)
+async def create_grounded_message(
+    conversation_id: UUID,
+    body: ChatMessageCreateRequest,
+    current_user: AuthenticatedUser = Depends(get_current_user),
+    _: UserProfile = Depends(require_chat_entitlement),
+) -> ChatTurnResponse:
+    """Execute grounded RAG retrieval, budgeting, generation, citation validation, and persistence."""
+    return await ChatOrchestrationService.execute_cloud_chat_turn(
+        user_id=current_user.user_id,
+        conversation_id=conversation_id,
+        request=body,
+    )
+
+
+@chat_router.post(
+    "/conversations/{conversation_id}/messages/prepare-local",
+    response_model=PrepareLocalResponse,
+    dependencies=[Depends(rate_limit_general)],
+    summary="Prepare grounded RAG context and prompt for Private Local Ollama inference",
+)
+async def prepare_local_message(
+    conversation_id: UUID,
+    body: PrepareLocalRequest,
+    current_user: AuthenticatedUser = Depends(get_current_user),
+    _: UserProfile = Depends(require_chat_entitlement),
+) -> PrepareLocalResponse:
+    """Prepare subject-scoped evidence and prompt for direct loopback Ollama execution."""
+    return await ChatOrchestrationService.prepare_local_chat_turn(
+        user_id=current_user.user_id,
+        conversation_id=conversation_id,
+        request=body,
+    )
+
+
+@chat_router.post(
+    "/conversations/{conversation_id}/messages/finalize-local",
+    response_model=FinalizeLocalResponse,
+    dependencies=[Depends(rate_limit_general)],
+    summary="Validate citations and finalize Private Local Ollama generation",
+)
+async def finalize_local_message(
+    conversation_id: UUID,
+    body: FinalizeLocalRequest,
+    current_user: AuthenticatedUser = Depends(get_current_user),
+    _: UserProfile = Depends(require_approved_user),
+) -> FinalizeLocalResponse:
+    """Reconcile citations against server-stored sources and persist Private Local answer."""
+    return await ChatOrchestrationService.finalize_local_chat_turn(
+        user_id=current_user.user_id,
+        conversation_id=conversation_id,
+        request=body,
+    )
+
+
+@chat_router.get(
+    "/messages/{message_id}/sources",
+    response_model=MessageSourcesResponse,
+    dependencies=[Depends(rate_limit_general)],
+    summary="Retrieve immutable evidence snapshots with live KB visibility revalidation",
+)
+async def get_message_sources(
+    message_id: UUID,
+    current_user: AuthenticatedUser = Depends(get_current_user),
+    _: UserProfile = Depends(require_approved_user),
+) -> MessageSourcesResponse:
+    """Return message sources revalidated against current document/topic/subject status."""
+    conv_id, sources = await ChatOrchestrationService.get_message_sources(
+        user_id=current_user.user_id,
+        message_id=message_id,
+    )
+    return MessageSourcesResponse(
+        message_id=message_id,
+        conversation_id=conv_id,
+        sources=sources,
     )

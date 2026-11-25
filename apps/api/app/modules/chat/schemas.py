@@ -101,6 +101,9 @@ class MessageRead(BaseModel):
     role: Literal["user", "assistant"]
     content: str
     status: Literal["pending", "streaming", "completed", "failed", "cancelled"]
+    model_id: str | None = None
+    provider_id: str | None = None
+    finish_reason: str | None = None
     created_at: datetime
     updated_at: datetime
 

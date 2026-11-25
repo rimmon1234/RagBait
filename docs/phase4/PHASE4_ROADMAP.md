@@ -162,33 +162,37 @@ flowchart LR
 
 ---
 
-### Milestone M4.5 — Context Manager and Grounded RAG Orchestration
+### Milestone M4.5 — Context Manager and Grounded RAG Orchestration (Completed)
+- **Status**: COMPLETE & VERIFIED (November 25, 2026)
 - **Objective**: Implement server-side prompt construction, model context budgeting, sliding-window compaction, and citation validation.
 - **Scope**:
   - Model capability registry (context limits, output reserves, tokenizer factors).
   - Deterministic context budget formula: $B_{avail} = C_{model} - (T_{out} + T_{sys} + T_{guard} + T_{safe})$.
-  - Greedy evidence allocation within $B_{evidence} = \min(B_{avail} \times 0.60, 4000)$ with `evidence_omitted_count` telemetry.
+  - Greedy evidence allocation within $B_{evidence} = \min(B_{rem1} \times 0.60, 4000)$ with `evidence_omitted_count` telemetry.
   - 4-stage evidence taxonomy: candidate pool $\to$ selected passages $\to$ included evidence (`included_in_context = true`) $\to$ referenced citations (`referenced_in_answer = true`).
-  - Concurrency-safe conversation compaction using Redis mutex lock and optimistic sequence number checks.
-  - Prompt construction assigning citation identifiers `[S1]`, `[S2]` to selected evidence chunks.
-  - Citation validator ensuring generated citations match supplied sources.
-  - Evidence snapshot persistence in `public.chat_message_sources`.
+  - Concurrency-safe conversation compaction using Redis mutex lock (`lock:summarize:{conversation_id}` with UUID4 lease + Lua scripts) and optimistic sequence number CAS checks.
+  - Prompt construction assigning citation identifiers `[S1]`, `[S2]` to selected evidence chunks inside XML trust delimiters.
+  - Citation validator ensuring generated citations match supplied sources with bounded single cloud repair and deterministic local stripping.
+  - Evidence snapshot persistence in `public.chat_message_sources` with live 3-way KB catalog visibility revalidation.
 - **Dependencies**: M4.1 chat persistence, M4.4 hybrid retrieval.
-- **Database Changes**: Migration `20260305000000_m4_5_chat_evidence.sql` creating `chat_message_sources` and `chat_conversation_summaries`.
-- **Backend Changes**: Context manager (`app/modules/chat/context.py`), summarization worker, and prompt builders.
-- **Frontend Changes**: None.
+- **Database Changes**: Migration `20260305000000_m4_5_chat_evidence.sql` creating `public.chat_message_sources`, `public.chat_conversation_summaries`, immutability trigger, idempotency unique index `uq_chat_messages_conv_role_idem`, and strict RLS policies.
+- **Backend Changes**: Modularized context, citation, and orchestration packages under `apps/api/app/modules/chat/` (`context/`, `citations/`, `orchestration/`, updated `router.py`, `repository.py`, `schemas.py`) exposing synchronous cloud generation, Private Local `prepare-local`/`finalize-local` endpoints, and `GET /api/v1/chat/messages/{message_id}/sources`.
+- **Frontend Changes**: None (deferred to M4.7).
 - **Security Considerations**:
-  - Strict prompt-injection delimiters separating untrusted document text from system instructions.
-  - Rejection of hallucinated citation IDs that do not map to verified chunks.
+  - Strict XML entity escaping (`sanitize_xml_text`) and prompt-injection trust boundaries separating untrusted document text and user queries from system instructions.
+  - Rejection of hallucinated citation IDs that do not map to server-verified Stage-3 snapshots.
+  - Live catalog masking for archived, moderation-failed, deleted, or inactive subject/topic sources in both API and PostgREST RLS.
+  - Zero-cloud isolation for Private Local (`prepare-local`/`finalize-local` and `deferred_local` compaction).
 - **Testing**:
-  - Context budget overflow tests (`test_context_budgeting.py`).
-  - Summarization accuracy and retention tests (`test_chat_compaction.py`).
-  - Citation validator tests (`test_citation_validation.py`).
+  - pgTAP schema, immutability, RLS, and compaction CAS tests (`supabase/tests/m4_5_evidence_and_summaries_test.sql` — 31/31 subtests passed).
+  - Context budgeting, model registry, XML defense, and tokenizer isolation tests (`apps/api/tests/test_m4_5_context_budget.py` — 10/10 passed).
+  - Citation parsing/validation and Redis/CAS compaction tests (`apps/api/tests/test_m4_5_citations_and_compaction.py` — 7/7 passed).
+  - Grounded cloud RAG, idempotency, bounded repair, entitlement, Private Local lifecycle, and historical source masking E2E tests (`apps/api/tests/test_m4_5_orchestration_e2e.py` — 5/5 passed).
 - **Acceptance Criteria**:
-  - Generated prompts never exceed provider context limits.
+  - Generated prompts never exceed provider context limits ($T_{input} + T_{out} \le C_{model}$).
   - Original user and assistant messages remain durable across summarization.
-  - 100% of persisted citation records map to real database chunks and physical pages.
-- **Exclusions**: Real-time client streaming.
+  - 100% of persisted citation records map to server-verified chunks and physical pages.
+- **Exclusions**: SSE streaming, generation semaphores, request cancellation, and admission queues (deferred to M4.6); UI drawer and citation chips (deferred to M4.7).
 
 ---
 

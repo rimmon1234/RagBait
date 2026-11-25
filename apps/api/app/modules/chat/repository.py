@@ -1,9 +1,10 @@
 """Database access layer for conversations and messages."""
 
 from datetime import datetime
+from typing import Any
 from uuid import UUID
 
-import asyncpg  # type: ignore[import-untyped]
+import asyncpg
 
 
 class ChatRepository:
@@ -32,7 +33,7 @@ class ChatRepository:
         user_id: UUID,
         subject_id: UUID,
         title: str,
-    ) -> dict:
+    ) -> dict[str, Any]:
         """Create a new subject-scoped conversation atomically."""
         row = await conn.fetchrow(
             """
@@ -73,7 +74,7 @@ class ChatRepository:
         conn: asyncpg.Connection,
         conversation_id: UUID,
         user_id: UUID,
-    ) -> dict | None:
+    ) -> dict[str, Any] | None:
         """Retrieve conversation by ID enforcing user ownership."""
         row = await conn.fetchrow(
             """
@@ -111,7 +112,7 @@ class ChatRepository:
         cursor_updated_at: datetime | None = None,
         cursor_id: UUID | None = None,
         search: str | None = None,
-    ) -> tuple[list[dict], bool, int]:
+    ) -> tuple[list[dict[str, Any]], bool, int]:
         """List user-owned conversations with cursor pagination."""
         conditions = ["c.user_id = $1", "c.status = $2"]
         params: list[object] = [user_id, status]
@@ -174,7 +175,7 @@ class ChatRepository:
         conversation_id: UUID,
         user_id: UUID,
         new_title: str,
-    ) -> dict | None:
+    ) -> dict[str, Any] | None:
         """Rename an existing conversation enforcing ownership."""
         row = await conn.fetchrow(
             """
@@ -214,7 +215,7 @@ class ChatRepository:
         conn: asyncpg.Connection,
         conversation_id: UUID,
         user_id: UUID,
-    ) -> dict | None:
+    ) -> dict[str, Any] | None:
         """Mark an active conversation as archived."""
         row = await conn.fetchrow(
             """
@@ -254,7 +255,7 @@ class ChatRepository:
         conn: asyncpg.Connection,
         conversation_id: UUID,
         user_id: UUID,
-    ) -> dict | None:
+    ) -> dict[str, Any] | None:
         """Restore an archived conversation back to active."""
         row = await conn.fetchrow(
             """
@@ -305,7 +306,7 @@ class ChatRepository:
             conversation_id,
             user_id,
         )
-        return res.endswith("1")
+        return bool(res.endswith("1"))
 
     @staticmethod
     async def get_messages(
@@ -314,7 +315,7 @@ class ChatRepository:
         user_id: UUID,
         limit: int = 50,
         before_sequence: int | None = None,
-    ) -> tuple[list[dict], bool, int] | None:
+    ) -> tuple[list[dict[str, Any]], bool, int] | None:
         """Retrieve paginated messages for a conversation in ascending order.
 
         Returns None if conversation does not exist or user is not the owner.
@@ -338,7 +339,8 @@ class ChatRepository:
 
         if before_sequence is not None:
             query = """
-                SELECT id, conversation_id, sequence_number, role, content, status, created_at, updated_at
+                SELECT id, conversation_id, sequence_number, role, content, status,
+                       model_id, provider_id, finish_reason, created_at, updated_at
                 FROM public.chat_messages
                 WHERE conversation_id = $1
                   AND sequence_number < $2
@@ -348,7 +350,8 @@ class ChatRepository:
             rows = await conn.fetch(query, conversation_id, before_sequence, limit + 1)
         else:
             query = """
-                SELECT id, conversation_id, sequence_number, role, content, status, created_at, updated_at
+                SELECT id, conversation_id, sequence_number, role, content, status,
+                       model_id, provider_id, finish_reason, created_at, updated_at
                 FROM public.chat_messages
                 WHERE conversation_id = $1
                 ORDER BY sequence_number DESC
@@ -370,7 +373,7 @@ class ChatRepository:
         role: str,
         content: str,
         status: str = "completed",
-    ) -> dict:
+    ) -> dict[str, Any]:
         """Atomically allocate sequence number and insert message."""
         conv = await conn.fetchrow(
             """
