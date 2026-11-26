@@ -32,7 +32,13 @@ from app.modules.knowledge_base.job_repository import (
     renew_job_lease,
 )
 from app.modules.knowledge_base.parser_process import run_parser_isolated
+from app.modules.knowledge_base.parser_sandbox import ContainerSandboxConfig
 from app.modules.knowledge_base.storage import open_storage_stream
+from app.modules.knowledge_base.visual_understanding import (
+    discover_active_openrouter_keys,
+    enrich_pages_with_visual_understanding,
+    make_openrouter_vision_caller,
+)
 from app.modules.knowledge_base.worker_config import WorkerSettings, worker_settings
 
 logging.basicConfig(
@@ -255,7 +261,24 @@ class KnowledgeBaseExtractionWorker:
                     f"File size mismatch: expected {expected_size} bytes, got {total_bytes} bytes"
                 )
 
-            # 3. Execute extraction inside isolated process with hard timeout and sanitized environment
+            # 3. Execute extraction inside container sandbox / sanitized isolated process
+            sandbox_cfg = ContainerSandboxConfig(
+                image=self.settings.PARSER_SANDBOX_IMAGE,
+                memory_limit=self.settings.PARSER_SANDBOX_MEMORY,
+                cpus_limit=self.settings.PARSER_SANDBOX_CPUS,
+                pids_limit=self.settings.PARSER_SANDBOX_PIDS_LIMIT,
+            )
+            renders_dir = (
+                job_temp_dir / "renders"
+                if (
+                    mime_type == "application/pdf"
+                    and (
+                        self.settings.ENABLE_CONDITIONAL_OCR
+                        or self.settings.ENABLE_VISUAL_UNDERSTANDING
+                    )
+                )
+                else None
+            )
             result = await run_parser_isolated(
                 input_path=tmp_path,
                 mime_type=mime_type,
@@ -264,9 +287,38 @@ class KnowledgeBaseExtractionWorker:
                 max_bytes=self.settings.MAX_EXTRACTED_TEXT_BYTES,
                 output_file=output_path,
                 active_procs=self._active_processes,
+                isolation_mode=self.settings.PARSER_ISOLATION_MODE,
+                parser_engine=self.settings.PARSER_ENGINE,
+                sandbox_config=sandbox_cfg,
+                enable_conditional_ocr=self.settings.ENABLE_CONDITIONAL_OCR,
+                render_output_dir=renders_dir,
             )
 
-            # 4. Atomic completion & page persistence
+            # 3b. Stage 5 trusted Visual Understanding outside untrusted parser sandbox
+            if (
+                mime_type == "application/pdf"
+                and self.settings.ENABLE_VISUAL_UNDERSTANDING
+                and renders_dir is not None
+                and any(p.get("rendered_png_filename") for p in result.get("pages", []))
+            ):
+                async with self.pool.acquire() as conn:
+                    openrouter_keys = await discover_active_openrouter_keys(conn)
+                vision_caller = (
+                    make_openrouter_vision_caller(openrouter_keys) if openrouter_keys else None
+                )
+                result["pages"] = await enrich_pages_with_visual_understanding(
+                    result["pages"],
+                    render_dir=renders_dir,
+                    vision_caller=vision_caller,
+                    max_concurrency=self.settings.VISUAL_MAX_CONCURRENCY,
+                )
+
+            has_any_usable = bool(result["has_any_text"]) or any(
+                p.get("has_ocr_text") or p.get("has_visual_description")
+                for p in result.get("pages", [])
+            )
+
+            # 4. Atomic completion & page persistence (preserving raw_text + derived layers)
             async with self.pool.acquire() as conn:
                 completed = await complete_job_success(
                     conn=conn,
@@ -275,7 +327,9 @@ class KnowledgeBaseExtractionWorker:
                     worker_id=self.worker_id,
                     lease_token=lease_token,
                     pages=result["pages"],
-                    has_any_text=result["has_any_text"],
+                    has_any_text=has_any_usable,
+                    parser_backend=result.get("parser_backend", "subprocess_isolated"),
+                    quality_summary=result.get("quality_summary"),
                 )
 
             if completed:

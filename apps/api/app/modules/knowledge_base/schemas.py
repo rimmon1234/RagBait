@@ -1,9 +1,11 @@
 """Pydantic schemas for the Knowledge Base and Document Lifecycle."""
 
+import json
 from datetime import datetime
+from typing import Any
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
 class SubjectRead(BaseModel):
@@ -85,7 +87,7 @@ class DocumentListResponse(BaseModel):
 
 
 class DocumentPageItem(BaseModel):
-    """Extracted text page record."""
+    """Extracted text page record with optional traceable normalized/diagnostic views."""
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -93,10 +95,23 @@ class DocumentPageItem(BaseModel):
     document_id: UUID
     page_number: int
     raw_text: str
+    normalized_text: str | None = None
+    extraction_method: str | None = None
+    normalization_version: int = 0
+    quality_diagnostics: dict[str, Any] = Field(default_factory=dict)
     character_count: int
     word_count: int
     has_text: bool
     created_at: datetime
+
+    @field_validator("quality_diagnostics", mode="before")
+    @classmethod
+    def _coerce_quality_diagnostics(cls, value: Any) -> dict[str, Any]:
+        if value is None:
+            return {}
+        if isinstance(value, str):
+            return dict(json.loads(value))
+        return dict(value)
 
 
 class DocumentPagesResponse(BaseModel):

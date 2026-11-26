@@ -111,4 +111,14 @@ async def search_subject_chunks(
         )
         chunks.append(chunk)
 
+    if chunks:
+        kind_rows = await conn.fetch(
+            "SELECT id, source_kind FROM public.kb_document_chunks WHERE id = ANY($1::uuid[])",
+            [c.chunk_id for c in chunks],
+        )
+        kind_map = {row["id"]: row["source_kind"] for row in kind_rows}
+        for c in chunks:
+            if c.chunk_id in kind_map:
+                c.source_kind = str(kind_map[c.chunk_id])
+
     return chunks

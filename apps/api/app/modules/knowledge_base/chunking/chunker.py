@@ -36,6 +36,7 @@ class PageInput:
     page_number: int
     text: str
     has_text: bool = True
+    source_kind: str = "text_layer"
 
 
 @dataclass(frozen=True)
@@ -47,6 +48,7 @@ class TextUnit:
     page_number: int
     start_char: int
     end_char: int
+    source_kind: str = "text_layer"
 
 
 @dataclass(frozen=True)
@@ -61,6 +63,7 @@ class ChunkOutput:
     token_count: int
     content_hash: str
     page_spans: list[dict[str, Any]] = field(default_factory=list)
+    source_kind: str = "text_layer"
 
 
 def _split_sentence_into_clauses(
@@ -233,7 +236,18 @@ def chunk_document_pages(pages: list[PageInput]) -> list[ChunkOutput]:
     # 1. Collect all atomic units across all document pages
     all_units: list[TextUnit] = []
     for page in valid_pages:
-        all_units.extend(_extract_page_units(page))
+        page_units = _extract_page_units(page)
+        for u in page_units:
+            all_units.append(
+                TextUnit(
+                    text=u.text,
+                    token_count=u.token_count,
+                    page_number=u.page_number,
+                    start_char=u.start_char,
+                    end_char=u.end_char,
+                    source_kind=page.source_kind,
+                )
+            )
 
     if not all_units:
         return []
@@ -312,6 +326,13 @@ def chunk_document_pages(pages: list[PageInput]) -> list[ChunkOutput]:
         ]
 
         content_hash = hashlib.sha256(final_text.encode("utf-8")).hexdigest()
+        kinds = {u.source_kind for u in current_units}
+        if kinds == {"text_layer"}:
+            chunk_source_kind = "text_layer"
+        elif len(kinds) == 1:
+            chunk_source_kind = next(iter(kinds))
+        else:
+            chunk_source_kind = "multimodal_combined"
 
         chunks.append(
             ChunkOutput(
@@ -323,6 +344,7 @@ def chunk_document_pages(pages: list[PageInput]) -> list[ChunkOutput]:
                 token_count=final_token_count,
                 content_hash=content_hash,
                 page_spans=page_spans,
+                source_kind=chunk_source_kind,
             )
         )
         chunk_index += 1

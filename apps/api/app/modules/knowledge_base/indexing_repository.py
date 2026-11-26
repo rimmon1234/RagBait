@@ -127,10 +127,25 @@ async def fetch_document_pages_for_indexing(
     conn: asyncpg.Connection,
     document_id: UUID,
 ) -> list[dict[str, Any]]:
-    """Fetch extracted pages for a document ordered sequentially."""
+    """Fetch extracted pages plus derived OCR and visual representations ordered sequentially."""
     rows = await conn.fetch(
         """
-        SELECT page_number, raw_text, has_text, character_count
+        SELECT
+            page_number,
+            raw_text,
+            normalized_text,
+            ocr_text,
+            ocr_confidence,
+            ocr_model,
+            visual_description,
+            visual_model,
+            visual_confidence,
+            visual_triage_class,
+            has_text,
+            has_usable_normalized_text,
+            has_ocr_text,
+            has_visual_description,
+            character_count
         FROM public.kb_document_pages
         WHERE document_id = $1
         ORDER BY page_number ASC;
@@ -240,6 +255,7 @@ async def complete_indexing_job_transaction(
                     job_id,
                     True,  # is_active
                     json.dumps(c.page_spans),
+                    c.source_kind,
                 )
                 for c in chunks
             ]
@@ -258,8 +274,9 @@ async def complete_indexing_job_transaction(
                     source_version,
                     indexing_job_id,
                     is_active,
-                    page_spans
-                ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13::jsonb);
+                    page_spans,
+                    source_kind
+                ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13::jsonb, $14);
                 """,
                 records,
             )

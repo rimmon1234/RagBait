@@ -27,6 +27,7 @@ class RetrievedChunk(BaseModel):
     fts_score: float | None = None
     rrf_score: float
     final_rank: int
+    source_kind: str = "text_layer"
 
 
 class RetrievalQuery(BaseModel):

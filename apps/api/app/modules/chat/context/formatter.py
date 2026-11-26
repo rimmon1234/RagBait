@@ -35,16 +35,21 @@ def format_physical_pages(page_start: int, page_end: int) -> str:
 
 
 def format_source_block(citation_key: str, chunk: RetrievedChunk) -> str:
-    """Format a single verified chunk into an XML-escaped <source> block."""
+    """Format a single verified chunk into an XML-escaped <source> block with provenance."""
     safe_id = sanitize_xml_text(citation_key)
     safe_title = sanitize_xml_text(chunk.document_title)
     pages_label = format_physical_pages(chunk.page_number_start, chunk.page_number_end)
+    safe_kind = sanitize_xml_text(getattr(chunk, "source_kind", "text_layer"))
     safe_content = sanitize_xml_text(chunk.raw_text)
+    provenance_tag = (
+        f"    <source_kind>{safe_kind}</source_kind>\n" if safe_kind != "text_layer" else ""
+    )
 
     return (
         f'  <source id="{safe_id}">\n'
         f"    <document_title>{safe_title}</document_title>\n"
         f"    <physical_pages>{pages_label}</physical_pages>\n"
+        f"{provenance_tag}"
         f"    <content>\n"
         f"      {safe_content}\n"
         f"    </content>\n"

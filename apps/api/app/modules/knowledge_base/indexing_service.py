@@ -56,14 +56,52 @@ async def process_single_indexing_job(
                 source_version=source_version,
             )
 
-        page_inputs = [
-            PageInput(
-                page_number=p["page_number"],
-                text=p["raw_text"],
-                has_text=p["has_text"],
+        page_inputs: list[PageInput] = []
+        for p in pages:
+            base_text = (
+                p["normalized_text"] if p.get("normalized_text") is not None else p["raw_text"]
+            ).strip()
+            ocr_text = (p.get("ocr_text") or "").strip()
+            vis_text = (p.get("visual_description") or "").strip()
+
+            sections: list[str] = []
+            used_kinds: set[str] = set()
+            if base_text:
+                sections.append(base_text)
+                used_kinds.add("text_layer")
+            if ocr_text:
+                ocr_model = p.get("ocr_model") or "tesseract"
+                ocr_conf = p.get("ocr_confidence")
+                conf_label = f"{ocr_conf:.2f}" if isinstance(ocr_conf, (int, float)) else "unknown"
+                sections.append(
+                    f"[OCR RECOVERED TEXT — Page {p['page_number']} | model={ocr_model} | conf={conf_label}]\n{ocr_text}"
+                )
+                used_kinds.add("ocr")
+            if vis_text:
+                vis_model = p.get("visual_model") or "vision_model"
+                vis_conf = p.get("visual_confidence")
+                conf_label = f"{vis_conf:.2f}" if isinstance(vis_conf, (int, float)) else "unknown"
+                sections.append(
+                    f"[DERIVED VISUAL DESCRIPTION — Page {p['page_number']} | model={vis_model} | conf={conf_label}]\n{vis_text}"
+                )
+                used_kinds.add("visual_description")
+
+            combined_text = "\n\n".join(sections).strip()
+            if not used_kinds:
+                source_kind = "text_layer"
+            elif len(used_kinds) == 1:
+                source_kind = next(iter(used_kinds))
+            else:
+                source_kind = "multimodal_combined"
+
+            page_inputs.append(
+                PageInput(
+                    page_number=p["page_number"],
+                    text=combined_text,
+                    has_text=bool(combined_text),
+                    source_kind=source_kind,
+                )
             )
-            for p in pages
-        ]
 
         # 2. Heartbeat lease before chunking CPU work
         await renew_indexing_lease(conn, job_id, worker_id, lease_token)
