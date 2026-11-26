@@ -4,8 +4,8 @@ import { PresenceTracker } from "@/components/PresenceTracker";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "RagBait — Collaborative RAG Platform",
-  description: "Collaborative educational platform for study groups and classes.",
+  title: "RagBait — Academic AI Study Workspace",
+  description: "Collaborative, citation-verified study library and multimodal RAG assistant for study groups.",
 };
 
 export default function RootLayout({
@@ -15,11 +15,11 @@ export default function RootLayout({
 }) {
   return (
     <html lang="en" suppressHydrationWarning>
-      <body className="flex min-h-screen flex-col bg-gray-50 text-gray-900 antialiased" suppressHydrationWarning>
-        <Navbar />
-        <PresenceTracker />
-        <main className="flex-1">{children}</main>
-      </body>
+        <body className="flex min-h-screen flex-col bg-slate-50 text-slate-900 antialiased selection:bg-indigo-100 selection:text-indigo-900" suppressHydrationWarning>
+          <Navbar />
+          <PresenceTracker />
+          <main className="flex-1">{children}</main>
+        </body>
     </html>
   );
 }

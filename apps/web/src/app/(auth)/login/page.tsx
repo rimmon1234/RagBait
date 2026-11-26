@@ -117,72 +117,75 @@ export default function LoginPage() {
   };
 
   return (
-    <div className="flex min-h-[80vh] items-center justify-center px-4 py-12">
-      <div className="w-full max-w-md rounded-xl border border-gray-200 bg-white p-8 shadow-sm">
-        <div className="text-center">
-          <h1 className="text-2xl font-bold text-gray-900">Sign in to RagBait</h1>
-          <p className="mt-2 text-sm text-gray-600">
-            Enter your college email and password to access the platform.
-          </p>
-        </div>
+        <div className="flex min-h-[82vh] items-center justify-center px-4 py-12">
+          <div className="card-elevated w-full max-w-md p-8">
+            <div className="text-center">
+                <div className="mx-auto mb-3 flex h-11 w-11 items-center justify-center rounded-2xl bg-gradient-to-br from-blue-600 to-indigo-600 text-sm font-black text-white shadow-md shadow-indigo-600/20">
+                  RB
+                </div>
+                <h1 className="text-2xl font-bold tracking-tight text-slate-900">Sign in to RagBait</h1>
+                <p className="mt-1.5 text-sm text-slate-600">
+                  Enter your college email and password to access your study workspace.
+                </p>
+            </div>
 
-        {error && (
-          <div className="mt-4 flex items-center gap-2 rounded-lg bg-red-50 p-3 text-sm text-red-700">
-            <AlertCircle className="h-4 w-4 shrink-0" />
-            <span>{error}</span>
-          </div>
+            {error && (
+                <div className="mt-5 flex items-center gap-2 rounded-xl border border-red-200 bg-red-50 p-3 text-sm text-red-700">
+                  <AlertCircle className="h-4 w-4 shrink-0" />
+                  <span>{error}</span>
+                </div>
         )}
 
-        <form onSubmit={handleLogin} className="mt-6 space-y-4">
-          <div>
-            <label className="block text-sm font-medium text-gray-700">Email Address</label>
-            <input
-              type="email"
-              required
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-              placeholder="student@university.edu"
-              className="mt-1 block w-full rounded-md border border-gray-300 px-3 py-2 shadow-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
-            />
-          </div>
+                <form onSubmit={handleLogin} className="mt-6 space-y-4">
+                  <div>
+                    <label className="block text-sm font-semibold text-slate-700">Email Address</label>
+                    <input
+                      type="email"
+                      required
+                      value={email}
+                      onChange={(e) => setEmail(e.target.value)}
+                      placeholder="student@university.edu"
+                      className="mt-1.5 block w-full rounded-xl border border-slate-300 bg-white px-3.5 py-2.5 text-sm shadow-sm transition-colors focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-500/20"
+                    />
+                  </div>
 
-          <div>
-            <label className="block text-sm font-medium text-gray-700">Password</label>
-            <input
-              type="password"
-              required
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              className="mt-1 block w-full rounded-md border border-gray-300 px-3 py-2 shadow-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
-            />
-          </div>
+                  <div>
+                    <label className="block text-sm font-semibold text-slate-700">Password</label>
+                    <input
+                      type="password"
+                      required
+                      value={password}
+                      onChange={(e) => setPassword(e.target.value)}
+                      className="mt-1.5 block w-full rounded-xl border border-slate-300 bg-white px-3.5 py-2.5 text-sm shadow-sm transition-colors focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-500/20"
+                    />
+                  </div>
 
-          <button
-            type="submit"
-            disabled={loading}
-            className="flex w-full items-center justify-center gap-2 rounded-md bg-blue-600 py-2.5 text-sm font-semibold text-white shadow-sm hover:bg-blue-700 disabled:opacity-50"
-          >
-            {loading ? (
-              <>
-                <Loader2 className="h-4 w-4 animate-spin" />
-                Signing in...
-              </>
-            ) : (
-              <>
-                Sign in
-                <ArrowRight className="h-4 w-4" />
-              </>
-            )}
-          </button>
-        </form>
+                  <button
+                    type="submit"
+                    disabled={loading}
+                    className="btn-primary-gradient w-full py-2.5"
+                  >
+                    {loading ? (
+                      <>
+                        <Loader2 className="h-4 w-4 animate-spin" />
+                        Signing in...
+                      </>
+                    ) : (
+                      <>
+                        Sign in
+                        <ArrowRight className="h-4 w-4" />
+                      </>
+                    )}
+                  </button>
+                </form>
 
-        <p className="mt-6 text-center text-sm text-gray-600">
-          Don&apos;t have an account?{" "}
-          <Link href="/register" className="font-medium text-blue-600 hover:text-blue-500">
-            Register here
-          </Link>
-        </p>
-      </div>
+                  <p className="mt-6 text-center text-sm text-slate-600">
+                    Don&apos;t have an account?{" "}
+                      <Link href="/register" className="font-semibold text-indigo-600 hover:text-indigo-500">
+                        Register here
+                      </Link>
+                  </p>
+              </div>
     </div>
-  );
+          );
 }

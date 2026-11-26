@@ -116,13 +116,13 @@ export function ChatAccessGate({ access, children }: ChatAccessGateProps) {
 
   if (access.isApproved && !access.canGenerate) {
     return (
-      <div className="flex min-h-[calc(100vh-4rem)] items-center justify-center bg-gray-50 p-6">
+      <div className="flex min-h-[calc(100vh-4rem)] items-center justify-center p-6">
         <div
-          className="w-full max-w-xl rounded-2xl border border-blue-200 bg-white p-8 shadow-sm"
+          className="card-elevated w-full max-w-xl p-8"
           role="region"
           aria-label="Contribution Required to Unlock AI Chat"
         >
-          <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-full bg-blue-50 text-blue-600">
+          <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-2xl bg-gradient-to-br from-blue-600 to-indigo-600 text-white shadow-md shadow-indigo-600/20">
             <KeyRound className="h-7 w-7" />
           </div>
 

@@ -709,3 +709,88 @@ def test_local_hkdf_prohibited_in_production(monkeypatch):
     with pytest.raises(VaultConfigurationError) as exc_info:
         LocalHKDFKEKProvider("secure-prod-master-key-32-characters!")
     assert "strictly prohibited in production" in str(exc_info.value)
+
+
+# ------------------------------------------------------------------------------
+# 4. Cross-Account Duplicacy & Bypass Prevention Tests
+# ------------------------------------------------------------------------------
+@pytest.mark.anyio
+async def test_cross_account_duplicate_key_blocked_even_across_providers_and_invisible_chars(
+    test_owner, second_owner
+):
+    """Two accounts cannot register the same API key, even with invisible chars or a different provider."""
+    owner_a = test_owner["user_id"]
+    owner_b = second_owner["user_id"]
+    raw_key = f"sk-or-v1-cross-acct-{uuid4().hex}"
+
+    await store_credential(
+        owner_id=owner_a,
+        provider_id="openrouter",
+        nickname="Owner A OpenRouter Key",
+        raw_key=raw_key,
+    )
+
+    # Same key submitted by Owner B for same provider -> blocked
+    with pytest.raises(VaultDuplicateError):
+        await store_credential(
+            owner_id=owner_b,
+            provider_id="openrouter",
+            nickname="Owner B Stolen Key",
+            raw_key=raw_key,
+        )
+
+    # Same key padded with invisible formatting characters -> blocked
+    with pytest.raises(VaultDuplicateError):
+        await store_credential(
+            owner_id=owner_b,
+            provider_id="openrouter",
+            nickname="Owner B Padded Key",
+            raw_key=f" \u200b{raw_key}\ufeff ",
+        )
+
+    # Same key submitted by Owner B under a different provider -> blocked
+    with pytest.raises(VaultDuplicateError):
+        await store_credential(
+            owner_id=owner_b,
+            provider_id="groq",
+            nickname="Owner B Cross-Provider Attempt",
+            raw_key=raw_key,
+        )
+
+
+@pytest.mark.anyio
+async def test_cross_account_duplicate_key_blocked_after_original_owner_deletes(
+    test_owner, second_owner
+):
+    """Deleting a key from Owner A does not free its fingerprint for Owner B to bypass the gate."""
+    owner_a = test_owner["user_id"]
+    owner_b = second_owner["user_id"]
+    raw_key = f"sk-or-v1-delete-reuse-{uuid4().hex}"
+
+    stored = await store_credential(
+        owner_id=owner_a,
+        provider_id="openrouter",
+        nickname="Owner A Original Key",
+        raw_key=raw_key,
+    )
+
+    # Owner A deletes their credential
+    await delete_credential_secret(credential_id=stored.id, caller_id=owner_a)
+
+    # Owner B STILL cannot register the exact same key
+    with pytest.raises(VaultDuplicateError):
+        await store_credential(
+            owner_id=owner_b,
+            provider_id="openrouter",
+            nickname="Owner B Gate Bypass Key",
+            raw_key=raw_key,
+        )
+
+    # Original Owner A can legitimately re-add their own previously deleted key
+    readded = await store_credential(
+        owner_id=owner_a,
+        provider_id="openrouter",
+        nickname="Owner A Re-added Key",
+        raw_key=raw_key,
+    )
+    assert readded.owner_id == owner_a

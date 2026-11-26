@@ -530,3 +530,75 @@ async def test_zero_secret_leakage_across_all_endpoints(client: httpx.AsyncClien
         assert len(audit_rows) >= 1
         for a in audit_rows:
             assert raw_key not in str(a["payload"])
+
+
+# ==============================================================================
+# 6. Cross-Account Gate Bypass Duplicacy API Tests
+# ==============================================================================
+
+
+@pytest.mark.anyio
+async def test_second_account_blocked_from_reusing_api_key_at_http_layer(
+    client: httpx.AsyncClient,
+):
+    """HTTP layer returns 409 CREDENTIAL_ALREADY_EXISTS and preserves gate block across accounts."""
+    user_a = await create_db_user("dup_user_a@university.edu")
+    user_b = await create_db_user("dup_user_b@university.edu")
+    shared_key = f"sk-or-v1-http-dup-{uuid4().hex}"
+
+    # User A registers the key
+    headers_a = setup_auth_context(user_a, "dup_user_a@university.edu")
+    res_a = await client.post(
+        "/api/v1/me/api-keys",
+        json={
+            "provider_id": "openrouter",
+            "nickname": "User A Pool Key",
+            "api_key": shared_key,
+            "sharing_scope": "community_shared",
+            "shared_consent": True,
+        },
+        headers=headers_a,
+    )
+    assert res_a.status_code == 201
+    cred_id = res_a.json()["id"]
+
+    # User B attempts to register the same key while active -> 409
+    headers_b = setup_auth_context(user_b, "dup_user_b@university.edu")
+    res_b1 = await client.post(
+        "/api/v1/me/api-keys",
+        json={
+            "provider_id": "openrouter",
+            "nickname": "User B Duplicate",
+            "api_key": shared_key,
+            "sharing_scope": "community_shared",
+            "shared_consent": True,
+        },
+        headers=headers_b,
+    )
+    assert res_b1.status_code == 409
+    assert res_b1.json()["error"]["code"] == "CREDENTIAL_ALREADY_EXISTS"
+
+    # User A deletes the key -> User B STILL cannot reuse it
+    headers_a = setup_auth_context(user_a, "dup_user_a@university.edu")
+    del_a = await client.delete(f"/api/v1/me/api-keys/{cred_id}", headers=headers_a)
+    assert del_a.status_code == 200
+
+    headers_b = setup_auth_context(user_b, "dup_user_b@university.edu")
+    res_b2 = await client.post(
+        "/api/v1/me/api-keys",
+        json={
+            "provider_id": "openrouter",
+            "nickname": "User B After Delete",
+            "api_key": shared_key,
+            "sharing_scope": "community_shared",
+            "shared_consent": True,
+        },
+        headers=headers_b,
+    )
+    assert res_b2.status_code == 409
+    assert res_b2.json()["error"]["code"] == "CREDENTIAL_ALREADY_EXISTS"
+
+    # Confirm User B still fails contribution entitlement check
+    ent_b = await client.get("/api/v1/me/chat-entitlement", headers=headers_b)
+    assert ent_b.status_code == 200
+    assert ent_b.json()["eligible"] is False

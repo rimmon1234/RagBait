@@ -168,7 +168,7 @@ export function ChatComposer({
   };
 
   return (
-    <footer className="border-t border-gray-200 bg-gray-50/90 px-4 py-3 md:px-6">
+    <footer className="border-t border-slate-200/80 bg-white/90 px-4 py-3 backdrop-blur-md md:px-6">
       <div className="mx-auto max-w-4xl space-y-2">
         {/* Mode Switcher & Private Local Controls */}
         <div className="flex flex-wrap items-center justify-between gap-2 text-xs">

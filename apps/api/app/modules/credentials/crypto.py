@@ -109,6 +109,14 @@ def decrypt_payload(ciphertext: bytes, nonce: bytes, dek: bytes, aad: bytes) -> 
         ) from err
 
 
+_INVISIBLE_KEY_CHARS = str.maketrans("", "", "\u200b\u200c\u200d\u2060\ufeff\u00a0")
+
+
+def canonicalize_credential_key(raw_key: str) -> str:
+    """Normalize whitespace and invisible formatting characters from an API key."""
+    return raw_key.translate(_INVISIBLE_KEY_CHARS).strip()
+
+
 def compute_fingerprint(raw_key: str, pepper: str) -> str:
     """Calculate an HMAC-SHA256 fingerprint using the independent VAULT_PEPPER_SECRET.
 
@@ -121,7 +129,7 @@ def compute_fingerprint(raw_key: str, pepper: str) -> str:
             f"VAULT_PEPPER_SECRET must contain at least 32 bytes, got {len(pepper_bytes)}",
             code="INVALID_PEPPER_SECRET",
         )
-    cleaned_key = raw_key.strip().encode("utf-8")
+    cleaned_key = canonicalize_credential_key(raw_key).encode("utf-8")
     return hmac.new(pepper_bytes, cleaned_key, hashlib.sha256).hexdigest()
 
 
@@ -130,7 +138,7 @@ def mask_credential(raw_key: str) -> str:
 
     Never exposes full key material. Shows first few characters and last 4 characters.
     """
-    cleaned = raw_key.strip()
+    cleaned = canonicalize_credential_key(raw_key)
     if len(cleaned) <= 8:
         return cleaned[:2] + "..." + cleaned[-2:]
     return cleaned[:4] + "..." + cleaned[-4:]
