@@ -1,5 +1,6 @@
 """Pydantic contracts for 4-stage evidence provenance and citation validation."""
 
+from datetime import datetime
 from typing import Literal
 from uuid import UUID
 
@@ -51,6 +52,8 @@ class CitationValidationResult(BaseModel):
         "invalid_empty_response",
     ]
     valid_keys: list[str] = Field(default_factory=list)
+    valid_note_keys: list[str] = Field(default_factory=list)
+    valid_web_keys: list[str] = Field(default_factory=list)
     unknown_keys: list[str] = Field(default_factory=list)
     duplicate_keys: list[str] = Field(default_factory=list)
     malformed_tokens: list[str] = Field(default_factory=list)
@@ -59,21 +62,29 @@ class CitationValidationResult(BaseModel):
 
 
 class MessageSourceRead(BaseModel):
-    """Public evidence snapshot returned for a persisted chat message after live KB revalidation."""
+    """Public evidence snapshot returned for a persisted chat message (KB note or external web source)."""
 
     id: UUID
+    source_type: Literal["kb_note", "web_source"] = "kb_note"
     citation_key: str
-    document_id: UUID
+    document_id: UUID | None = None
     document_title: str
     file_type: str | None = None
-    page_number_start: int
-    page_number_end: int
+    page_number_start: int | None = None
+    page_number_end: int | None = None
     excerpt: str
     relevance_score: float
     included_in_context: bool
     referenced_in_answer: bool
     is_available: bool
     document_viewer_url: str | None = None
+    # Web source metadata (populated when source_type == 'web_source')
+    url: str | None = None
+    domain: str | None = None
+    publisher: str | None = None
+    published_at: str | None = None
+    retrieved_at: datetime | None = None
+    snippet_only: bool | None = None
 
 
 class MessageSourcesResponse(BaseModel):

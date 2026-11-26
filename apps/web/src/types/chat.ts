@@ -6,6 +6,8 @@ export type ChatMessageStatus = "pending" | "streaming" | "completed" | "failed"
 
 export type ChatRoutingMode = "auto" | "cloud_only" | "provider_specific";
 
+export type AnswerPolicy = "note_first_adaptive" | "notes_only";
+
 export interface ChatConversation {
   id: string;
   user_id: string;
@@ -39,18 +41,25 @@ export interface ChatMessage {
 
 export interface MessageSourceRead {
   id: string;
+  source_type?: "kb_note" | "web_source";
   citation_key: string;
   document_id: string | null;
   document_title: string;
   file_type?: string | null;
-  page_number_start: number;
-  page_number_end: number;
+  page_number_start: number | null;
+  page_number_end: number | null;
   excerpt: string;
   relevance_score: number;
   included_in_context: boolean;
   referenced_in_answer: boolean;
   is_available: boolean;
   document_viewer_url?: string | null;
+  url?: string | null;
+  domain?: string | null;
+  publisher?: string | null;
+  published_at?: string | null;
+  retrieved_at?: string | null;
+  snippet_only?: boolean | null;
 }
 
 export interface MessageSourcesResponse {
@@ -84,6 +93,7 @@ export interface PrepareLocalRequest {
   model_id?: string | null;
   idempotency_key?: string;
   max_output_tokens?: number | null;
+  answer_policy?: AnswerPolicy;
 }
 
 export interface PrepareLocalResponse {
@@ -174,15 +184,20 @@ export interface CloudStreamMessageRequest {
   credential_id?: string | null;
   temperature?: number;
   max_output_tokens?: number | null;
+  answer_policy?: AnswerPolicy;
 }
 
 export interface StreamSourceSummary {
+  source_type?: "kb_note" | "web_source";
   citation_key: string;
   document_id: string | null;
   document_title: string;
-  page_number_start: number;
-  page_number_end: number;
+  page_number_start: number | null;
+  page_number_end: number | null;
   relevance_score: number;
+  url?: string | null;
+  domain?: string | null;
+  snippet_only?: boolean | null;
 }
 
 export interface AdmissionWaitingPayload {

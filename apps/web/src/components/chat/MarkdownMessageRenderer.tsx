@@ -9,7 +9,7 @@ export interface MarkdownMessageRendererProps {
 }
 
 const CITATION_OR_INLINE_TOKEN_REGEX =
-  /(`[^`\n]+`|\*\*[^*\n]+?\*\*|\*[^*\n]+?\*|\[[^\]]+\]\([^)\s]+\)|\[(S\d+)\])/;
+  /(`[^`\n]+`|\*\*[^*\n]+?\*\*|\*[^*\n]+?\*|\[[^\]]+\]\([^)\s]+\)|\[((?:S|W)[1-9][0-9]*)\])/;
 
 function isSafeHref(rawUrl: string): boolean {
   const trimmed = rawUrl.trim();
@@ -56,16 +56,19 @@ function renderInlineContent(
     const citationKey = match[2];
 
     if (citationKey) {
+      const isWebKey = citationKey.startsWith("W");
       nodes.push(
         <button
           key={`${options.keyPrefix}-c-${partIdx++}`}
           type="button"
           onClick={() => options.onCitationClick?.(citationKey)}
           disabled={!options.onCitationClick}
-          aria-label={`Inspect source ${citationKey}`}
+          aria-label={`Inspect ${isWebKey ? "web " : ""}source ${citationKey}`}
           className={`mx-0.5 inline-flex items-center rounded-md px-1.5 py-0.5 align-baseline text-[11px] font-semibold transition-colors focus:outline-none focus:ring-2 focus:ring-blue-500 ${
             options.isProvisional
               ? "border border-amber-300 bg-amber-50 text-amber-800"
+              : isWebKey
+              ? "border border-teal-200 bg-teal-50 text-teal-800 hover:bg-teal-100"
               : "border border-blue-200 bg-blue-50 text-blue-700 hover:bg-blue-100"
           } disabled:cursor-default`}
         >

@@ -9,8 +9,11 @@ from uuid import UUID
 import asyncpg
 
 from app.core.errors import AuthorizationError, ConflictError, NotFoundError
-from app.modules.chat.citations.source_repository import insert_included_source_snapshots
-from app.modules.chat.context.schemas import SelectedEvidenceSource
+from app.modules.chat.citations.source_repository import (
+    insert_included_source_snapshots,
+    insert_included_web_source_snapshots,
+)
+from app.modules.chat.context.schemas import SelectedEvidenceSource, SelectedWebSource
 
 logger = logging.getLogger("ragbait.chat.orchestration.persistence")
 
@@ -243,9 +246,10 @@ async def complete_cloud_turn_atomically(
     selected_evidence: list[SelectedEvidenceSource],
     referenced_keys: set[str],
     extra_metadata: dict[str, Any],
+    selected_web_sources: list[SelectedWebSource] | None = None,
     expected_generation_request_id: str | None = None,
 ) -> dict[str, Any]:
-    """Atomically persist Stage-3/4 source snapshots and complete the assistant message."""
+    """Atomically persist Stage-3/4 source & web snapshots and complete the assistant message."""
     async with conn.transaction():
         msg_row = await conn.fetchrow(
             """
@@ -285,6 +289,13 @@ async def complete_cloud_turn_atomically(
             selected_evidence=selected_evidence,
             referenced_keys=referenced_keys,
         )
+        if selected_web_sources:
+            await insert_included_web_source_snapshots(
+                conn,
+                message_id=assistant_message_id,
+                selected_web_sources=selected_web_sources,
+                referenced_keys=referenced_keys,
+            )
 
         await conn.execute(
             """

@@ -15,6 +15,7 @@ import {
 import { ollamaClient } from "@/lib/local-inference/ollama-client";
 import { isAbortError } from "@/lib/local-inference/ollama-errors";
 import type {
+  AnswerPolicy,
   ChatConversation,
   ChatMessage,
   GenerationPhase,
@@ -40,6 +41,7 @@ export interface RetrySubmissionSnapshot {
   idempotencyKey: string;
   mode: InferenceExecutionMode;
   localModelId?: string;
+  answerPolicy?: AnswerPolicy;
 }
 
 export interface QueueWaitInfo {
@@ -74,11 +76,16 @@ export interface UseChatSessionResult {
   draftOverride: string | null;
   clearDraftOverride: () => void;
   loadOlderMessages: () => Promise<void>;
-  submitCloudMessage: (content: string, existingIdempotencyKey?: string) => Promise<void>;
+  submitCloudMessage: (
+    content: string,
+    existingIdempotencyKey?: string,
+    answerPolicy?: AnswerPolicy
+  ) => Promise<void>;
   submitPrivateLocalMessage: (
     content: string,
     localModelId: string,
-    existingIdempotencyKey?: string
+    existingIdempotencyKey?: string,
+    answerPolicy?: AnswerPolicy
   ) => Promise<void>;
   cancelActiveGeneration: () => Promise<void>;
   retryFailedSubmission: () => Promise<void>;
@@ -233,7 +240,11 @@ export function useChatSession({
   );
 
   const submitCloudMessage = useCallback(
-    async (rawContent: string, existingIdempotencyKey?: string) => {
+    async (
+      rawContent: string,
+      existingIdempotencyKey?: string,
+      answerPolicy: AnswerPolicy = "note_first_adaptive"
+    ) => {
       const trimmed = rawContent.trim();
       if (!trimmed || !conversation || conversation.status !== "active") return;
       if (
@@ -335,6 +346,7 @@ export function useChatSession({
             content: trimmed,
             idempotency_key: submissionKey,
             routing_mode: "auto",
+            answer_policy: answerPolicy,
           },
           { signal: controller.signal }
         )) {
@@ -474,6 +486,7 @@ export function useChatSession({
                   content: trimmed,
                   idempotencyKey: submissionKey,
                   mode: "cloud",
+                  answerPolicy,
                 });
               }
               break;
@@ -643,7 +656,12 @@ export function useChatSession({
   );
 
   const submitPrivateLocalMessage = useCallback(
-    async (rawContent: string, localModelId: string, existingIdempotencyKey?: string) => {
+    async (
+      rawContent: string,
+      localModelId: string,
+      existingIdempotencyKey?: string,
+      answerPolicy: AnswerPolicy = "note_first_adaptive"
+    ) => {
       const trimmed = rawContent.trim();
       if (!trimmed || !conversation || conversation.status !== "active") return;
       if (
@@ -709,6 +727,7 @@ export function useChatSession({
           content: trimmed,
           model_id: localModelId,
           idempotency_key: submissionKey,
+          answer_policy: answerPolicy,
         });
         if (activeConvRef.current !== conversationId) return;
 
@@ -857,6 +876,7 @@ export function useChatSession({
           idempotencyKey: submissionKey,
           mode: "private_local",
           localModelId,
+          answerPolicy,
         });
       } finally {
         if (abortControllerRef.current === controller) {
@@ -958,10 +978,11 @@ export function useChatSession({
       await submitPrivateLocalMessage(
         payload.content,
         payload.localModelId,
-        payload.idempotencyKey
+        payload.idempotencyKey,
+        payload.answerPolicy
       );
     } else {
-      await submitCloudMessage(payload.content, payload.idempotencyKey);
+      await submitCloudMessage(payload.content, payload.idempotencyKey, payload.answerPolicy);
     }
   }, [retryPayload, submitCloudMessage, submitPrivateLocalMessage]);
 

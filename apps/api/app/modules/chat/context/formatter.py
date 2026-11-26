@@ -82,3 +82,70 @@ def format_user_query_envelope(user_query: str) -> str:
     """Wrap the student's current question in XML delimiters."""
     safe_query = sanitize_xml_text(user_query.strip())
     return f'<user_query trust_level="untrusted_user_input">\n  {safe_query}\n</user_query>'
+
+
+def format_web_source_block(
+    citation_key: str,
+    *,
+    title: str,
+    url: str,
+    domain: str,
+    excerpt: str,
+    published_at: str | None = None,
+    retrieved_at_iso: str | None = None,
+    snippet_only: bool = True,
+) -> str:
+    """Format a server-verified external web source into an XML-escaped <web_source> block."""
+    safe_id = sanitize_xml_text(citation_key)
+    safe_title = sanitize_xml_text(title)
+    safe_url = sanitize_xml_text(url)
+    safe_domain = sanitize_xml_text(domain)
+    safe_excerpt = sanitize_xml_text(excerpt)
+    scope = "search_snippet_only" if snippet_only else "fetched_page_excerpt"
+    pub_line = (
+        f"    <published_at>{sanitize_xml_text(published_at)}</published_at>\n"
+        if published_at
+        else ""
+    )
+    ret_line = (
+        f"    <retrieved_at>{sanitize_xml_text(retrieved_at_iso)}</retrieved_at>\n"
+        if retrieved_at_iso
+        else ""
+    )
+
+    return (
+        f'  <web_source id="{safe_id}">\n'
+        f"    <title>{safe_title}</title>\n"
+        f"    <domain>{safe_domain}</domain>\n"
+        f"    <url>{safe_url}</url>\n"
+        f"{pub_line}"
+        f"{ret_line}"
+        f"    <verification_scope>{scope}</verification_scope>\n"
+        f"    <content>\n"
+        f"      {safe_excerpt}\n"
+        f"    </content>\n"
+        f"  </web_source>"
+    )
+
+
+def format_web_evidence_envelope(
+    web_blocks: list[str],
+    *,
+    status_note: str | None = None,
+) -> str:
+    """Wrap external web excerpts cleanly in an untrusted XML container."""
+    if not web_blocks:
+        note = sanitize_xml_text(
+            status_note or "No external web search results were supplied for this turn."
+        )
+        return (
+            '<web_context_evidence status="empty" trust_level="untrusted_external_web">\n'
+            f"  {note}\n"
+            "</web_context_evidence>"
+        )
+    joined = "\n".join(web_blocks)
+    return (
+        '<web_context_evidence trust_level="untrusted_external_web">\n'
+        f"{joined}\n"
+        "</web_context_evidence>"
+    )

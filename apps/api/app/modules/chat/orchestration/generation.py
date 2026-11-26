@@ -95,6 +95,7 @@ async def execute_grounded_cloud_generation(
     included_citation_keys: list[str],
     idempotency_key: str,
     generation_request_id: str,
+    included_web_keys: list[str] = (),  # type: ignore[assignment]
     routing_mode: str = "auto",
     provider_id: str | None = None,
     model_id: str | None = None,
@@ -135,7 +136,11 @@ async def execute_grounded_cloud_generation(
         )
 
     answer_text = raw_result.content
-    validation = validate_citations(answer_text, included_citation_keys)
+    validation = validate_citations(
+        answer_text,
+        included_citation_keys,
+        included_web_keys=included_web_keys,
+    )
     repair_attempted = False
     repair_usage_dict: dict[str, Any] | None = None
     initial_usage_dict = dict(raw_result.usage or {})
@@ -161,6 +166,7 @@ async def execute_grounded_cloud_generation(
             user_id=user_id,
             original_answer=answer_text,
             included_citation_keys=included_citation_keys,
+            included_web_keys=list(included_web_keys),
             unknown_keys=validation.unknown_keys,
             malformed_tokens=validation.malformed_tokens,
             idempotency_key=idempotency_key,
@@ -173,7 +179,11 @@ async def execute_grounded_cloud_generation(
         )
         if rep_res is not None:
             repair_usage_dict = dict(rep_res.usage or {})
-            repaired_validation = validate_citations(rep_res.content, included_citation_keys)
+            repaired_validation = validate_citations(
+                rep_res.content,
+                included_citation_keys,
+                included_web_keys=included_web_keys,
+            )
             validation = repaired_validation
             answer_text = rep_res.content
             raw_result = rep_res
@@ -213,6 +223,7 @@ async def run_bounded_citation_repair(
     malformed_tokens: list[str],
     idempotency_key: str,
     generation_request_id: str,
+    included_web_keys: list[str] = (),  # type: ignore[assignment]
     routing_mode: str = "auto",
     provider_id: str | None = None,
     model_id: str | None = None,
@@ -225,6 +236,7 @@ async def run_bounded_citation_repair(
         valid_included_keys=included_citation_keys,
         unknown_keys=unknown_keys,
         malformed_tokens=malformed_tokens,
+        valid_web_keys=list(included_web_keys),
     )
     repair_req = ChatCompletionRequest(
         routing_mode=routing_mode,  # type: ignore[arg-type]

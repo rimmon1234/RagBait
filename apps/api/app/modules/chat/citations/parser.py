@@ -1,31 +1,31 @@
-"""Deterministic regex parser for standard `[S1]` bracketed citation identifiers."""
+"""Deterministic regex parser for `[S1]` note and `[W1]` web bracketed citation identifiers."""
 
 import re
 
 from app.modules.chat.citations.schemas import CitationParseResult
 
-# Matches complete positive numeric bracketed citations like [S1], [S2], [S10]
-# Negative lookbehind prevents matching identifier indexing such as arr[S1] or Foo_S[1].
-_VALID_CITATION_RE = re.compile(r"(?<![A-Za-z0-9_])\[(S[1-9][0-9]*)\]")
+# Matches complete positive numeric bracketed note ([S1]) and web ([W1]) citations
+# Negative lookbehind prevents matching identifier indexing such as arr[S1] or obj[W1].
+_VALID_CITATION_RE = re.compile(r"(?<![A-Za-z0-9_])\[((?:S|W)[1-9][0-9]*)\]")
 
-# Matches malformed or non-canonical citation-like brackets (e.g., [SOURCE1], [s1], [S0], [S 1], [S-1])
+# Matches malformed or non-canonical citation-like brackets (e.g., [SOURCE1], [WEB1], [s1], [w1], [S0], [W0])
 _MALFORMED_CITATION_RE = re.compile(
     r"(?<![A-Za-z0-9_])\[(?:"
-    r"(?:SOURCE|source|Source|SRC|src|REF|ref)[\s_-]*[0-9]+"
-    r"|s[1-9][0-9]*"
-    r"|S0+[0-9]*"
-    r"|S-[0-9]+"
-    r"|S\s+[0-9]+"
-    r"|S[1-9][0-9]*(?:\s*,\s*S[1-9][0-9]*)+"
+    r"(?:SOURCE|source|Source|SRC|src|REF|ref|WEB|web|Web)[\s_-]*[0-9]+"
+    r"|[sw][1-9][0-9]*"
+    r"|(?:S|W)0+[0-9]*"
+    r"|(?:S|W)-[0-9]+"
+    r"|(?:S|W)\s+[0-9]+"
+    r"|(?:S|W)[1-9][0-9]*(?:\s*,\s*(?:S|W)[1-9][0-9]*)+"
     r")\]"
 )
 
 
 def parse_citations(text: str) -> CitationParseResult:
-    """Extract standard citation keys (`S1`, `S10`, ...) and detect malformed markers.
+    """Extract standard citation keys (`S1`, `W1`, ...) and detect malformed markers.
 
     Guarantees:
-    - Multi-digit keys `[S10]` are extracted cleanly and never partially matched as `[S1]`.
+    - Multi-digit keys `[S10]`, `[W12]` are extracted cleanly without prefix collisions.
     - Duplicate references preserve order of first appearance while logging duplicates.
     - Non-matching prose brackets like `[1]`, `"S1"`, or `arr[S1]` are ignored cleanly.
     """

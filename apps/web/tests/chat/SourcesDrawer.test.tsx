@@ -189,4 +189,44 @@ describe("SourcesDrawer Component", () => {
     fireEvent.keyDown(window, { key: "Escape" });
     expect(onClose).toHaveBeenCalledTimes(1);
   });
+
+  it("distinguishes external [Wn] web sources cleanly from KB note sources", async () => {
+    const webSource: MessageSourceRead = {
+      id: "web-1",
+      source_type: "web_source",
+      citation_key: "W1",
+      document_id: null,
+      document_title: "Python 3.15 Release Notes",
+      page_number_start: null,
+      page_number_end: null,
+      excerpt: "Official overview of upcoming Python syntax improvements.",
+      relevance_score: 0.91,
+      included_in_context: true,
+      referenced_in_answer: true,
+      is_available: true,
+      url: "https://docs.python.org/3.15/whatsnew/3.15.html",
+      domain: "docs.python.org",
+      publisher: "Python Software Foundation",
+      published_at: "2026-10-01",
+      retrieved_at: "2026-11-26T04:30:00Z",
+      snippet_only: true,
+    };
+
+    vi.mocked(chatClient.getMessageSources).mockResolvedValueOnce({
+      message_id: "msg-web",
+      conversation_id: "conv-1",
+      sources: [citedSource, webSource],
+    });
+
+    render(<SourcesDrawer isOpen={true} messageId="msg-web" onClose={vi.fn()} />);
+
+    await waitFor(() => {
+      expect(screen.getByText("Python 3.15 Release Notes")).toBeInTheDocument();
+    });
+    expect(screen.getByText("[W1]")).toBeInTheDocument();
+    expect(screen.getByText("docs.python.org")).toBeInTheDocument();
+    expect(screen.getByText("Search snippet")).toBeInTheDocument();
+    const extLink = screen.getByRole("link", { name: /Open Source Website/i });
+    expect(extLink).toHaveAttribute("href", "https://docs.python.org/3.15/whatsnew/3.15.html");
+  });
 });

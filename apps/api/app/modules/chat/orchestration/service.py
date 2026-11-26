@@ -209,6 +209,7 @@ class ChatOrchestrationService:
                 explicit_credential_id=request.credential_id,
                 requested_max_output=request.max_output_tokens,
                 exclude_message_id=existing_user_id,
+                answer_policy=request.answer_policy,
                 conn=db_conn,
             )
 
@@ -223,18 +224,23 @@ class ChatOrchestrationService:
                     mode="cloud",
                     model_id=prepared.model_capability.model_id,
                     provider_id=prepared.model_capability.provider_id,
-                    extra_metadata={"model_fingerprint": prepared.model_fingerprint},
+                    extra_metadata={
+                        "model_fingerprint": prepared.model_fingerprint,
+                        "answer_policy": request.answer_policy,
+                    },
                 )
         assistant_id: UUID = asst_row["id"]
         start_permit_heartbeat(permit)
 
         # 4. Call inference gateway + validate citations (NO DB connection held during upstream I/O!)
         included_keys = [ev.citation_key for ev in prepared.selected_evidence]
+        included_web_keys = [w.citation_key for w in prepared.selected_web_sources]
         try:
             gen_out = await execute_grounded_cloud_generation(
                 user_id=user_id,
                 llm_messages=prepared.llm_messages,
                 included_citation_keys=included_keys,
+                included_web_keys=included_web_keys,
                 idempotency_key=request.idempotency_key,
                 generation_request_id=gen_request_id,
                 routing_mode=request.routing_mode,
@@ -277,6 +283,13 @@ class ChatOrchestrationService:
             "repair_attempted": gen_out.repair_attempted,
             "resolved_model_id": gen_out.response.resolved_model_id,
             "accounting": prepared.accounting.model_dump(mode="json"),
+            "answer_policy": request.answer_policy,
+            "answer_plan": prepared.answer_plan.model_dump(mode="json"),
+            "advanced_rag": (
+                prepared.advanced_rag_trace.model_dump(mode="json")
+                if prepared.advanced_rag_trace
+                else None
+            ),
         }
 
         async with _borrow_conn(conn) as db_conn:
@@ -291,6 +304,7 @@ class ChatOrchestrationService:
                     token_usage=gen_out.normalized_usage,
                     finish_reason=gen_out.response.finish_reason,
                     selected_evidence=prepared.selected_evidence,
+                    selected_web_sources=prepared.selected_web_sources,
                     referenced_keys=referenced_set,
                     extra_metadata=telemetry_meta,
                     expected_generation_request_id=gen_request_id,
@@ -333,6 +347,9 @@ class ChatOrchestrationService:
             valid_citation_count=len(gen_out.validation.valid_keys),
             invalid_citation_count=len(gen_out.validation.unknown_keys),
             repair_attempted=gen_out.repair_attempted,
+            answer_policy=request.answer_policy,
+            answer_plan=prepared.answer_plan,
+            advanced_rag=prepared.advanced_rag_trace,
             provider_id=gen_out.response.provider_id,
             model_id=gen_out.response.model_id,
             resolved_model_id=gen_out.response.resolved_model_id,
@@ -392,7 +409,7 @@ class ChatOrchestrationService:
                         code="GENERATION_IN_PROGRESS",
                     )
 
-            # 2. Prepare context in 'local' mode
+            # 2. Prepare context in 'local' mode (zero cloud/web API calls)
             prepared = await ContextService.prepare_grounded_context(
                 user_id=user_id,
                 conversation_id=conversation_id,
@@ -401,6 +418,7 @@ class ChatOrchestrationService:
                 requested_model_id=request.model_id,
                 requested_max_output=request.max_output_tokens,
                 exclude_message_id=existing_user["id"] if existing_user else None,
+                answer_policy=request.answer_policy,
                 conn=db_conn,
             )
 

@@ -54,6 +54,20 @@ describe("MarkdownMessageRenderer", () => {
     fireEvent.click(s1Chips[0]);
     expect(onCitationClick).toHaveBeenCalledWith("S1");
   });
+
+  it("renders interactive [W1] web citation chips distinct from [S1] note badges", () => {
+    const onCitationClick = vi.fn();
+    render(
+      <MarkdownMessageRenderer
+        content="Notes define paging [S1], while recent kernels refine it [W1]."
+        onCitationClick={onCitationClick}
+      />
+    );
+
+    const w1Btn = screen.getByRole("button", { name: "Inspect web source W1" });
+    fireEvent.click(w1Btn);
+    expect(onCitationClick).toHaveBeenCalledWith("W1");
+  });
 });
 
 describe("ChatComposer", () => {
@@ -173,5 +187,30 @@ describe("ChatComposer", () => {
 
     expect(screen.getByText(/Local Ollama & CORS Setup \(127\.0\.0\.1:11434\)/i)).toBeInTheDocument();
     expect(screen.getByText(/OLLAMA_ORIGINS=\*/i)).toBeInTheDocument();
+  });
+
+  it("allows toggling between Notes first and strict Notes only modes", () => {
+    const onPolicyChange = vi.fn();
+    render(
+      <ChatComposer
+        conversationStatus="active"
+        subjectName="Operating Systems"
+        canGenerate={true}
+        inferenceMode="cloud"
+        onInferenceModeChange={vi.fn()}
+        answerPolicy="note_first_adaptive"
+        onAnswerPolicyChange={onPolicyChange}
+        selectedLocalModel=""
+        onLocalModelChange={vi.fn()}
+        isGenerationActive={false}
+        phase="idle"
+        onSend={vi.fn()}
+        onCancel={vi.fn()}
+      />
+    );
+
+    expect(screen.getByText(/Prioritizes/i)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Notes only" }));
+    expect(onPolicyChange).toHaveBeenCalledWith("notes_only");
   });
 });

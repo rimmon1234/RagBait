@@ -22,7 +22,12 @@ import { SourcesDrawer } from "@/components/chat/SourcesDrawer";
 import { NewConversationModal } from "@/components/chat/NewConversationModal";
 import { RenameConversationModal } from "@/components/chat/RenameConversationModal";
 import { DeleteConversationModal } from "@/components/chat/DeleteConversationModal";
-import type { ChatConversation, ChatMessage, InferenceExecutionMode } from "@/types/chat";
+import type {
+  AnswerPolicy,
+  ChatConversation,
+  ChatMessage,
+  InferenceExecutionMode,
+} from "@/types/chat";
 
 export default function ChatDetailPage() {
   const router = useRouter();
@@ -52,8 +57,9 @@ export default function ChatDetailPage() {
   const [initialOlderCursor, setInitialOlderCursor] = useState<string | null>(null);
   const [initialHasMoreOlder, setInitialHasMoreOlder] = useState(false);
 
-  // Inference mode & Private Local selected model
+  // Inference mode, answer source policy & Private Local selected model
   const [inferenceMode, setInferenceMode] = useState<InferenceExecutionMode>("cloud");
+  const [answerPolicy, setAnswerPolicy] = useState<AnswerPolicy>("note_first_adaptive");
   const [selectedLocalModel, setSelectedLocalModel] = useState("");
 
   // Sources Drawer state
@@ -181,12 +187,17 @@ export default function ChatDetailPage() {
   const handleSendMessage = useCallback(
     async (content: string) => {
       if (inferenceMode === "private_local") {
-        await session.submitPrivateLocalMessage(content, selectedLocalModel);
+        await session.submitPrivateLocalMessage(
+          content,
+          selectedLocalModel,
+          undefined,
+          answerPolicy
+        );
       } else {
-        await session.submitCloudMessage(content);
+        await session.submitCloudMessage(content, undefined, answerPolicy);
       }
     },
-    [inferenceMode, selectedLocalModel, session]
+    [answerPolicy, inferenceMode, selectedLocalModel, session]
   );
 
   const handleInspectSources = useCallback((messageId: string, citationKey?: string) => {
@@ -374,6 +385,8 @@ export default function ChatDetailPage() {
                 onClearDraftOverride={session.clearDraftOverride}
                 inferenceMode={inferenceMode}
                 onInferenceModeChange={setInferenceMode}
+                answerPolicy={answerPolicy}
+                onAnswerPolicyChange={setAnswerPolicy}
                 selectedLocalModel={selectedLocalModel}
                 onLocalModelChange={setSelectedLocalModel}
                 onSendMessage={handleSendMessage}

@@ -9,6 +9,8 @@ from app.modules.chat.context.formatter import (
     format_source_block,
     format_summary_envelope,
     format_user_query_envelope,
+    format_web_evidence_envelope,
+    format_web_source_block,
 )
 from app.modules.chat.context.prompt_builder import (
     build_llm_messages,
@@ -16,15 +18,19 @@ from app.modules.chat.context.prompt_builder import (
     combine_system_prompt,
 )
 from app.modules.chat.context.schemas import (
+    AnswerPlan,
+    AnswerPolicy,
     ConversationHistoryContext,
     HistoryTurnMessage,
     ModelCapability,
     OmittedEvidenceRecord,
     PromptBudgetExceededError,
     SelectedEvidenceSource,
+    SelectedWebSource,
     TokenAccountingBreakdown,
 )
 from app.modules.chat.context.token_counter import ModelTokenCounter
+from app.modules.chat.web_search.schemas import RawWebResult
 from app.modules.knowledge_base.retrieval.schemas import RetrievedChunk
 
 logger = logging.getLogger("ragbait.chat.context.budget")
@@ -77,10 +83,14 @@ class ContextBudgetAllocation:
         recent_history: list[HistoryTurnMessage],
         llm_messages: list[dict[str, str]],
         accounting: TokenAccountingBreakdown,
+        web_evidence_xml_block: str | None = None,
+        selected_web_sources: list[SelectedWebSource] | None = None,
     ) -> None:
         self.system_prompt = system_prompt
         self.evidence_xml_block = evidence_xml_block
+        self.web_evidence_xml_block = web_evidence_xml_block
         self.selected_evidence = selected_evidence
+        self.selected_web_sources = selected_web_sources or []
         self.omitted_candidates = omitted_candidates
         self.summary_text = summary_text
         self.recent_history = recent_history
@@ -99,6 +109,10 @@ def allocate_context_budget(
     evidence_ratio: float | None = None,
     max_evidence_tokens: int | None = None,
     safety_margin_override: int | None = None,
+    answer_policy: AnswerPolicy = "notes_only",
+    answer_plan: AnswerPlan | None = None,
+    web_candidates: list[RawWebResult] | None = None,
+    subject_name: str | None = None,
 ) -> ContextBudgetAllocation:
     """Execute the deterministic M4.0 context allocation formula:
 
@@ -140,9 +154,19 @@ def allocate_context_budget(
         else capability.safety_margin_tokens
     )
 
-    # Measure system & guardrail overhead conservatively using longest variant (no-evidence addendum)
-    core_with_ev, guard_text = build_system_prompt(has_evidence=True)
-    core_no_ev, _ = build_system_prompt(has_evidence=False)
+    # Measure system & guardrail overhead conservatively across evidence states for active policy
+    core_with_ev, guard_text = build_system_prompt(
+        has_evidence=True,
+        has_web_evidence=bool(web_candidates),
+        answer_policy=answer_policy,
+        answer_plan=answer_plan,
+    )
+    core_no_ev, _ = build_system_prompt(
+        has_evidence=False,
+        has_web_evidence=False,
+        answer_policy=answer_policy,
+        answer_plan=answer_plan,
+    )
     t_sys = max(token_counter.count_text(core_with_ev), token_counter.count_text(core_no_ev))
     t_guard = (
         token_counter.count_text(guard_text)
@@ -291,17 +315,78 @@ def allocate_context_budget(
 
     b_rem2 = max(0, b_rem1 - t_evidence)
 
+    # 2b. Allocate External Web Evidence Budget (never crowds out KB notes!)
+    selected_web_sources: list[SelectedWebSource] = []
+    web_xml_block: str | None = None
+    t_web = 0
+    if web_candidates:
+        b_web = min(
+            int(b_rem2 * context_settings.WEB_EVIDENCE_MAX_RATIO),
+            context_settings.WEB_EVIDENCE_MAX_TOKENS,
+        )
+        web_wrapper_tokens = token_counter.count_text(
+            '<web_context_evidence trust_level="untrusted_external_web">\n\n</web_context_evidence>'
+        )
+        web_budget_rem = max(0, b_web - web_wrapper_tokens)
+        seen_urls: set[str] = set()
+        for w_cand in web_candidates:
+            norm_url = w_cand.url.strip().rstrip("/")
+            if norm_url in seen_urls or not w_cand.excerpt.strip():
+                continue
+            seen_urls.add(norm_url)
+            w_key = f"W{len(selected_web_sources) + 1}"
+            w_xml = format_web_source_block(
+                w_key,
+                title=w_cand.title,
+                url=w_cand.url,
+                domain=w_cand.domain,
+                excerpt=w_cand.excerpt,
+                published_at=w_cand.published_at,
+                retrieved_at_iso=w_cand.retrieved_at.isoformat(),
+                snippet_only=w_cand.snippet_only,
+            )
+            w_tokens = token_counter.count_text(w_xml)
+            if w_tokens <= web_budget_rem:
+                selected_web_sources.append(
+                    SelectedWebSource(
+                        citation_key=w_key,
+                        title=w_cand.title,
+                        url=w_cand.url,
+                        domain=w_cand.domain,
+                        publisher=w_cand.publisher,
+                        published_at=w_cand.published_at,
+                        retrieved_at=w_cand.retrieved_at,
+                        excerpt=w_cand.excerpt,
+                        content_hash=w_cand.content_hash,
+                        snippet_only=w_cand.snippet_only,
+                        retrieval_rank=len(selected_web_sources) + 1,
+                        relevance_score=w_cand.relevance_score,
+                        formatted_xml_block=w_xml,
+                        formatted_token_count=w_tokens,
+                        included_in_context=True,
+                    )
+                )
+                web_budget_rem -= w_tokens
+
+        if selected_web_sources:
+            web_xml_block = format_web_evidence_envelope(
+                [w.formatted_xml_block for w in selected_web_sources]
+            )
+            t_web = token_counter.count_text(web_xml_block)
+
+    b_rem2_after_web = max(0, b_rem2 - t_web)
+
     # 3. Allocate Conversation Summary
     included_summary: str | None = None
     t_summary = 0
     if history.summary_text and history.summary_text.strip():
         summary_env = format_summary_envelope(history.summary_text)
         cand_summary_tokens = token_counter.count_text(summary_env)
-        if cand_summary_tokens <= b_rem2:
+        if cand_summary_tokens <= b_rem2_after_web:
             included_summary = history.summary_text.strip()
             t_summary = cand_summary_tokens
 
-    b_rem3 = max(0, b_rem2 - t_summary)
+    b_rem3 = max(0, b_rem2_after_web - t_summary)
 
     # 4. Allocate Recent History in Complete Turn Pairs (Newest -> Oldest)
     turn_groups = _group_history_into_turns(history.recent_messages)
@@ -321,11 +406,18 @@ def allocate_context_budget(
     selected_history: list[HistoryTurnMessage] = [m for grp in chosen_turns for m in grp]
 
     # 5. Final Assembly & Hard Total Context Verification (T_actual + T_out <= C_model)
-    core_sys, guard_sys = build_system_prompt(has_evidence=len(selected_evidence) > 0)
+    core_sys, guard_sys = build_system_prompt(
+        has_evidence=len(selected_evidence) > 0,
+        has_web_evidence=len(selected_web_sources) > 0,
+        answer_policy=answer_policy,
+        answer_plan=answer_plan,
+    )
     system_prompt = combine_system_prompt(core_sys, guard_sys)
 
     def _assemble_and_count(
-        hist_msgs: list[HistoryTurnMessage], sum_txt: str | None
+        hist_msgs: list[HistoryTurnMessage],
+        sum_txt: str | None,
+        web_xml: str | None,
     ) -> tuple[list[dict[str, str]], int]:
         from app.modules.chat.context.prompt_builder import build_user_turn_prompt
 
@@ -333,6 +425,8 @@ def allocate_context_budget(
             evidence_xml_block=evidence_xml_block,
             user_query=clean_query,
             summary_text=sum_txt,
+            web_evidence_xml_block=web_xml,
+            subject_name=subject_name,
         )
         msgs = build_llm_messages(
             system_prompt=system_prompt,
@@ -341,20 +435,43 @@ def allocate_context_budget(
         )
         return msgs, token_counter.count_messages(msgs)
 
-    llm_messages, total_input_tokens = _assemble_and_count(selected_history, included_summary)
+    llm_messages, total_input_tokens = _assemble_and_count(
+        selected_history, included_summary, web_xml_block
+    )
 
-    # If structural framing pushes total over C_model (excluding safety margin already respected,
-    # and strictly checking C_model ceiling), trim oldest history turns then summary safely.
+    # Trim oldest history turns -> summary -> web evidence -> note evidence cleanly if needed
     while (total_input_tokens + t_out) > c_model and chosen_turns:
         chosen_turns.pop(0)
         selected_history = [m for grp in chosen_turns for m in grp]
         t_history = sum(token_counter.count_message(m.role, m.content) for m in selected_history)
-        llm_messages, total_input_tokens = _assemble_and_count(selected_history, included_summary)
+        llm_messages, total_input_tokens = _assemble_and_count(
+            selected_history, included_summary, web_xml_block
+        )
 
     if (total_input_tokens + t_out) > c_model and included_summary is not None:
         included_summary = None
         t_summary = 0
-        llm_messages, total_input_tokens = _assemble_and_count(selected_history, None)
+        llm_messages, total_input_tokens = _assemble_and_count(
+            selected_history, None, web_xml_block
+        )
+
+    while (total_input_tokens + t_out) > c_model and selected_web_sources:
+        selected_web_sources.pop()
+        web_xml_block = (
+            format_web_evidence_envelope([w.formatted_xml_block for w in selected_web_sources])
+            if selected_web_sources
+            else None
+        )
+        core_sys, guard_sys = build_system_prompt(
+            has_evidence=len(selected_evidence) > 0,
+            has_web_evidence=len(selected_web_sources) > 0,
+            answer_policy=answer_policy,
+            answer_plan=answer_plan,
+        )
+        system_prompt = combine_system_prompt(core_sys, guard_sys)
+        llm_messages, total_input_tokens = _assemble_and_count(
+            selected_history, included_summary, web_xml_block
+        )
 
     while (total_input_tokens + t_out) > c_model and selected_evidence:
         popped = selected_evidence.pop()
@@ -373,9 +490,16 @@ def allocate_context_budget(
         t_evidence = (
             token_counter.count_text(evidence_xml_block) if selected_evidence else empty_ev_tokens
         )
-        core_sys, guard_sys = build_system_prompt(has_evidence=len(selected_evidence) > 0)
+        core_sys, guard_sys = build_system_prompt(
+            has_evidence=len(selected_evidence) > 0,
+            has_web_evidence=len(selected_web_sources) > 0,
+            answer_policy=answer_policy,
+            answer_plan=answer_plan,
+        )
         system_prompt = combine_system_prompt(core_sys, guard_sys)
-        llm_messages, total_input_tokens = _assemble_and_count(selected_history, included_summary)
+        llm_messages, total_input_tokens = _assemble_and_count(
+            selected_history, included_summary, web_xml_block
+        )
 
     if (total_input_tokens + t_out) > c_model:
         raise PromptBudgetExceededError(
@@ -416,7 +540,9 @@ def allocate_context_budget(
     return ContextBudgetAllocation(
         system_prompt=system_prompt,
         evidence_xml_block=evidence_xml_block,
+        web_evidence_xml_block=web_xml_block,
         selected_evidence=selected_evidence,
+        selected_web_sources=selected_web_sources,
         omitted_candidates=omitted,
         summary_text=included_summary,
         recent_history=selected_history,

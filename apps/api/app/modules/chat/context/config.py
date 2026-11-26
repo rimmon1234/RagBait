@@ -39,6 +39,30 @@ class ContextSettings(BaseSettings):
     # Citation validation & bounded repair
     CITATION_REPAIR_ATTEMPTS: int = Field(default=1, ge=0, le=2)
 
+    # Adaptive answering & Advanced RAG settings (M4.9)
+    DEFAULT_ANSWER_POLICY: str = Field(default="note_first_adaptive")
+    ENABLE_LLM_QUERY_REWRITE: bool = Field(default=True)
+    ENABLE_LLM_QUERY_EXPANSION: bool = Field(default=True)
+    ENABLE_LLM_RERANKING: bool = Field(default=True)
+    ADVANCED_RAG_LLM_TIMEOUT_SECONDS: float = Field(default=6.0, ge=1.0, le=30.0)
+    ADVANCED_RAG_MAX_EXPANSIONS: int = Field(default=2, ge=0, le=4)
+    ADVANCED_RAG_RERANK_TOP_K: int = Field(default=8, ge=2, le=20)
+    WEB_EVIDENCE_MAX_RATIO: float = Field(default=0.25, gt=0.0, le=0.50)
+    WEB_EVIDENCE_MAX_TOKENS: int = Field(default=1600, ge=200, le=8000)
+
+    # Web search & SSRF-hardened fetching settings (server-side only)
+    WEB_SEARCH_ENABLED: bool = Field(default=True)
+    WEB_SEARCH_PROVIDER: str = Field(default="none")  # none | tavily | brave
+    WEB_SEARCH_API_KEY: str = Field(default="")
+    WEB_SEARCH_TIMEOUT_SECONDS: float = Field(default=8.0, ge=1.0, le=30.0)
+    WEB_SEARCH_MAX_QUERIES_PER_TURN: int = Field(default=2, ge=1, le=3)
+    WEB_SEARCH_MAX_RESULTS_PER_QUERY: int = Field(default=5, ge=1, le=10)
+    WEB_SEARCH_MAX_PAGE_FETCHES: int = Field(default=2, ge=0, le=5)
+    WEB_FETCH_MAX_BYTES: int = Field(default=524_288, ge=4096, le=2_097_152)
+    WEB_SEARCH_CACHE_TTL_SECONDS: int = Field(default=900, ge=0, le=86400)
+    WEB_SEARCH_USER_RPM: int = Field(default=6, ge=1, le=60)
+    WEB_SEARCH_GLOBAL_RPM: int = Field(default=60, ge=1, le=600)
+
     # Private Local prepared request TTL
     PREPARED_LOCAL_TTL_SECONDS: int = Field(default=600, ge=60, le=3600)
 

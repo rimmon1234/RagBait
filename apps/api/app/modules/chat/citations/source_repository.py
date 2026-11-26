@@ -10,7 +10,7 @@ from app.modules.chat.citations.schemas import (
     UNAVAILABLE_SOURCE_PLACEHOLDER,
     MessageSourceRead,
 )
-from app.modules.chat.context.schemas import SelectedEvidenceSource
+from app.modules.chat.context.schemas import SelectedEvidenceSource, SelectedWebSource
 
 
 async def insert_included_source_snapshots(
@@ -256,5 +256,140 @@ async def get_message_sources_with_revalidation(
         UNAVAILABLE_SOURCE_PLACEHOLDER,
     )
 
-    sources = [MessageSourceRead.model_validate(dict(r)) for r in rows]
+    sources = [
+        MessageSourceRead.model_validate({"source_type": "kb_note", **dict(r)}) for r in rows
+    ]
+
+    web_rows = await conn.fetch(
+        """
+        SELECT
+            w.id,
+            w.citation_key,
+            w.title AS document_title,
+            w.excerpt,
+            w.relevance_score,
+            w.included_in_context,
+            w.referenced_in_answer,
+            (w.availability_status = 'available') AS is_available,
+            w.url,
+            w.domain,
+            w.publisher,
+            w.published_at,
+            w.retrieved_at,
+            w.snippet_only
+        FROM public.chat_message_web_sources w
+        WHERE w.message_id = $1
+          AND w.included_in_context = true
+        ORDER BY substring(w.citation_key FROM 2)::integer ASC;
+        """,
+        message_id,
+    )
+    for wr in web_rows:
+        sources.append(
+            MessageSourceRead.model_validate(
+                {
+                    "source_type": "web_source",
+                    "document_id": None,
+                    "page_number_start": None,
+                    "page_number_end": None,
+                    "document_viewer_url": None,
+                    **dict(wr),
+                }
+            )
+        )
     return conversation_id, sources
+
+
+async def insert_included_web_source_snapshots(
+    conn: asyncpg.Connection,
+    *,
+    message_id: UUID,
+    selected_web_sources: list[SelectedWebSource],
+    referenced_keys: set[str] | None = None,
+) -> int:
+    """Persist immutable external web source snapshots for a chat assistant message."""
+    if not selected_web_sources:
+        return 0
+
+    ref_set = referenced_keys or set()
+    records = [
+        (
+            message_id,
+            w.citation_key,
+            w.title,
+            w.url,
+            w.domain,
+            w.publisher,
+            w.published_at,
+            w.retrieved_at,
+            w.excerpt,
+            w.content_hash,
+            bool(w.snippet_only),
+            w.retrieval_rank,
+            float(w.relevance_score),
+            True,  # included_in_context
+            w.citation_key in ref_set,
+        )
+        for w in selected_web_sources
+    ]
+
+    await conn.executemany(
+        """
+        INSERT INTO public.chat_message_web_sources (
+            message_id,
+            citation_key,
+            title,
+            url,
+            domain,
+            publisher,
+            published_at,
+            retrieved_at,
+            excerpt,
+            content_hash,
+            snippet_only,
+            retrieval_rank,
+            relevance_score,
+            included_in_context,
+            referenced_in_answer
+        )
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
+        """,
+        records,
+    )
+    return len(records)
+
+
+async def load_server_included_web_keys(
+    conn: asyncpg.Connection,
+    message_id: UUID,
+) -> list[str]:
+    """Load Stage-3 server-recorded web citation keys ([W1], ...) for finalization."""
+    rows = await conn.fetch(
+        """
+        SELECT citation_key
+        FROM public.chat_message_web_sources
+        WHERE message_id = $1
+          AND included_in_context = true
+        ORDER BY substring(citation_key FROM 2)::integer ASC;
+        """,
+        message_id,
+    )
+    return [str(r["citation_key"]) for r in rows]
+
+
+async def mark_referenced_web_citations(
+    conn: asyncpg.Connection,
+    *,
+    message_id: UUID,
+    referenced_keys: list[str],
+) -> int:
+    """Update `referenced_in_answer = true` on web sources strictly via controlled transition."""
+    if not referenced_keys:
+        return 0
+    unique_keys = list(dict.fromkeys(referenced_keys))
+    updated = await conn.fetchval(
+        "SELECT public.mark_chat_message_web_sources_referenced($1, $2::text[]);",
+        message_id,
+        unique_keys,
+    )
+    return int(updated or 0)

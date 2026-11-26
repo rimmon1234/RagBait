@@ -486,7 +486,22 @@ async def run_evaluation(output_path: Path = DEFAULT_RESULTS_PATH) -> dict[str, 
                 "DELETE FROM public.chat_conversations WHERE user_id IN (SELECT id FROM auth.users WHERE email LIKE 'm48_eval_%@eval.local')"
             )
             await conn.execute(
-                "DELETE FROM public.api_key_metadata WHERE owner_id IN (SELECT id FROM auth.users WHERE email LIKE 'm48_eval_%@eval.local')"
+                """
+                UPDATE public.api_key_metadata
+                SET status = 'revoked', sharing_scope = 'owner_only', shared_consent = false
+                WHERE owner_id IN (SELECT id FROM auth.users WHERE email LIKE 'm48_eval_%@eval.local')
+                  AND (
+                    id IN (SELECT credential_id FROM public.llm_usage_events WHERE credential_id IS NOT NULL)
+                    OR owner_id IN (SELECT user_id FROM public.llm_usage_events)
+                  )
+                """
+            )
+            await conn.execute(
+                """
+                DELETE FROM public.api_key_metadata
+                WHERE owner_id IN (SELECT id FROM auth.users WHERE email LIKE 'm48_eval_%@eval.local')
+                  AND id NOT IN (SELECT credential_id FROM public.llm_usage_events WHERE credential_id IS NOT NULL)
+                """
             )
             await conn.execute(
                 "DELETE FROM public.kb_documents WHERE subject_id IN (SELECT id FROM public.kb_subjects WHERE slug LIKE 'm48-eval-%')"
@@ -495,7 +510,13 @@ async def run_evaluation(output_path: Path = DEFAULT_RESULTS_PATH) -> dict[str, 
                 "DELETE FROM public.kb_topics WHERE subject_id IN (SELECT id FROM public.kb_subjects WHERE slug LIKE 'm48-eval-%')"
             )
             await conn.execute("DELETE FROM public.kb_subjects WHERE slug LIKE 'm48-eval-%'")
-            await conn.execute("DELETE FROM auth.users WHERE email LIKE 'm48_eval_%@eval.local'")
+            await conn.execute(
+                """
+                DELETE FROM auth.users
+                WHERE email LIKE 'm48_eval_%@eval.local'
+                  AND id NOT IN (SELECT user_id FROM public.llm_usage_events)
+                """
+            )
             async with conn.transaction():
                 env = await provision_corpus(conn)
         # 1. Workstream C: Retrieval Quality across all 3 modes (Vector-only, FTS-only, Hybrid RRF)

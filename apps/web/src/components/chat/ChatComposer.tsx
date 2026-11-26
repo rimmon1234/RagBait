@@ -17,7 +17,12 @@ import {
 } from "lucide-react";
 import { ollamaClient } from "@/lib/local-inference/ollama-client";
 import type { OllamaConnectionInfo, OllamaTagModel } from "@/lib/local-inference/ollama-types";
-import type { ChatConversationStatus, GenerationPhase, InferenceExecutionMode } from "@/types/chat";
+import type {
+  AnswerPolicy,
+  ChatConversationStatus,
+  GenerationPhase,
+  InferenceExecutionMode,
+} from "@/types/chat";
 
 export const MAX_CHAT_INPUT_LENGTH = 32768;
 
@@ -28,6 +33,8 @@ export interface ChatComposerProps {
   contributionReason?: string;
   inferenceMode: InferenceExecutionMode;
   onInferenceModeChange: (mode: InferenceExecutionMode) => void;
+  answerPolicy?: AnswerPolicy;
+  onAnswerPolicyChange?: (policy: AnswerPolicy) => void;
   selectedLocalModel: string;
   onLocalModelChange: (modelId: string) => void;
   isGenerationActive: boolean;
@@ -45,6 +52,8 @@ export function ChatComposer({
   contributionReason,
   inferenceMode,
   onInferenceModeChange,
+  answerPolicy = "note_first_adaptive",
+  onAnswerPolicyChange,
   selectedLocalModel,
   onLocalModelChange,
   isGenerationActive,
@@ -192,6 +201,39 @@ export function ChatComposer({
             </button>
           </div>
 
+          {onAnswerPolicyChange && (
+            <div
+              role="group"
+              aria-label="Answer source mode"
+              className="inline-flex rounded-lg border border-gray-200 bg-white p-0.5 shadow-sm"
+            >
+              <button
+                type="button"
+                disabled={isGenerationActive}
+                onClick={() => onAnswerPolicyChange("note_first_adaptive")}
+                className={`rounded-md px-2 py-1 text-[11px] font-medium transition-colors disabled:opacity-60 ${
+                  answerPolicy === "note_first_adaptive"
+                    ? "bg-indigo-600 text-white"
+                    : "text-gray-600 hover:text-gray-900"
+                }`}
+              >
+                Notes first
+              </button>
+              <button
+                type="button"
+                disabled={isGenerationActive}
+                onClick={() => onAnswerPolicyChange("notes_only")}
+                className={`rounded-md px-2 py-1 text-[11px] font-medium transition-colors disabled:opacity-60 ${
+                  answerPolicy === "notes_only"
+                    ? "bg-slate-800 text-white"
+                    : "text-gray-600 hover:text-gray-900"
+                }`}
+              >
+                Notes only
+              </button>
+            </div>
+          )}
+
           {inferenceMode === "private_local" ? (
             <div className="flex flex-wrap items-center gap-2">
               <span className="inline-flex items-center gap-1 rounded-full bg-emerald-50 px-2 py-0.5 text-[11px] font-medium text-emerald-800 border border-emerald-200">
@@ -246,7 +288,17 @@ export function ChatComposer({
             </div>
           ) : (
             <span className="text-[11px] text-gray-500">
-              Grounded answers cite documents strictly from <strong className="text-gray-700">{subjectName}</strong>.
+              {answerPolicy === "notes_only" ? (
+                <>
+                  Strict mode: answers cite only uploaded materials from{" "}
+                  <strong className="text-gray-700">{subjectName}</strong>.
+                </>
+              ) : (
+                <>
+                  Prioritizes <strong className="text-gray-700">{subjectName}</strong> notes,
+                  supplemented with AI knowledge &amp; web sources when helpful.
+                </>
+              )}
             </span>
           )}
         </div>

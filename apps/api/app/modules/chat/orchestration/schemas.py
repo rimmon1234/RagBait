@@ -7,7 +7,12 @@ from uuid import UUID, uuid4
 from pydantic import BaseModel, Field, field_validator
 
 from app.modules.chat.citations.schemas import MessageSourceRead
-from app.modules.chat.context.schemas import TokenAccountingBreakdown
+from app.modules.chat.context.schemas import (
+    AdvancedRagTrace,
+    AnswerPlan,
+    AnswerPolicy,
+    TokenAccountingBreakdown,
+)
 from app.modules.chat.schemas import MessageRead
 
 
@@ -35,6 +40,10 @@ class ChatMessageCreateRequest(BaseModel):
     credential_id: UUID | None = None
     temperature: float = Field(default=0.7, ge=0.0, le=2.0)
     max_output_tokens: int | None = Field(default=None, gt=0, le=32768)
+    answer_policy: AnswerPolicy = Field(
+        default="note_first_adaptive",
+        description="Server-enforced answer policy: 'note_first_adaptive' (default) or 'notes_only'.",
+    )
     stream: bool = Field(
         default=True,
         description="Stream tokens incrementally via SSE when true; return synchronous JSON when false",
@@ -62,6 +71,9 @@ class OrchestrationTelemetry(BaseModel):
     valid_citation_count: int = 0
     invalid_citation_count: int = 0
     repair_attempted: bool = False
+    answer_policy: AnswerPolicy = "note_first_adaptive"
+    answer_plan: AnswerPlan | None = None
+    advanced_rag: AdvancedRagTrace | None = None
     provider_id: str | None = None
     model_id: str | None = None
     resolved_model_id: str | None = None
@@ -89,6 +101,10 @@ class PrepareLocalRequest(BaseModel):
         max_length=128,
     )
     max_output_tokens: int | None = Field(default=None, gt=0, le=16384)
+    answer_policy: AnswerPolicy = Field(
+        default="note_first_adaptive",
+        description="Server-enforced answer policy for local preparation: 'note_first_adaptive' or 'notes_only'.",
+    )
 
     @field_validator("content", mode="before")
     @classmethod

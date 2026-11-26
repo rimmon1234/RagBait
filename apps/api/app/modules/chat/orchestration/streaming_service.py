@@ -127,10 +127,11 @@ def _format_sources_identified_list(
     prepared: PreparedContext | None,
     replay_sources: list[MessageSourceRead] | None,
 ) -> list[dict[str, Any]]:
-    """Serialize safe citation source summaries for the `sources_identified` SSE event."""
+    """Serialize safe note and web citation summaries for the `sources_identified` SSE event."""
     if prepared is not None:
-        return [
+        items: list[dict[str, Any]] = [
             {
+                "source_type": "kb_note",
                 "citation_key": ev.citation_key,
                 "document_id": str(ev.document_id),
                 "document_title": ev.document_title,
@@ -140,14 +141,34 @@ def _format_sources_identified_list(
             }
             for ev in prepared.selected_evidence
         ]
+        for w in prepared.selected_web_sources:
+            items.append(
+                {
+                    "source_type": "web_source",
+                    "citation_key": w.citation_key,
+                    "document_id": None,
+                    "document_title": w.title,
+                    "page_number_start": None,
+                    "page_number_end": None,
+                    "relevance_score": w.relevance_score,
+                    "url": w.url,
+                    "domain": w.domain,
+                    "snippet_only": w.snippet_only,
+                }
+            )
+        return items
     return [
         {
+            "source_type": src.source_type,
             "citation_key": src.citation_key,
             "document_id": str(src.document_id) if src.document_id else None,
             "document_title": src.document_title,
             "page_number_start": src.page_number_start,
             "page_number_end": src.page_number_end,
             "relevance_score": src.relevance_score,
+            "url": src.url,
+            "domain": src.domain,
+            "snippet_only": src.snippet_only,
         }
         for src in (replay_sources or [])
     ]
@@ -254,6 +275,7 @@ async def prepare_cloud_sse_stream(
                 explicit_credential_id=request.credential_id,
                 requested_max_output=request.max_output_tokens,
                 exclude_message_id=existing_user["id"] if existing_user else None,
+                answer_policy=request.answer_policy,
                 conn=db_conn,
             )
 
@@ -273,6 +295,7 @@ async def prepare_cloud_sse_stream(
                     extra_metadata={
                         "model_fingerprint": prepared.model_fingerprint,
                         "streaming": True,
+                        "answer_policy": request.answer_policy,
                     },
                 )
 
@@ -1035,7 +1058,12 @@ async def stream_cloud_sse_events(
             return
 
         included_keys = [ev.citation_key for ev in prepared.selected_evidence]
-        validation = validate_citations(raw_answer, included_keys)
+        included_web_keys = [w.citation_key for w in prepared.selected_web_sources]
+        validation = validate_citations(
+            raw_answer,
+            included_keys,
+            included_web_keys=included_web_keys,
+        )
         repair_attempted = False
         repair_usage_dict: dict[str, Any] | None = None
         final_text = raw_answer.strip()
@@ -1046,6 +1074,7 @@ async def stream_cloud_sse_events(
                 user_id=plan.user_id,
                 original_answer=raw_answer,
                 included_citation_keys=included_keys,
+                included_web_keys=included_web_keys,
                 unknown_keys=validation.unknown_keys,
                 malformed_tokens=validation.malformed_tokens,
                 idempotency_key=plan.request.idempotency_key,
@@ -1058,7 +1087,11 @@ async def stream_cloud_sse_events(
             )
             if rep_res is not None:
                 repair_usage_dict = dict(rep_res.usage or {})
-                validation = validate_citations(rep_res.content, included_keys)
+                validation = validate_citations(
+                    rep_res.content,
+                    included_keys,
+                    included_web_keys=included_web_keys,
+                )
                 final_text = rep_res.content.strip()
                 resolved_model_id = rep_res.resolved_model_id or resolved_model_id
                 if validation.is_valid and final_text != raw_answer.strip():
@@ -1105,6 +1138,13 @@ async def stream_cloud_sse_events(
             "repair_attempted": repair_attempted,
             "resolved_model_id": resolved_model_id,
             "accounting": prepared.accounting.model_dump(mode="json"),
+            "answer_policy": plan.request.answer_policy,
+            "answer_plan": prepared.answer_plan.model_dump(mode="json"),
+            "advanced_rag": (
+                prepared.advanced_rag_trace.model_dump(mode="json")
+                if prepared.advanced_rag_trace
+                else None
+            ),
         }
 
         async with get_pool().acquire() as db_conn:
@@ -1119,6 +1159,7 @@ async def stream_cloud_sse_events(
                     token_usage=normalized_usage,
                     finish_reason=finish_reason,
                     selected_evidence=prepared.selected_evidence,
+                    selected_web_sources=prepared.selected_web_sources,
                     referenced_keys=referenced_set,
                     extra_metadata=telemetry_meta,
                     expected_generation_request_id=plan.generation_request_id,
@@ -1190,6 +1231,9 @@ async def stream_cloud_sse_events(
             valid_citation_count=len(validation.valid_keys),
             invalid_citation_count=len(validation.unknown_keys),
             repair_attempted=repair_attempted,
+            answer_policy=plan.request.answer_policy,
+            answer_plan=prepared.answer_plan,
+            advanced_rag=prepared.advanced_rag_trace,
             provider_id=provider_id,
             model_id=model_id,
             resolved_model_id=resolved_model_id,

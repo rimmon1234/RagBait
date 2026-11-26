@@ -18,6 +18,7 @@ import { ChatComposer } from "@/components/chat/ChatComposer";
 import { MessageBubble } from "@/components/chat/MessageBubble";
 import type { QueueWaitInfo, StreamErrorState } from "@/lib/chat/useChatSession";
 import type {
+  AnswerPolicy,
   ChatConversation,
   ChatMessage,
   GenerationPhase,
@@ -51,6 +52,8 @@ export interface ChatInterfaceProps {
   onClearDraftOverride?: () => void;
   inferenceMode?: InferenceExecutionMode;
   onInferenceModeChange?: (mode: InferenceExecutionMode) => void;
+  answerPolicy?: AnswerPolicy;
+  onAnswerPolicyChange?: (policy: AnswerPolicy) => void;
   selectedLocalModel?: string;
   onLocalModelChange?: (modelId: string) => void;
   onSendMessage?: (content: string) => Promise<void> | void;
@@ -91,6 +94,8 @@ export function ChatInterface({
   onClearDraftOverride,
   inferenceMode = "cloud",
   onInferenceModeChange = () => undefined,
+  answerPolicy = "note_first_adaptive",
+  onAnswerPolicyChange,
   selectedLocalModel = "",
   onLocalModelChange = () => undefined,
   onSendMessage = () => undefined,
@@ -158,11 +163,10 @@ export function ChatInterface({
                 {conversation.subject_name}
               </span>
               <span
-                className={`inline-flex items-center gap-1 rounded-md px-2 py-0.5 text-[11px] font-medium capitalize ${
-                  conversation.status === "active"
+                className={`inline-flex items-center gap-1 rounded-md px-2 py-0.5 text-[11px] font-medium capitalize ${conversation.status === "active"
                     ? "border border-green-200 bg-green-50 text-green-700"
                     : "border border-gray-200 bg-gray-100 text-gray-700"
-                }`}
+                  }`}
               >
                 {conversation.status}
               </span>
@@ -248,9 +252,11 @@ export function ChatInterface({
               Grounded Study Chat: {conversation.subject_name}
             </h2>
             <p className="mt-2 text-sm leading-relaxed text-gray-600">
-              Answers are grounded in verified course materials for{" "}
-              <span className="font-semibold text-gray-800">{conversation.subject_name}</span>.
-              Click any inline citation badge like <span className="font-mono text-blue-700">[S1]</span> to inspect exact source excerpts and jump directly to the referenced PDF page.
+              Answers prioritize verified course materials for{" "}
+              <span className="font-semibold text-gray-800">{conversation.subject_name}</span>,
+              and can supplement with AI explanations or external sources when helpful.
+              Click inline citation badges like <span className="font-mono text-blue-700">[S1]</span> or{" "}
+              <span className="font-mono text-teal-700">[W1]</span> to inspect exact sources.
             </p>
 
             {conversation.status === "active" && canGenerate && (
@@ -353,6 +359,8 @@ export function ChatInterface({
         contributionReason={contributionReason}
         inferenceMode={inferenceMode}
         onInferenceModeChange={onInferenceModeChange}
+        answerPolicy={answerPolicy}
+        onAnswerPolicyChange={onAnswerPolicyChange}
         selectedLocalModel={selectedLocalModel}
         onLocalModelChange={onLocalModelChange}
         isGenerationActive={isGenerationActive}
