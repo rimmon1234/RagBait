@@ -126,22 +126,20 @@ export function ChatSidebar({
           <button
             type="button"
             onClick={() => onStatusTabChange("active")}
-            className={`flex-1 rounded-md py-1 text-xs font-medium transition-colors ${
-              statusTab === "active"
+            className={`flex-1 rounded-md py-1 text-xs font-medium transition-colors ${statusTab === "active"
                 ? "bg-white text-gray-900 shadow-sm"
                 : "text-gray-500 hover:text-gray-900"
-            }`}
+              }`}
           >
             Active
           </button>
           <button
             type="button"
             onClick={() => onStatusTabChange("archived")}
-            className={`flex-1 rounded-md py-1 text-xs font-medium transition-colors ${
-              statusTab === "archived"
+            className={`flex-1 rounded-md py-1 text-xs font-medium transition-colors ${statusTab === "archived"
                 ? "bg-white text-gray-900 shadow-sm"
                 : "text-gray-500 hover:text-gray-900"
-            }`}
+              }`}
           >
             Archived
           </button>
@@ -226,8 +224,8 @@ export function ChatSidebar({
               {searchQuery
                 ? "No results match your search"
                 : statusTab === "active"
-                ? "Start a new conversation to begin studying"
-                : "Archived conversations will appear here"}
+                  ? "Start a new conversation to begin studying"
+                  : "Archived conversations will appear here"}
             </p>
           </div>
         ) : (
@@ -239,11 +237,10 @@ export function ChatSidebar({
             return (
               <div
                 key={conv.id}
-                className={`group relative flex items-center justify-between rounded-xl border p-2.5 transition-all ${
-                  isActive
+                className={`group relative flex items-center justify-between rounded-xl border p-2.5 transition-all ${isActive
                     ? "border-blue-300 bg-blue-50/60 shadow-sm"
                     : "border-transparent bg-white hover:border-gray-200 hover:bg-gray-100/80"
-                }`}
+                  }`}
               >
                 <Link
                   href={`/chat/${conv.id}`}
