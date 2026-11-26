@@ -484,3 +484,167 @@ async def test_shared_dispatch_success_on_approved_free_model():
     assert decision.provider_id == "openrouter"
     assert decision.model_id == "openrouter/meta-llama/llama-3.3-70b-instruct:free"
     assert "Hello free model" in str(result) or "free model" in str(result)
+
+
+@pytest.mark.asyncio
+async def test_openrouter_adapter_normalizes_prefixed_concrete_model_slugs():
+    """Adapter strips internal 'openrouter/' prefix for concrete models while preserving 'openrouter/free'."""
+    from types import SimpleNamespace
+
+    from app.modules.llm_gateway.providers.openrouter import (
+        OpenRouterAdapter,
+        _normalize_openrouter_model_id,
+    )
+
+    assert _normalize_openrouter_model_id("openrouter/free") == "openrouter/free"
+    assert (
+        _normalize_openrouter_model_id("openrouter/meta-llama/llama-3.3-70b-instruct:free")
+        == "meta-llama/llama-3.3-70b-instruct:free"
+    )
+    assert (
+        _normalize_openrouter_model_id("meta-llama/llama-3.3-70b-instruct:free")
+        == "meta-llama/llama-3.3-70b-instruct:free"
+    )
+
+    captured_payloads: list[dict] = []
+
+    class _FakeStreamResponse:
+        status_code = 200
+        headers: dict[str, str] = {}
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+        async def aiter_bytes(self):
+            yield b'data: {"id":"gen-1","model":"meta-llama/llama-3.3-70b-instruct:free","choices":[{"delta":{"content":"Hi"},"finish_reason":"stop"}]}\n\n'
+            yield b"data: [DONE]\n\n"
+
+    class _FakeClient:
+        async def post(self, url, headers=None, json=None):
+            captured_payloads.append(json)
+            return SimpleNamespace(
+                status_code=200,
+                headers={},
+                json=lambda: {
+                    "id": "gen-1",
+                    "model": json["model"],
+                    "choices": [{"message": {"content": "ok"}, "finish_reason": "stop"}],
+                    "usage": {"prompt_tokens": 2, "completion_tokens": 1, "total_tokens": 3},
+                },
+            )
+
+        def stream(self, method, url, headers=None, json=None):
+            captured_payloads.append(json)
+            return _FakeStreamResponse()
+
+    adapter = OpenRouterAdapter()
+    with patch(
+        "app.modules.llm_gateway.providers.openrouter.get_http_client",
+        return_value=_FakeClient(),
+    ):
+        await adapter.generate(
+            model_id="openrouter/meta-llama/llama-3.3-70b-instruct:free",
+            messages=[{"role": "user", "content": "hi"}],
+            raw_key="sk-or-v1-test",
+        )
+        chunks = [
+            chunk
+            async for chunk in adapter.stream(
+                model_id="openrouter/meta-llama/llama-3.3-70b-instruct:free",
+                messages=[{"role": "user", "content": "hi"}],
+                raw_key="sk-or-v1-test",
+            )
+        ]
+        await adapter.generate(
+            model_id="openrouter/free",
+            messages=[{"role": "user", "content": "hi"}],
+            raw_key="sk-or-v1-test",
+        )
+
+    assert captured_payloads[0]["model"] == "meta-llama/llama-3.3-70b-instruct:free"
+    assert captured_payloads[1]["model"] == "meta-llama/llama-3.3-70b-instruct:free"
+    assert captured_payloads[2]["model"] == "openrouter/free"
+    assert any(c.delta == "Hi" for c in chunks)
+
+
+@pytest.mark.asyncio
+async def test_stream_cloud_candidate_events_empty_output_raises_failover_error():
+    """Empty upstream stream marks reservation unknown and raises PreFirstTokenCandidateError for failover."""
+    from types import SimpleNamespace
+
+    from app.modules.llm_gateway.interfaces import NormalizedStreamChunk, NormalizedUsage
+    from app.modules.llm_gateway.token_estimation import TokenEstimate
+    from app.modules.routing.executor import (
+        PreFirstTokenCandidateError,
+        stream_cloud_candidate_events,
+    )
+    from app.modules.routing.schemas import RoutingCandidate
+
+    class _EmptyStreamAdapter:
+        async def stream(self, **kwargs):
+            yield NormalizedStreamChunk(
+                delta="",
+                finish_reason="stop",
+                resolved_model="nvidia/nemotron-3.5-lightning:free",
+                usage=NormalizedUsage(input_tokens=20, output_tokens=0, total_tokens=20),
+            )
+
+    res_id = uuid4()
+    candidate = RoutingCandidate(
+        source_type="cloud",
+        provider_id="openrouter",
+        model_id="openrouter/free",
+        display_name="OpenRouter Free Router",
+        family="openrouter",
+        context_window=16384,
+        max_output_tokens=4096,
+        credential_id=uuid4(),
+        credential_owner_id=uuid4(),
+        is_shared_credential=True,
+        pricing_input_cents_per_million=0,
+        pricing_output_cents_per_million=0,
+        free_tier_eligible=True,
+    )
+    req = ChatCompletionRequest(
+        routing_mode="cloud_only",
+        provider_id="openrouter",
+        model_id="openrouter/free",
+        messages=[ChatMessage(role="user", content="Hi")],
+        idempotency_key=f"idem-empty-exec-{uuid4().hex[:8]}",
+        stream=True,
+    )
+    token_est = TokenEstimate(
+        estimated_input_tokens=10,
+        reserved_output_tokens=100,
+        total_estimated_tokens=110,
+    )
+    mark_unknown_mock = AsyncMock()
+
+    with (
+        patch(
+            "app.modules.routing.executor._prepare_cloud_dispatch",
+            new=AsyncMock(
+                return_value=(
+                    SimpleNamespace(reservation_id=res_id),
+                    "sk-or-v1-test",
+                    _EmptyStreamAdapter(),
+                    [{"role": "user", "content": "Hi"}],
+                )
+            ),
+        ),
+        patch("app.modules.routing.executor.mark_outcome_unknown", new=mark_unknown_mock),
+    ):
+        with pytest.raises(PreFirstTokenCandidateError, match="empty text output"):
+            async for _ in stream_cloud_candidate_events(
+                user_id=uuid4(),
+                candidate=candidate,
+                req=req,
+                token_estimate=token_est,
+                request_id="req-empty",
+            ):
+                pass
+
+    mark_unknown_mock.assert_awaited_once_with(res_id, reason="malformed_upstream_response")

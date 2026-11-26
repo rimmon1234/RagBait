@@ -25,6 +25,14 @@ logger = logging.getLogger("ragbait.llm_gateway.openrouter")
 OPENROUTER_ENDPOINT = "https://openrouter.ai/api/v1/chat/completions"
 
 
+def _normalize_openrouter_model_id(model_id: str) -> str:
+    """Strip internal 'openrouter/' namespace prefix except for the 'openrouter/free' auto-router slug."""
+    cleaned = model_id.strip()
+    if cleaned.startswith("openrouter/") and cleaned != "openrouter/free":
+        return cleaned.removeprefix("openrouter/")
+    return cleaned
+
+
 class OpenRouterAdapter(BaseProviderAdapter):
     """Adapter for OpenRouter AI routing aggregator."""
 
@@ -52,7 +60,7 @@ class OpenRouterAdapter(BaseProviderAdapter):
             **(extra_headers or {}),
         }
         payload: dict[str, Any] = {
-            "model": model_id,
+            "model": _normalize_openrouter_model_id(model_id),
             "messages": messages,
             "temperature": temperature,
             "max_tokens": max_output_tokens,
@@ -171,7 +179,7 @@ class OpenRouterAdapter(BaseProviderAdapter):
             **(extra_headers or {}),
         }
         payload: dict[str, Any] = {
-            "model": model_id,
+            "model": _normalize_openrouter_model_id(model_id),
             "messages": messages,
             "temperature": temperature,
             "max_tokens": max_output_tokens,

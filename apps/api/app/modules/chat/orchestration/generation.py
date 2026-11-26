@@ -140,6 +140,17 @@ async def execute_grounded_cloud_generation(
     repair_usage_dict: dict[str, Any] | None = None
     initial_usage_dict = dict(raw_result.usage or {})
 
+    if not answer_text.strip():
+        raise CitationValidationError(
+            message="Upstream model returned an empty response.",
+            details={
+                "status": validation.status,
+                "unknown_keys": [],
+                "malformed_tokens": [],
+                "repair_attempted": False,
+            },
+        )
+
     if not validation.is_valid and context_settings.CITATION_REPAIR_ATTEMPTS > 0:
         repair_attempted = True
         logger.info(

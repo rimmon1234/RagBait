@@ -1015,6 +1015,25 @@ async def stream_cloud_sse_events(
 
         # 5. Deterministic citation validation & single bounded repair pass
         raw_answer = "".join(collected_parts)
+        if not raw_answer.strip():
+            err_msg = "Upstream model returned an empty response."
+            await _persist_failure(
+                assistant_message_id=plan.assistant_message_id,
+                error_code="EMPTY_MODEL_RESPONSE",
+                error_message=err_msg,
+                generation_request_id=plan.generation_request_id,
+            )
+            yield _emit(
+                "generation_failed",
+                {
+                    "message_id": str(plan.assistant_message_id),
+                    "code": "EMPTY_MODEL_RESPONSE",
+                    "message": err_msg,
+                    "retryable": True,
+                },
+            )
+            return
+
         included_keys = [ev.citation_key for ev in prepared.selected_evidence]
         validation = validate_citations(raw_answer, included_keys)
         repair_attempted = False

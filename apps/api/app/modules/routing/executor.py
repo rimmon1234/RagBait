@@ -28,6 +28,7 @@ from app.modules.community import repository as comm_repo
 from app.modules.community import streams as comm_streams
 from app.modules.credentials.repository import retrieve_decrypted_credential
 from app.modules.llm_gateway import service as gateway_service
+from app.modules.llm_gateway.errors import ProviderAdapterError
 from app.modules.llm_gateway.interfaces import (
     GatewayStreamEvent,
     NormalizedUsage,
@@ -225,13 +226,12 @@ async def stream_cloud_candidate_events(
                     reservation_id=reservation.reservation_id,
                 )
 
-        if not first_delta_emitted:
-            yield GatewayStreamEvent(
-                event_type="started",
-                reservation_id=reservation.reservation_id,
-                resolved_model=resolved_model,
+        if not first_delta_emitted or not collected_text.strip():
+            raise ProviderAdapterError(
                 provider_id=candidate.provider_id,
-                upstream_generation_id=upstream_gen_id,
+                category="malformed_upstream_response",
+                message="Upstream provider stream completed with empty text output",
+                status_code=502,
             )
 
         if not usage_received:
@@ -339,6 +339,7 @@ async def stream_cloud_candidate_events(
             "provider_unavailable",
             "upstream_timeout",
             "model_unavailable",
+            "malformed_upstream_response",
         ):
             raise PreFirstTokenCandidateError(
                 f"Candidate {candidate.provider_id}:{candidate.model_id} failed before first token: {exc}",

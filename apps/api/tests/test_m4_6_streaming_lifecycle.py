@@ -776,3 +776,80 @@ class TestCancellationDisconnectAndAdmissionWait:
                 )
                 assert fin.status_code == 200
                 assert fin.json()["status"] == "completed"
+
+    async def test_empty_upstream_stream_fails_without_citation_repair(self) -> None:
+        uid, jwt_token = await _create_user()
+        await _grant_contributor_credential(uid)
+        seeded = await _seed_kb_and_conversation(user_id=uid)
+        conv_id = seeded["conversation_id"]
+        headers = {"Authorization": f"Bearer {jwt_token}"}
+
+        async def _empty_stream(
+            **kwargs: Any,
+        ) -> tuple[AsyncIterator[GatewayStreamEvent], RouteDecision]:
+            async def _gen() -> AsyncIterator[GatewayStreamEvent]:
+                yield GatewayStreamEvent(
+                    event_type="started",
+                    provider_id="openrouter",
+                    resolved_model="nvidia/nemotron-3.5-lightning:free",
+                )
+                yield GatewayStreamEvent(
+                    event_type="completed",
+                    finish_reason="stop",
+                    provider_id="openrouter",
+                    resolved_model="nvidia/nemotron-3.5-lightning:free",
+                    usage=NormalizedUsage(
+                        input_tokens=40,
+                        output_tokens=0,
+                        total_tokens=40,
+                        usage_source="authoritative",
+                    ),
+                )
+
+            return _gen(), _decision()
+
+        repair_spy = AsyncMock()
+        idem = f"idem-empty-{uuid4().hex[:8]}"
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://test") as client:
+            with (
+                patch(
+                    "app.modules.chat.orchestration.streaming_service.stream_grounded_cloud_generation",
+                    side_effect=_empty_stream,
+                ),
+                patch(
+                    "app.modules.chat.orchestration.streaming_service.run_bounded_citation_repair",
+                    new=repair_spy,
+                ),
+            ):
+                async with client.stream(
+                    "POST",
+                    f"/api/v1/chat/conversations/{conv_id}/messages",
+                    headers=headers,
+                    json={
+                        "content": "What does module 3 cover?",
+                        "model_id": "openrouter/free",
+                        "idempotency_key": idem,
+                    },
+                ) as resp:
+                    assert resp.status_code == 200
+                    events, _ = _parse_sse_text((await resp.aread()).decode())
+
+        repair_spy.assert_not_awaited()
+        assert events[-1]["event"] == "generation_failed"
+        assert events[-1]["data"]["code"] == "EMPTY_MODEL_RESPONSE"
+
+        pool = get_pool()
+        async with pool.acquire() as conn:
+            _, asst = await lookup_existing_turn_by_idempotency(
+                conn, conversation_id=conv_id, idempotency_key=idem
+            )
+            assert asst is not None
+            assert asst["status"] == "failed"
+            assert asst["error_message"] == "Upstream model returned an empty response."
+            meta = (
+                json.loads(asst["metadata"])
+                if isinstance(asst["metadata"], str)
+                else (asst["metadata"] or {})
+            )
+            assert meta.get("error_code") == "EMPTY_MODEL_RESPONSE"
