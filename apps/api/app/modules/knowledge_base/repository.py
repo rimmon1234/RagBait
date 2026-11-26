@@ -361,7 +361,7 @@ async def transition_document_to_deleting(
         WHERE id = $1
           AND is_archived = false
           AND upload_status != 'deleted'
-          AND ($2::boolean OR uploader_id = $3)
+          AND ($2::boolean OR (uploader_id IS NOT NULL AND uploader_id = $3))
         RETURNING id, storage_path, uploader_id, title;
         """,
         document_id,

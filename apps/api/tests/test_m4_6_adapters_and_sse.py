@@ -1,5 +1,6 @@
 """M4.6 tests: SSE UTF-8 framing, 4 provider streaming adapters, failover, and single quota settlement."""
 
+import asyncio
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
@@ -155,7 +156,7 @@ class TestProviderStreamAdapters:
             (
                 GeminiAdapter,
                 "app.modules.llm_gateway.providers.gemini.get_http_client",
-                "gemini-2.5-flash",
+                "gemini-3.5-flash-lite",
                 [
                     b'data: {"candidates":[{"content":{"parts":[{"text":"Gem"}]},"finishReason":null}]}\n\n',
                     b'data: {"candidates":[{"content":{"parts":[{"text":"ini [S1]"}]},"finishReason":"STOP"}],"usageMetadata":{"promptTokenCount":8,"candidatesTokenCount":4,"totalTokenCount":12}}\n\n',
@@ -208,7 +209,7 @@ class TestProviderStreamAdapters:
             (
                 GeminiAdapter,
                 "app.modules.llm_gateway.providers.gemini.get_http_client",
-                "gemini-2.5-flash",
+                "gemini-3.5-flash-lite",
             ),
         ],
     )
@@ -519,3 +520,145 @@ class TestRoutingStreamingFailoverAndSettlement:
         assert [e.event_type for e in events] == ["started", "delta", "cancelled"]
         assert len(settlement_calls) == 1
         assert settlement_calls[0]["req"].error_category == "cancelled_by_client"
+
+    async def test_prepare_cloud_dispatch_rejects_terminal_outcome_unknown_reservation(self) -> None:
+        from app.modules.admission.schemas import AdmissionReservation
+        from app.modules.llm_gateway.schemas import ChatCompletionRequest, ChatMessage
+        from app.modules.llm_gateway.token_estimation import TokenEstimate
+        from app.modules.routing.executor import PreDispatchCandidateError, _prepare_cloud_dispatch
+
+        user_id = uuid4()
+        cand = _make_candidate("gemini", "gemini-3.5-flash-lite")
+        req = ChatCompletionRequest(
+            routing_mode="auto",
+            messages=[ChatMessage(role="user", content="Explain ACID")],
+            stream=True,
+            idempotency_key=f"stale-{uuid4().hex[:8]}",
+        )
+        token_est = TokenEstimate(
+            estimated_input_tokens=10,
+            reserved_output_tokens=128,
+            safety_margin_tokens=0,
+            total_estimated_tokens=138,
+        )
+        now = datetime.now(UTC)
+        stale_res = AdmissionReservation(
+            reservation_id=uuid4(),
+            lease_token=f"lease_{uuid4().hex[:8]}",
+            lease_expires_at=now + timedelta(seconds=60),
+            user_id=user_id,
+            credential_id=cand.credential_id or uuid4(),
+            provider_id="gemini",
+            model_id="gemini-3.5-flash-lite",
+            status="outcome_unknown",
+            estimated_input_tokens=10,
+            estimated_output_tokens=128,
+            estimated_cost_cents=0,
+            estimated_cost_microcents=0,
+            created_at=now,
+        )
+
+        with (
+            patch(
+                "app.modules.routing.executor.reserve_generation",
+                AsyncMock(return_value=stale_res),
+            ),
+            patch(
+                "app.modules.routing.executor.mark_dispatched",
+                new=AsyncMock(),
+            ) as mock_dispatch,
+        ):
+            with pytest.raises(PreDispatchCandidateError, match="outcome_unknown"):
+                await _prepare_cloud_dispatch(
+                    user_id=user_id,
+                    candidate=cand,
+                    req=req,
+                    token_estimate=token_est,
+                    request_id="req-stale-1",
+                )
+            mock_dispatch.assert_not_awaited()
+
+    async def test_stream_sse_uses_generation_request_id_for_retry_admission_isolation(self) -> None:
+        from types import SimpleNamespace
+
+        from app.modules.chat.orchestration.schemas import ChatMessageCreateRequest
+        from app.modules.chat.orchestration.streaming_service import (
+            PreparedCloudStreamPlan,
+            stream_cloud_sse_events,
+        )
+
+        user_id = uuid4()
+        conv_id = uuid4()
+        asst_id = uuid4()
+        user_msg_id = uuid4()
+        gen_req_id = f"req-{uuid4().hex[:12]}"
+        req = ChatMessageCreateRequest(
+            content="Explain commit vs rollback",
+            idempotency_key="msg-shared-across-retries",
+            routing_mode="auto",
+        )
+        prepared = SimpleNamespace(
+            model_capability=SimpleNamespace(provider_id="gemini", model_id="gemini-3.5-flash-lite"),
+            selected_evidence=[],
+            selected_web_sources=[],
+            omitted_evidence_count=0,
+            retrieval_candidate_count=0,
+            llm_messages=[{"role": "user", "content": "Explain commit vs rollback"}],
+            accounting=SimpleNamespace(reserved_output_tokens=256),
+        )
+        permit = SimpleNamespace(lease_lost_event=asyncio.Event(), heartbeat_task=None)
+        plan = PreparedCloudStreamPlan(
+            conversation_id=conv_id,
+            user_id=user_id,
+            request=req,
+            generation_request_id=gen_req_id,
+            user_message_id=user_msg_id,
+            assistant_message_id=asst_id,
+            user_row={"id": user_msg_id},
+            started_monotonic=0.0,
+            permit=permit,  # type: ignore[arg-type]
+            prepared=prepared,  # type: ignore[arg-type]
+            is_replay=False,
+        )
+
+        captured_keys: list[str] = []
+
+        async def _fake_stream_gen(**kwargs: Any) -> tuple[AsyncIterator[Any], Any]:
+            captured_keys.append(kwargs["idempotency_key"])
+            raise RuntimeError("stop-early-for-key-check")
+
+        with (
+            patch(
+                "app.modules.chat.orchestration.streaming_service.is_generation_cancelled_in_redis",
+                AsyncMock(return_value=False),
+            ),
+            patch(
+                "app.modules.chat.orchestration.streaming_service.watch_cancellation_and_disconnect",
+                AsyncMock(return_value=None),
+            ),
+            patch(
+                "app.modules.chat.orchestration.streaming_service.start_permit_heartbeat",
+            ),
+            patch(
+                "app.modules.chat.orchestration.streaming_service.release_cloud_permits",
+                AsyncMock(return_value=None),
+            ),
+            patch(
+                "app.modules.chat.orchestration.streaming_service.stream_grounded_cloud_generation",
+                side_effect=_fake_stream_gen,
+            ),
+            patch(
+                "app.modules.chat.orchestration.streaming_service._persist_failure",
+                AsyncMock(return_value=None),
+            ),
+        ):
+            frames = [
+                frame
+                async for frame in stream_cloud_sse_events(
+                    plan, is_disconnected=AsyncMock(return_value=False)
+                )
+            ]
+
+        assert captured_keys == [gen_req_id]
+        assert captured_keys[0] != req.idempotency_key
+        assert any("generation_failed" in frame for frame in frames)

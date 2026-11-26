@@ -294,12 +294,7 @@ async def require_super_admin(
 async def require_trusted_kb_uploader(
     profile: UserProfile = Depends(require_approved_user),
 ) -> UserProfile:
-    """Restrict Knowledge Base uploads/parsing to trusted administrators while parser lacks OS sandbox."""
-    if profile.role not in ("admin", "super_admin"):
-        raise AuthorizationError(
-            "Knowledge Base document uploads are currently restricted to administrators.",
-            code="ADMIN_REQUIRED",
-        )
+    """Ensure Knowledge Base uploaders are approved accounts (parsed inside isolated sandbox)."""
     return profile
 
 

@@ -200,7 +200,7 @@ async def _mock_stream_generator(*args, **kwargs) -> AsyncIterator[NormalizedStr
             total_tokens=15,
             usage_source="authoritative",
         ),
-        resolved_model="gemini-3.8-flash",
+        resolved_model="gemini-3.5-flash-lite",
     )
 
 
@@ -244,7 +244,7 @@ async def test_route_and_dispatch_auto_mode_streaming():
         assert decision.routing_mode == "auto"
         assert decision.selected_source == "cloud"
         assert decision.provider_id == "gemini"
-        assert decision.model_id == "gemini-3.8-flash"
+        assert decision.model_id == "gemini-3.5-flash-lite"
 
         events = []
         async for chunk in result:
@@ -293,7 +293,7 @@ async def test_server_controlled_default_model_when_omitted():
     ):
         result, is_streaming, decision = await route_and_dispatch(user_id=user_id, req=req)
 
-        assert decision.model_id == "gemini-3.8-flash"
+        assert decision.model_id == "gemini-3.5-flash-lite"
         assert decision.provider_id == "gemini"
 
 
@@ -336,7 +336,7 @@ async def test_route_and_dispatch_non_streaming():
             total_tokens=18,
             usage_source="authoritative",
         ),
-        resolved_model="gemini-3.8-flash",
+        resolved_model="gemini-3.5-flash-lite",
     )
 
     with patch(
@@ -347,7 +347,7 @@ async def test_route_and_dispatch_non_streaming():
 
         assert is_streaming is False
         assert result.content == "Non-streaming response from Gemini"
-        assert result.model_id == "gemini-3.8-flash"
+        assert result.model_id == "gemini-3.5-flash-lite"
         assert result.usage["total_tokens"] == 18
 
 

@@ -22,6 +22,7 @@ export default function TopicDocumentsPage() {
 
   const { user: currentUser } = useCurrentUser();
   const isAdmin = currentUser?.role === "admin" || currentUser?.role === "super_admin";
+  const canUpload = Boolean(currentUser && (isAdmin || currentUser.approval_status === "approved"));
 
   // Find Subject
   const { subjects, loading: subjectsLoading } = useKnowledgeSubjects();
@@ -123,11 +124,11 @@ export default function TopicDocumentsPage() {
           )}
         </div>
 
-        {isAdmin && (
+        {canUpload && (
           <button
             type="button"
             onClick={() => setIsUploadModalOpen(true)}
-            className="inline-flex items-center gap-2 rounded-xl bg-blue-600 px-4 py-2.5 text-sm font-semibold text-white shadow-sm hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 self-start sm:self-auto"
+            className="btn-primary-gradient px-4 py-2.5 self-start sm:self-auto"
           >
             <UploadCloud className="h-4 w-4" />
             <span>Upload Material</span>
@@ -155,12 +156,12 @@ export default function TopicDocumentsPage() {
           onPreview={(doc) => setPreviewDoc(doc)}
           onDownload={handleDownload}
           onDelete={handleDelete}
-          onUploadClick={isAdmin ? () => setIsUploadModalOpen(true) : undefined}
+          onUploadClick={canUpload ? () => setIsUploadModalOpen(true) : undefined}
         />
       </div>
 
       {/* Document Upload Modal */}
-      {isAdmin && (
+      {canUpload && (
         <DocumentUploadModal
           isOpen={isUploadModalOpen}
           onClose={() => setIsUploadModalOpen(false)}

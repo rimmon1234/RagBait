@@ -1171,14 +1171,14 @@ async def test_uploader_pending_visibility_and_taxonomy_enforcement():
         doc_res_archived = await client.get(f"/api/v1/kb/documents/{doc_id}", headers=other_headers)
         assert doc_res_archived.status_code == 404
 
-        # 4. Non-admin student cannot confirm uploads -> 403 ADMIN_REQUIRED
+        # 4. Another student cannot confirm uploader's upload -> 400 UNAUTHORIZED_CONFIRMATION
         confirm_res = await client.post(
             f"/api/v1/kb/documents/{doc_id}/confirm-upload",
             headers=other_headers,
             json={"file_size_bytes": 100},
         )
-        assert confirm_res.status_code == 403
-        assert confirm_res.json()["error"]["code"] == "ADMIN_REQUIRED"
+        assert confirm_res.status_code == 400
+        assert confirm_res.json()["error"]["code"] == "UNAUTHORIZED_CONFIRMATION"
 
 
 @pytest.mark.asyncio

@@ -248,10 +248,10 @@ describe("Knowledge Base Pages Integration", () => {
     });
   });
 
-  it("hides Upload Material and Manage Subjects buttons for ordinary students and shows them for admins", async () => {
+  it("allows ordinary approved students to upload materials while restricting Manage Subjects to admins", async () => {
     vi.mocked(api.fetchWithAuth).mockImplementation(async (url: string) => {
       if (url.includes("/api/v1/me")) {
-        return mockProfile; // role: "user"
+        return mockProfile; // role: "user", approval_status: "approved"
       }
       if (url.includes("/api/v1/kb/subjects")) {
         return mockSubjects;
@@ -263,7 +263,7 @@ describe("Knowledge Base Pages Integration", () => {
     await waitFor(() => {
       expect(screen.getByText("Database Management Systems")).toBeInTheDocument();
     });
-    expect(screen.queryByRole("button", { name: /Upload Material/i })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Upload Material/i })).toBeInTheDocument();
     expect(screen.queryByRole("link", { name: /Manage \/ Add Subjects/i })).not.toBeInTheDocument();
     unmount();
 
@@ -282,5 +282,41 @@ describe("Knowledge Base Pages Integration", () => {
       expect(screen.getByRole("button", { name: /Upload Material/i })).toBeInTheDocument();
       expect(screen.getByRole("link", { name: /Manage \/ Add Subjects/i })).toBeInTheDocument();
     });
+  });
+
+  it("lets approved students upload on topic pages and only delete their own documents", async () => {
+    vi.mocked(api.fetchWithAuth).mockImplementation(async (url: string) => {
+      if (url.includes("/api/v1/me")) {
+        return mockProfile; // id: "user-1", role: "user"
+      }
+      if (url.includes("/api/v1/kb/subjects/sub-1/topics")) {
+        return mockTopics;
+      }
+      if (url.includes("/api/v1/kb/subjects")) {
+        return mockSubjects;
+      }
+      if (url.includes("/api/v1/kb/topics/top-1/documents")) {
+        return {
+          items: mockDocuments, // doc-1 owned by user-1, doc-2 owned by user-2
+          total: 2,
+          limit: 20,
+          offset: 0,
+        };
+      }
+      throw new Error(`Unhandled url: ${url}`);
+    });
+
+    render(<TopicDocumentsPage />);
+
+    await waitFor(() => {
+      expect(screen.getByText("SQL Joins and Subqueries Cheatsheet")).toBeInTheDocument();
+      expect(screen.getByText("Handwritten Class Notes Unit 2")).toBeInTheDocument();
+    });
+
+    // Normal user sees Upload Material button
+    expect(screen.getByRole("button", { name: /Upload Material/i })).toBeInTheDocument();
+
+    // Only 1 delete icon button should render (for doc-1 owned by user-1, NOT doc-2 owned by user-2)
+    expect(screen.getAllByTitle("Delete study document")).toHaveLength(1);
   });
 });

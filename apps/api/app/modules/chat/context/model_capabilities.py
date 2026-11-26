@@ -21,6 +21,8 @@ logger = logging.getLogger("ragbait.chat.context.capabilities")
 _RECOMMENDED_BUDGET_CAPS: dict[str, int] = {
     "gemini-3.8-flash": 65536,
     "gemini-3.5-flash-lite": 32768,
+    "gemini-3.1-flash-lite": 32768,
+    "gemini-3.1-pro-preview": 65536,
     "openai/gpt-oss-120b": 16384,
     "openai/gpt-oss-20b": 16384,
     "qwen/qwen3.8-27b": 16384,
