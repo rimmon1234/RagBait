@@ -8,6 +8,7 @@ from uuid import UUID
 from app.core.database import get_pool
 from app.core.errors import AuthorizationError, ConflictError, NotFoundError
 from app.modules.admission.cooldown import check_cooldown
+from app.modules.routing.free_models import is_approved_free_model
 from app.modules.routing.schemas import RoutingCandidate, RoutingMode
 
 logger = logging.getLogger("ragbait.routing.discovery")
@@ -70,28 +71,28 @@ async def discover_cloud_candidates(
             if p_id not in user_cred_by_provider:
                 user_cred_by_provider[p_id] = dict(c)
 
-        shared_cred_by_provider: dict[str, dict[str, Any]] = {}
-        if credential_scope != "owner_only":
-            shared_creds = await conn.fetch(
-                """
-                SELECT id, owner_id, provider_id, status, validation_status,
-                       sharing_scope, shared_consent, account_scope_id, account_scope_verified,
-                       billing_tier, billing_verified_at
-                FROM public.api_key_metadata
-                WHERE sharing_scope = 'community_shared'
-                  AND shared_consent = true
-                  AND status = 'active'
-                  AND validation_status = 'valid'
-                  AND billing_tier = 'verified_free_only'
-                  AND billing_verified_at IS NOT NULL
-                  AND billing_verified_at > now() - interval '30 days'
-                ORDER BY created_at ASC
-                """
-            )
-            for sc in shared_creds:
-                p_id = sc["provider_id"]
-                if p_id not in shared_cred_by_provider:
-                    shared_cred_by_provider[p_id] = dict(sc)
+        shared_creds = await conn.fetch(
+            """
+            SELECT c.id, c.owner_id, c.provider_id, c.status, c.validation_status,
+                   c.sharing_scope, c.shared_consent, c.account_scope_id, c.account_scope_verified,
+                   c.billing_tier, c.billing_verified_at
+            FROM public.api_key_metadata c
+            JOIN public.llm_providers p ON p.id = c.provider_id
+            WHERE c.sharing_scope = 'community_shared'
+              AND c.shared_consent = true
+              AND c.status = 'active'
+              AND c.validation_status = 'valid'
+              AND c.billing_tier = 'verified_free_only'
+              AND p.allows_community_sharing = true
+              AND p.is_enabled = true
+              AND c.billing_verified_at >= (now() - interval '30 days')
+            ORDER BY c.created_at ASC
+            """
+        )
+        shared_creds_by_provider: dict[str, list[dict[str, Any]]] = {}
+        for sc in shared_creds:
+            p_id = sc["provider_id"]
+            shared_creds_by_provider.setdefault(p_id, []).append(dict(sc))
 
         # Explicit credential check if specified
         explicit_cred: dict[str, Any] | None = None
@@ -173,39 +174,39 @@ async def discover_cloud_candidates(
 
             explicit_cred = dict(row_explicit)
 
-        # 3. Build candidate objects
+        # 3. Build candidate objects (supporting pooled failover across multiple shared credentials)
         for m in model_rows:
             provider_id = m["provider_id"]
-            selected_cred: dict[str, Any] | None = None
-            is_shared = False
+            candidate_creds: list[tuple[dict[str, Any] | None, bool]] = []
 
             if explicit_cred:
                 if explicit_cred["provider_id"] == provider_id:
-                    # Validate authorization on explicit credential
                     if explicit_cred["owner_id"] == user_id:
-                        selected_cred = explicit_cred
+                        candidate_creds.append((explicit_cred, False))
                     elif (
                         credential_scope != "owner_only"
                         and explicit_cred["sharing_scope"] == "community_shared"
                         and explicit_cred["shared_consent"]
                         and m["allows_community_sharing"]
+                        and is_approved_free_model(provider_id, m["model_id"])
                     ):
-                        selected_cred = explicit_cred
-                        is_shared = True
+                        candidate_creds.append((explicit_cred, True))
                 else:
                     continue
-            elif provider_id in user_cred_by_provider:
-                selected_cred = user_cred_by_provider[provider_id]
-                is_shared = False
-            elif (
-                credential_scope != "owner_only"
-                and m["allows_community_sharing"]
-                and provider_id in shared_cred_by_provider
-            ):
-                selected_cred = shared_cred_by_provider[provider_id]
-                is_shared = True
+            else:
+                user_cred = user_cred_by_provider.get(provider_id)
+                if user_cred:
+                    candidate_creds.append((user_cred, False))
+                if m["allows_community_sharing"] and is_approved_free_model(
+                    provider_id, m["model_id"]
+                ):
+                    for sc in shared_creds_by_provider.get(provider_id, []):
+                        if user_cred and sc["id"] == user_cred["id"]:
+                            continue
+                        candidate_creds.append((sc, True))
+                if not candidate_creds:
+                    candidate_creds.append((None, False))
 
-            # Missing or non-positive prices represented as None for metered models unless free_tier_eligible
             raw_in = m["input_cost_per_million_cents"]
             raw_out = m["output_cost_per_million_cents"]
             in_cost = (
@@ -219,49 +220,48 @@ async def discover_cloud_candidates(
                 else (0 if m["free_tier_eligible"] else None)
             )
 
-            # Check cooldown status for this provider/model/credential
-            is_cooling = False
-            cooldown_rem = 0
-            if selected_cred:
-                cooldown_scopes = [
-                    ("provider", provider_id),
-                    ("model", m["model_id"]),
-                    ("credential", str(selected_cred["id"])),
-                ]
-                try:
-                    is_cooling, cooldown_rem, _ = await check_cooldown(cooldown_scopes)
-                except Exception:
-                    # Fail closed on redis outage during admission
-                    pass
+            for selected_cred, is_shared in candidate_creds:
+                is_cooling = False
+                cooldown_rem = 0
+                if selected_cred:
+                    cooldown_scopes = [
+                        ("provider", provider_id),
+                        ("model", m["model_id"]),
+                        ("credential", str(selected_cred["id"])),
+                    ]
+                    try:
+                        is_cooling, cooldown_rem, _ = await check_cooldown(cooldown_scopes)
+                    except Exception:
+                        # Fail closed on redis outage during admission
+                        pass
 
-            candidates.append(
-                RoutingCandidate(
-                    source_type="cloud",
-                    provider_id=provider_id,
-                    model_id=m["model_id"],
-                    display_name=m["display_name"],
-                    family=m["family"],
-                    release_stage=m["release_stage"],
-                    capabilities=list(m["capabilities"] or []),
-                    context_window=m["context_window"],
-                    max_output_tokens=m["max_output_tokens"],
-                    is_routing_alias=bool(m["is_routing_alias"]),
-                    alias_target=m["alias_target"],
-                    credential_id=selected_cred["id"] if selected_cred else None,
-                    credential_owner_id=selected_cred["owner_id"] if selected_cred else None,
-                    credential_billing_tier=selected_cred.get("billing_tier") if selected_cred else None,
-                    is_shared_credential=is_shared,
-                    pricing_input_cents_per_million=in_cost,
-                    pricing_output_cents_per_million=out_cost,
-                    pricing_provenance="provider_published"
-                    if m["source_documentation"]
-                    else "estimated",
-                    pricing_updated_at=m["updated_at"],
-                    free_tier_eligible=bool(m["free_tier_eligible"]),
-                    is_cooling_down=is_cooling,
-                    cooldown_remaining_seconds=cooldown_rem,
+                candidates.append(
+                    RoutingCandidate(
+                        source_type="cloud",
+                        provider_id=provider_id,
+                        model_id=m["model_id"],
+                        display_name=m["display_name"],
+                        family=m["family"],
+                        release_stage=m["release_stage"],
+                        capabilities=list(m["capabilities"] or []),
+                        context_window=m["context_window"],
+                        max_output_tokens=m["max_output_tokens"],
+                        is_routing_alias=bool(m["is_routing_alias"]),
+                        alias_target=m["alias_target"],
+                        credential_id=selected_cred["id"] if selected_cred else None,
+                        credential_owner_id=selected_cred["owner_id"] if selected_cred else None,
+                        is_shared_credential=is_shared,
+                        pricing_input_cents_per_million=in_cost,
+                        pricing_output_cents_per_million=out_cost,
+                        pricing_provenance="provider_published"
+                        if m["source_documentation"]
+                        else "estimated",
+                        pricing_updated_at=m["updated_at"],
+                        free_tier_eligible=bool(m["free_tier_eligible"]),
+                        is_cooling_down=is_cooling,
+                        cooldown_remaining_seconds=cooldown_rem,
+                    )
                 )
-            )
 
     return candidates
 

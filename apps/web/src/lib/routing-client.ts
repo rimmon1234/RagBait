@@ -89,6 +89,9 @@ export async function streamChatCompletion(
     params: genParams,
     stream: true,
   };
+  if (params.community_opt_in !== undefined) {
+    requestBody.community_opt_in = params.community_opt_in;
+  }
   if (params.model) {
     requestBody.model = params.model;
     requestBody.model_id = params.model;

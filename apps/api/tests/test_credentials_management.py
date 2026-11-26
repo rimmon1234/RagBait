@@ -300,7 +300,7 @@ async def test_community_sharing_consent_rules(client: httpx.AsyncClient):
         json={
             "provider_id": "openrouter",
             "nickname": "Shared No Consent",
-            "api_key": "sk-or-v1-key_without_consent_123",
+            "api_key": "sk-or-v1-key-without-consent-123",
             "sharing_scope": "community_shared",
             "shared_consent": False,
         },
@@ -331,7 +331,7 @@ async def test_community_sharing_consent_rules(client: httpx.AsyncClient):
         json={
             "provider_id": "openrouter",
             "nickname": "Valid Shared OpenRouter",
-            "api_key": "sk-or-v1-key_with_explicit_consent_987",
+            "api_key": "sk-or-v1-key-with-explicit-consent-987",
             "sharing_scope": "community_shared",
             "shared_consent": True,
         },

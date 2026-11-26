@@ -16,12 +16,21 @@ from app.modules.llm_gateway.interfaces import (
     NormalizedGenerationResult,
     NormalizedStreamChunk,
     NormalizedUsage,
+    raise_for_stream_error_payload,
 )
 from app.modules.llm_gateway.streaming import parse_sse_stream
 
 logger = logging.getLogger("ragbait.llm_gateway.openrouter")
 
 OPENROUTER_ENDPOINT = "https://openrouter.ai/api/v1/chat/completions"
+
+
+def _normalize_openrouter_model_id(model_id: str) -> str:
+    """Strip internal 'openrouter/' namespace prefix except for the 'openrouter/free' auto-router slug."""
+    cleaned = model_id.strip()
+    if cleaned.startswith("openrouter/") and cleaned != "openrouter/free":
+        return cleaned.removeprefix("openrouter/")
+    return cleaned
 
 
 class OpenRouterAdapter(BaseProviderAdapter):
@@ -51,7 +60,7 @@ class OpenRouterAdapter(BaseProviderAdapter):
             **(extra_headers or {}),
         }
         payload: dict[str, Any] = {
-            "model": model_id,
+            "model": _normalize_openrouter_model_id(model_id),
             "messages": messages,
             "temperature": temperature,
             "max_tokens": max_output_tokens,
@@ -99,6 +108,8 @@ class OpenRouterAdapter(BaseProviderAdapter):
                     chunk_json = json.loads(raw_data)
                 except Exception:
                     continue
+
+                raise_for_stream_error_payload(self.provider_id, chunk_json)
 
                 # OpenRouter returns actual resolved model in chunks (crucial for openrouter/free)
                 if "model" in chunk_json and chunk_json["model"]:
@@ -168,7 +179,7 @@ class OpenRouterAdapter(BaseProviderAdapter):
             **(extra_headers or {}),
         }
         payload: dict[str, Any] = {
-            "model": model_id,
+            "model": _normalize_openrouter_model_id(model_id),
             "messages": messages,
             "temperature": temperature,
             "max_tokens": max_output_tokens,

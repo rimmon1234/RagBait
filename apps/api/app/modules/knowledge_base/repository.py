@@ -323,6 +323,10 @@ async def get_document_pages(
             document_id,
             page_number,
             raw_text,
+            normalized_text,
+            extraction_method,
+            normalization_version,
+            quality_diagnostics,
             character_count,
             word_count,
             has_text,
@@ -385,7 +389,7 @@ async def transition_document_to_deleting(
 
 
 async def finalize_document_deletion(conn: asyncpg.Connection, document_id: UUID) -> None:
-    """Finalize document deletion by purging extracted pages and archiving record."""
+    """Finalize document deletion by purging extracted pages, chunks, and cancelling jobs."""
     await conn.execute(
         """
         DELETE FROM public.kb_document_pages
@@ -395,9 +399,48 @@ async def finalize_document_deletion(conn: asyncpg.Connection, document_id: UUID
     )
     await conn.execute(
         """
+        DELETE FROM public.kb_document_chunks
+        WHERE document_id = $1;
+        """,
+        document_id,
+    )
+    await conn.execute(
+        """
+        UPDATE public.kb_indexing_jobs
+        SET status = 'cancelled',
+            lease_token = NULL,
+            locked_until = NULL,
+            error_code = 'CANCELLED',
+            error_message = 'Document deleted',
+            completed_at = timezone('utc'::text, now()),
+            updated_at = timezone('utc'::text, now())
+        WHERE document_id = $1 AND status IN ('queued', 'processing');
+        """,
+        document_id,
+    )
+    await conn.execute(
+        """
+        UPDATE public.kb_embedding_jobs
+        SET status = 'cancelled',
+            lease_token = NULL,
+            locked_until = NULL,
+            error_code = 'CANCELLED',
+            error_message = 'Document deleted',
+            completed_at = timezone('utc'::text, now()),
+            updated_at = timezone('utc'::text, now())
+        WHERE document_id = $1 AND status IN ('queued', 'processing');
+        """,
+        document_id,
+    )
+    await conn.execute(
+        """
         UPDATE public.kb_documents
         SET upload_status = 'deleted',
             is_archived = true,
+            indexing_status = 'unindexed',
+            embedding_status = 'unembedded',
+            active_chunk_version = NULL,
+            active_embedding_fingerprint = NULL,
             updated_at = timezone('utc'::text, now())
         WHERE id = $1;
         """,

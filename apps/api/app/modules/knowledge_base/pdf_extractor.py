@@ -69,6 +69,10 @@ def extract_pdf_pages(
             # preserve page record as empty text rather than aborting entire document
             page_text = ""
 
+        # PostgreSQL TEXT strictly rejects embedded NUL bytes (\x00) emitted by some PDF font streams
+        if "\x00" in page_text:
+            page_text = page_text.replace("\x00", "")
+
         # Enforce exact character and word count calculations matching DB constraints
         # PostgreSQL: character_count = char_length(raw_text)
         # PostgreSQL: has_text = (char_length(trim(raw_text)) > 0)

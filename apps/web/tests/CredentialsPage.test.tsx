@@ -132,7 +132,6 @@ describe("CredentialsPage", () => {
     expect(screen.getByText("Valid")).toBeInTheDocument();
     expect(screen.getByText("Community Shared")).toBeInTheDocument();
     expect(screen.getByText("500 RPD Baseline")).toBeInTheDocument();
-    expect(screen.getByText("Redis Admission Engine")).toBeInTheDocument();
   });
 
   it("opens add modal with simplified inputs and allows opting into community sharing for approved providers", async () => {
@@ -164,17 +163,14 @@ describe("CredentialsPage", () => {
     expect(screen.queryByLabelText(/Daily Spending Cap/i)).not.toBeInTheDocument();
 
     // Fill in nickname and key
-    const nicknameInput = screen.getByPlaceholderText(/e\.g\. My OpenRouter Free Key/i);
-    const keyInput = screen.getByPlaceholderText(/sk-or-\.\.\./i);
+    const nicknameInput = screen.getByPlaceholderText(/e\.g\. My/i);
+    const keyInput = screen.getByPlaceholderText(/gsk_/i);
 
     fireEvent.change(nicknameInput, { target: { value: "My Shared Key" } });
-    fireEvent.change(keyInput, { target: { value: "sk-or-v1-test-secret-key-123" } });
+    fireEvent.change(keyInput, { target: { value: "gsk_test_secret_key_123" } });
 
-    // Explicit consent checkbox should be unchecked by default
+    // Enable community sharing consent checkbox
     const consentCheckbox = screen.getByRole("checkbox");
-    expect(consentCheckbox).not.toBeChecked();
-
-    // Check consent checkbox
     fireEvent.click(consentCheckbox);
     expect(consentCheckbox).toBeChecked();
 

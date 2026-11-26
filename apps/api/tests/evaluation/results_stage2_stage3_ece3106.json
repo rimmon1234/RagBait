@@ -1,0 +1,191 @@
+{
+  "stage": "stage2_normalization_and_stage3_sandbox_benchmark",
+  "documents": [
+    {
+      "document_id": "f3035eb6-af93-4b3e-822d-0d2ee782eff4",
+      "title": "High-Level Synthesis",
+      "original_filename": "ECE 3106_Lecture 17-18_17-22Sep2026.pdf",
+      "engines": {
+        "pypdf": {
+          "engine": "pypdf",
+          "parser_backend": "container_sandbox",
+          "elapsed_ms": 1310.47,
+          "total_pages": 37,
+          "pages_with_text": 37,
+          "raw_total_chars": 22641,
+          "normalized_total_chars": 21294,
+          "raw_chunk_count": 17,
+          "normalized_chunk_count": 15,
+          "normalization_totals": {
+            "ligatures_repaired": 0,
+            "dehyphenations": 0,
+            "boilerplate_lines_removed": 32,
+            "trailing_page_numbers_stripped": 35,
+            "bullets_standardized": 195,
+            "soft_wraps_joined": 92,
+            "equations_preserved_lines": 16
+          },
+          "flagship_samples": {
+            "6": {
+              "raw_chars": 50,
+              "normalized_chars": 15,
+              "raw_preview": "High Level Synthesis (contnd\u2026)\n\u2022 EDA Synthesis \n6\n",
+              "normalized_preview": "- EDA Synthesis"
+            },
+            "9": {
+              "raw_chars": 63,
+              "normalized_chars": 29,
+              "raw_preview": "High Level Synthesis (contnd\u2026)\n\u2022 High-Level Synthesis Flow :\n9\n",
+              "normalized_preview": "- High-Level Synthesis Flow :"
+            },
+            "18": {
+              "raw_chars": 785,
+              "normalized_chars": 757,
+              "raw_preview": "High Level Synthesis (contnd\u2026)\n\u2022 Datapath Allocation & Binding \n Deal with the problem of which resources are used to realize physical \nimplementation\n Resources include\n\u2756 Registers\n\u2756 Memory units\n\u2756 Differential functional units as well as their communication ",
+              "normalized_preview": "- Datapath Allocation & Binding\n Deal with the problem of which resources are used to realize physical implementation\n Resources include\n  - Registers\n  - Memory units\n  - Differential functional units as well as their communication channels\n Basic principle\n "
+            }
+          }
+        },
+        "pymupdf": {
+          "engine": "pymupdf",
+          "parser_backend": "container_sandbox",
+          "elapsed_ms": 1525.84,
+          "total_pages": 37,
+          "pages_with_text": 37,
+          "raw_total_chars": 22541,
+          "normalized_total_chars": 20896,
+          "raw_chunk_count": 17,
+          "normalized_chunk_count": 15,
+          "normalization_totals": {
+            "ligatures_repaired": 0,
+            "dehyphenations": 0,
+            "boilerplate_lines_removed": 32,
+            "trailing_page_numbers_stripped": 37,
+            "bullets_standardized": 1,
+            "soft_wraps_joined": 120,
+            "equations_preserved_lines": 16
+          },
+          "flagship_samples": {
+            "6": {
+              "raw_chars": 50,
+              "normalized_chars": 15,
+              "raw_preview": "High Level Synthesis (contnd\u2026)\n\u2022\nEDA Synthesis \n6\n",
+              "normalized_preview": "\u2022\nEDA Synthesis"
+            },
+            "9": {
+              "raw_chars": 63,
+              "normalized_chars": 29,
+              "raw_preview": "High Level Synthesis (contnd\u2026)\n\u2022\nHigh-Level Synthesis Flow :\n9\n",
+              "normalized_preview": "\u2022\nHigh-Level Synthesis Flow :"
+            },
+            "18": {
+              "raw_chars": 783,
+              "normalized_chars": 735,
+              "raw_preview": "High Level Synthesis (contnd\u2026)\n\u2022\nDatapath Allocation & Binding \nDeal with the problem of which resources are used to realize physical \nimplementation\nResources include\n\u2756\nRegisters\n\u2756\nMemory units\n\u2756\nDifferential functional units as well as their communication ch",
+              "normalized_preview": "\u2022\nDatapath Allocation & Binding\nDeal with the problem of which resources are used to realize physical implementation\nResources include\n\u2756\nRegisters\n\u2756\nMemory units\n\u2756\nDifferential functional units as well as their communication channels\nBasic principle\n\u2756\nShare re"
+            }
+          }
+        }
+      }
+    },
+    {
+      "document_id": "19c57c20-cc08-4013-8d57-a1f26fb1cab5",
+      "title": "Logic Systhesis",
+      "original_filename": "ECE 3106_Lecture 19-20_24-29Sep2026.pdf",
+      "engines": {
+        "pypdf": {
+          "engine": "pypdf",
+          "parser_backend": "container_sandbox",
+          "elapsed_ms": 1413.58,
+          "total_pages": 46,
+          "pages_with_text": 46,
+          "raw_total_chars": 21321,
+          "normalized_total_chars": 19784,
+          "raw_chunk_count": 17,
+          "normalized_chunk_count": 14,
+          "normalization_totals": {
+            "ligatures_repaired": 0,
+            "dehyphenations": 0,
+            "boilerplate_lines_removed": 42,
+            "trailing_page_numbers_stripped": 46,
+            "bullets_standardized": 248,
+            "soft_wraps_joined": 53,
+            "equations_preserved_lines": 21
+          },
+          "flagship_samples": {
+            "10": {
+              "raw_chars": 460,
+              "normalized_chars": 421,
+              "raw_preview": "Logic Synthesis (contnd\u2026)\n\u2022 Binary Decision Diagram (BDD) :\n BDDs are not canonical in representing Boolean functions \n\u2022 Consider an n-level Binary Tree (BDD) \n Represent an arbitrary n-input Boolean function f(x1, x2, \u2026., xn)\n\u2022 Two types of Nodes \n Terminal N",
+              "normalized_preview": "- Binary Decision Diagram (BDD) :\n BDDs are not canonical in representing Boolean functions\n- Consider an n-level Binary Tree (BDD)\n Represent an arbitrary n-input Boolean function f(x1, x2, \u2026., xn)\n- Two types of Nodes\n Terminal Node or Leaf\n  - Value as an A"
+            },
+            "17": {
+              "raw_chars": 95,
+              "normalized_chars": 65,
+              "raw_preview": "Logic Synthesis (contnd\u2026)\n\u2022 Derivation of ROBDD from the Binary Tree of majority Function :\n17\n",
+              "normalized_preview": "- Derivation of ROBDD from the Binary Tree of majority Function :"
+            },
+            "18": {
+              "raw_chars": 871,
+              "normalized_chars": 849,
+              "raw_preview": "Logic Synthesis (contnd\u2026)\n\u2022 Reduction of OBDD:\n First Reduction Rule :\n\u2756 Merge all the terminal nodes with value 0\n      and all the terminal nodes with value 1 \n\u2756 Functions rooted in the two nodes with control variable x3 are identical, namely x3\n Second Redu",
+              "normalized_preview": "- Reduction of OBDD:\n First Reduction Rule :\n  - Merge all the terminal nodes with value 0 and all the terminal nodes with value 1\n  - Functions rooted in the two nodes with control variable x3 are identical, namely x3\n Second Reduction Rule :\n  - Delete one o"
+            },
+            "22": {
+              "raw_chars": 109,
+              "normalized_chars": 79,
+              "raw_preview": "Logic Synthesis (contnd\u2026)\n\u2022 Recursive BDDAPPLY Operation (contnd\u2026):\n\u2022 Several cases under consideration :\n22\n",
+              "normalized_preview": "- Recursive BDDAPPLY Operation (contnd\u2026):\n- Several cases under consideration :"
+            }
+          }
+        },
+        "pymupdf": {
+          "engine": "pymupdf",
+          "parser_backend": "container_sandbox",
+          "elapsed_ms": 1752.08,
+          "total_pages": 46,
+          "pages_with_text": 46,
+          "raw_total_chars": 21200,
+          "normalized_total_chars": 19388,
+          "raw_chunk_count": 17,
+          "normalized_chunk_count": 14,
+          "normalization_totals": {
+            "ligatures_repaired": 0,
+            "dehyphenations": 0,
+            "boilerplate_lines_removed": 42,
+            "trailing_page_numbers_stripped": 46,
+            "bullets_standardized": 0,
+            "soft_wraps_joined": 80,
+            "equations_preserved_lines": 21
+          },
+          "flagship_samples": {
+            "10": {
+              "raw_chars": 454,
+              "normalized_chars": 407,
+              "raw_preview": "Logic Synthesis (contnd\u2026)\n\u2022\nBinary Decision Diagram (BDD) :\nBDDs are not canonical in representing Boolean functions \n\u2022\nConsider an n-level Binary Tree (BDD) \nRepresent an arbitrary n-input Boolean function f(x1, x2, \u2026., xn)\n\u2022\nTwo types of Nodes \nTerminal Node",
+              "normalized_preview": "\u2022\nBinary Decision Diagram (BDD) :\nBDDs are not canonical in representing Boolean functions\n\u2022\nConsider an n-level Binary Tree (BDD)\nRepresent an arbitrary n-input Boolean function f(x1, x2, \u2026., xn)\n\u2022\nTwo types of Nodes\nTerminal Node or Leaf\n\u2756\nValue as an Attrib"
+            },
+            "17": {
+              "raw_chars": 95,
+              "normalized_chars": 65,
+              "raw_preview": "Logic Synthesis (contnd\u2026)\n\u2022\nDerivation of ROBDD from the Binary Tree of majority Function :\n17\n",
+              "normalized_preview": "\u2022\nDerivation of ROBDD from the Binary Tree of majority Function :"
+            },
+            "18": {
+              "raw_chars": 867,
+              "normalized_chars": 822,
+              "raw_preview": "Logic Synthesis (contnd\u2026)\n\u2022\nReduction of OBDD:\nFirst Reduction Rule :\n\u2756\nMerge all the terminal nodes with value 0\n      and all the terminal nodes with value 1 \n\u2756\nFunctions rooted in the two nodes with control variable x3 are identical, namely x3\nSecond Reduct",
+              "normalized_preview": "\u2022\nReduction of OBDD:\nFirst Reduction Rule :\n\u2756\nMerge all the terminal nodes with value 0 and all the terminal nodes with value 1\n\u2756\nFunctions rooted in the two nodes with control variable x3 are identical, namely x3\nSecond Reduction Rule :\n\u2756\nDelete one of the id"
+            },
+            "22": {
+              "raw_chars": 109,
+              "normalized_chars": 79,
+              "raw_preview": "Logic Synthesis (contnd\u2026)\n\u2022\nRecursive BDDAPPLY Operation (contnd\u2026):\n\u2022\nSeveral cases under consideration :\n22\n",
+              "normalized_preview": "\u2022\nRecursive BDDAPPLY Operation (contnd\u2026):\n\u2022\nSeveral cases under consideration :"
+            }
+          }
+        }
+      }
+    }
+  ]
+}

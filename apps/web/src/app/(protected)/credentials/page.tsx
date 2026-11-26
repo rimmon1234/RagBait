@@ -560,8 +560,8 @@ export default function CredentialsPage() {
                                   : "Enable credential"
                             }
                             className={`rounded px-2.5 py-1 text-xs font-medium transition-colors disabled:opacity-40 ${cred.status === "active"
-                                ? "bg-amber-100 text-amber-800 hover:bg-amber-200"
-                                : "bg-blue-100 text-blue-800 hover:bg-blue-200"
+                              ? "bg-amber-100 text-amber-800 hover:bg-amber-200"
+                              : "bg-blue-100 text-blue-800 hover:bg-blue-200"
                               }`}
                           >
                             {isToggling ? (

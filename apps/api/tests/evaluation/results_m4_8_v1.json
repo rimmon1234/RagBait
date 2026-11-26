@@ -1,0 +1,2987 @@
+{
+  "dataset_version": "m4_8_bilingual_v1.0.0",
+  "timestamp_utc": "2026-11-26T05:08:23.888249+00:00",
+  "model_fingerprint": "e5_small_int8_761b726d_f80102d3",
+  "retrieval_config": {
+    "rrf_k": 60,
+    "vector_weight": 0.6,
+    "fts_weight": 0.4,
+    "top_k": 5,
+    "candidate_limit": 30
+  },
+  "retrieval_comparison": {
+    "vector_only": {
+      "overall": {
+        "count": 42,
+        "recall_at_5": 0.9881,
+        "recall_at_10": 1.0,
+        "precision_at_5": 0.281,
+        "hit_rate_at_5": 1.0,
+        "mrr": 0.9444,
+        "ndcg_at_5": 0.9451,
+        "zero_hit_queries": 0,
+        "p50_latency_ms": 17.69,
+        "p95_latency_ms": 27.97
+      },
+      "english": {
+        "count": 21,
+        "recall_at_5": 1.0,
+        "recall_at_10": 1.0,
+        "precision_at_5": 0.3048,
+        "hit_rate_at_5": 1.0,
+        "mrr": 0.9683,
+        "ndcg_at_5": 0.9642,
+        "zero_hit_queries": 0,
+        "p50_latency_ms": 15.9,
+        "p95_latency_ms": 22.92
+      },
+      "bengali": {
+        "count": 21,
+        "recall_at_5": 0.9762,
+        "recall_at_10": 1.0,
+        "precision_at_5": 0.2571,
+        "hit_rate_at_5": 1.0,
+        "mrr": 0.9206,
+        "ndcg_at_5": 0.926,
+        "zero_hit_queries": 0,
+        "p50_latency_ms": 19.23,
+        "p95_latency_ms": 28.14
+      },
+      "by_category": {
+        "ambiguous_or_conflicting": {
+          "count": 6,
+          "recall_at_5": 1.0,
+          "recall_at_10": 1.0,
+          "precision_at_5": 0.3667,
+          "hit_rate_at_5": 1.0,
+          "mrr": 1.0,
+          "ndcg_at_5": 0.9755,
+          "zero_hit_queries": 0,
+          "p50_latency_ms": 14.33,
+          "p95_latency_ms": 27.97
+        },
+        "cross_language_retrieval": {
+          "count": 8,
+          "recall_at_5": 1.0,
+          "recall_at_10": 1.0,
+          "precision_at_5": 0.2,
+          "hit_rate_at_5": 1.0,
+          "mrr": 0.8542,
+          "ndcg_at_5": 0.8914,
+          "zero_hit_queries": 0,
+          "p50_latency_ms": 18.32,
+          "p95_latency_ms": 24.36
+        },
+        "direct_factual": {
+          "count": 10,
+          "recall_at_5": 1.0,
+          "recall_at_10": 1.0,
+          "precision_at_5": 0.2,
+          "hit_rate_at_5": 1.0,
+          "mrr": 0.95,
+          "ndcg_at_5": 0.9631,
+          "zero_hit_queries": 0,
+          "p50_latency_ms": 17.98,
+          "p95_latency_ms": 28.68
+        },
+        "multi_page_evidence": {
+          "count": 8,
+          "recall_at_5": 0.9375,
+          "recall_at_10": 1.0,
+          "precision_at_5": 0.4,
+          "hit_rate_at_5": 1.0,
+          "mrr": 0.9167,
+          "ndcg_at_5": 0.8919,
+          "zero_hit_queries": 0,
+          "p50_latency_ms": 19.06,
+          "p95_latency_ms": 28.14
+        },
+        "multi_passage_synthesis": {
+          "count": 10,
+          "recall_at_5": 1.0,
+          "recall_at_10": 1.0,
+          "precision_at_5": 0.28,
+          "hit_rate_at_5": 1.0,
+          "mrr": 1.0,
+          "ndcg_at_5": 0.9945,
+          "zero_hit_queries": 0,
+          "p50_latency_ms": 14.71,
+          "p95_latency_ms": 26.15
+        }
+      }
+    },
+    "fts_only": {
+      "overall": {
+        "count": 42,
+        "recall_at_5": 0.0,
+        "recall_at_10": 0.0,
+        "precision_at_5": 0.0,
+        "hit_rate_at_5": 0.0,
+        "mrr": 0.0,
+        "ndcg_at_5": 0.0,
+        "zero_hit_queries": 42,
+        "p50_latency_ms": 18.44,
+        "p95_latency_ms": 30.31
+      },
+      "english": {
+        "count": 21,
+        "recall_at_5": 0.0,
+        "recall_at_10": 0.0,
+        "precision_at_5": 0.0,
+        "hit_rate_at_5": 0.0,
+        "mrr": 0.0,
+        "ndcg_at_5": 0.0,
+        "zero_hit_queries": 21,
+        "p50_latency_ms": 18.31,
+        "p95_latency_ms": 26.31
+      },
+      "bengali": {
+        "count": 21,
+        "recall_at_5": 0.0,
+        "recall_at_10": 0.0,
+        "precision_at_5": 0.0,
+        "hit_rate_at_5": 0.0,
+        "mrr": 0.0,
+        "ndcg_at_5": 0.0,
+        "zero_hit_queries": 21,
+        "p50_latency_ms": 19.75,
+        "p95_latency_ms": 30.31
+      },
+      "by_category": {
+        "ambiguous_or_conflicting": {
+          "count": 6,
+          "recall_at_5": 0.0,
+          "recall_at_10": 0.0,
+          "precision_at_5": 0.0,
+          "hit_rate_at_5": 0.0,
+          "mrr": 0.0,
+          "ndcg_at_5": 0.0,
+          "zero_hit_queries": 6,
+          "p50_latency_ms": 15.13,
+          "p95_latency_ms": 30.16
+        },
+        "cross_language_retrieval": {
+          "count": 8,
+          "recall_at_5": 0.0,
+          "recall_at_10": 0.0,
+          "precision_at_5": 0.0,
+          "hit_rate_at_5": 0.0,
+          "mrr": 0.0,
+          "ndcg_at_5": 0.0,
+          "zero_hit_queries": 8,
+          "p50_latency_ms": 19.75,
+          "p95_latency_ms": 25.66
+        },
+        "direct_factual": {
+          "count": 10,
+          "recall_at_5": 0.0,
+          "recall_at_10": 0.0,
+          "precision_at_5": 0.0,
+          "hit_rate_at_5": 0.0,
+          "mrr": 0.0,
+          "ndcg_at_5": 0.0,
+          "zero_hit_queries": 10,
+          "p50_latency_ms": 15.66,
+          "p95_latency_ms": 31.83
+        },
+        "multi_page_evidence": {
+          "count": 8,
+          "recall_at_5": 0.0,
+          "recall_at_10": 0.0,
+          "precision_at_5": 0.0,
+          "hit_rate_at_5": 0.0,
+          "mrr": 0.0,
+          "ndcg_at_5": 0.0,
+          "zero_hit_queries": 8,
+          "p50_latency_ms": 18.31,
+          "p95_latency_ms": 30.31
+        },
+        "multi_passage_synthesis": {
+          "count": 10,
+          "recall_at_5": 0.0,
+          "recall_at_10": 0.0,
+          "precision_at_5": 0.0,
+          "hit_rate_at_5": 0.0,
+          "mrr": 0.0,
+          "ndcg_at_5": 0.0,
+          "zero_hit_queries": 10,
+          "p50_latency_ms": 18.15,
+          "p95_latency_ms": 32.68
+        }
+      }
+    },
+    "hybrid_rrf": {
+      "overall": {
+        "count": 42,
+        "recall_at_5": 0.9881,
+        "recall_at_10": 1.0,
+        "precision_at_5": 0.281,
+        "hit_rate_at_5": 1.0,
+        "mrr": 0.9444,
+        "ndcg_at_5": 0.9451,
+        "zero_hit_queries": 0,
+        "p50_latency_ms": 19.58,
+        "p95_latency_ms": 28.12
+      },
+      "english": {
+        "count": 21,
+        "recall_at_5": 1.0,
+        "recall_at_10": 1.0,
+        "precision_at_5": 0.3048,
+        "hit_rate_at_5": 1.0,
+        "mrr": 0.9683,
+        "ndcg_at_5": 0.9642,
+        "zero_hit_queries": 0,
+        "p50_latency_ms": 19.74,
+        "p95_latency_ms": 26.82
+      },
+      "bengali": {
+        "count": 21,
+        "recall_at_5": 0.9762,
+        "recall_at_10": 1.0,
+        "precision_at_5": 0.2571,
+        "hit_rate_at_5": 1.0,
+        "mrr": 0.9206,
+        "ndcg_at_5": 0.926,
+        "zero_hit_queries": 0,
+        "p50_latency_ms": 19.58,
+        "p95_latency_ms": 28.33
+      },
+      "by_category": {
+        "ambiguous_or_conflicting": {
+          "count": 6,
+          "recall_at_5": 1.0,
+          "recall_at_10": 1.0,
+          "precision_at_5": 0.3667,
+          "hit_rate_at_5": 1.0,
+          "mrr": 1.0,
+          "ndcg_at_5": 0.9755,
+          "zero_hit_queries": 0,
+          "p50_latency_ms": 20.43,
+          "p95_latency_ms": 33.12
+        },
+        "cross_language_retrieval": {
+          "count": 8,
+          "recall_at_5": 1.0,
+          "recall_at_10": 1.0,
+          "precision_at_5": 0.2,
+          "hit_rate_at_5": 1.0,
+          "mrr": 0.8542,
+          "ndcg_at_5": 0.8914,
+          "zero_hit_queries": 0,
+          "p50_latency_ms": 14.8,
+          "p95_latency_ms": 19.58
+        },
+        "direct_factual": {
+          "count": 10,
+          "recall_at_5": 1.0,
+          "recall_at_10": 1.0,
+          "precision_at_5": 0.2,
+          "hit_rate_at_5": 1.0,
+          "mrr": 0.95,
+          "ndcg_at_5": 0.9631,
+          "zero_hit_queries": 0,
+          "p50_latency_ms": 19.74,
+          "p95_latency_ms": 26.82
+        },
+        "multi_page_evidence": {
+          "count": 8,
+          "recall_at_5": 0.9375,
+          "recall_at_10": 1.0,
+          "precision_at_5": 0.4,
+          "hit_rate_at_5": 1.0,
+          "mrr": 0.9167,
+          "ndcg_at_5": 0.8919,
+          "zero_hit_queries": 0,
+          "p50_latency_ms": 20.38,
+          "p95_latency_ms": 28.33
+        },
+        "multi_passage_synthesis": {
+          "count": 10,
+          "recall_at_5": 1.0,
+          "recall_at_10": 1.0,
+          "precision_at_5": 0.28,
+          "hit_rate_at_5": 1.0,
+          "mrr": 1.0,
+          "ndcg_at_5": 0.9945,
+          "zero_hit_queries": 0,
+          "p50_latency_ms": 18.98,
+          "p95_latency_ms": 28.12
+        }
+      }
+    }
+  },
+  "fts_keyword_probes": [
+    {
+      "keyword_query": "Belady Anomaly",
+      "subject": "os",
+      "expected_page": 13,
+      "hits": 2,
+      "top_page": 12
+    },
+    {
+      "keyword_query": "120 ns",
+      "subject": "os",
+      "expected_page": 12,
+      "hits": 1,
+      "top_page": 12
+    },
+    {
+      "keyword_query": "Priority Inversion",
+      "subject": "os",
+      "expected_page": 15,
+      "hits": 2,
+      "top_page": 14
+    },
+    {
+      "keyword_query": "কপি-অন-রাইট",
+      "subject": "os",
+      "expected_page": 3,
+      "hits": 1,
+      "top_page": 2
+    },
+    {
+      "keyword_query": "BCNF",
+      "subject": "dbms",
+      "expected_page": 21,
+      "hits": 1,
+      "top_page": 20
+    }
+  ],
+  "security_fencing_checks": {
+    "cross_subject_leaks": 0,
+    "archived_leaks": 0,
+    "inactive_topic_leaks": 0,
+    "inactive_subject_leaks": 0,
+    "stale_version_leaks": 0,
+    "unembedded_leaks": 0,
+    "hash_mismatch_leaks": 0,
+    "unanswerable_restricted_hits": 0
+  },
+  "generation_summary": {
+    "total_evaluated": 50,
+    "citation_validity_rate": 1.0,
+    "physical_page_accuracy": 0.8571,
+    "abstention_correctness": 1.0,
+    "prompt_injection_pass_rate": 1.0,
+    "budget_compliance_rate": 1.0,
+    "repair_triggered_and_cleaned": true,
+    "mean_rubric_score": 2.7,
+    "supported_or_grounded_rate": 0.88
+  },
+  "retrieval_per_case": [
+    {
+      "case_id": "M48-01",
+      "language": "en",
+      "category": "direct_factual",
+      "difficulty": "easy",
+      "recall_at_5": 1.0,
+      "recall_at_10": 1.0,
+      "precision_at_5": 0.2,
+      "hit_at_5": 1,
+      "mrr": 1.0,
+      "ndcg_at_5": 1.0,
+      "latency_ms": 20.826000021770597,
+      "retrieved_pages_top5": [
+        [
+          "89b4ad54-9b72-4ea5-b332-34295aff54da",
+          10,
+          11
+        ],
+        [
+          "bb345269-249c-442e-9ae9-ebfdd0e659bb",
+          1,
+          2
+        ],
+        [
+          "89b4ad54-9b72-4ea5-b332-34295aff54da",
+          12,
+          13
+        ],
+        [
+          "89b4ad54-9b72-4ea5-b332-34295aff54da",
+          15,
+          16
+        ],
+        [
+          "bb345269-249c-442e-9ae9-ebfdd0e659bb",
+          4,
+          5
+        ]
+      ]
+    },
+    {
+      "case_id": "M48-02",
+      "language": "en",
+      "category": "direct_factual",
+      "difficulty": "easy",
+      "recall_at_5": 1.0,
+      "recall_at_10": 1.0,
+      "precision_at_5": 0.2,
+      "hit_at_5": 1,
+      "mrr": 1.0,
+      "ndcg_at_5": 1.0,
+      "latency_ms": 21.61049999995157,
+      "retrieved_pages_top5": [
+        [
+          "89b4ad54-9b72-4ea5-b332-34295aff54da",
+          11,
+          12
+        ],
+        [
+          "89b4ad54-9b72-4ea5-b332-34295aff54da",
+          17,
+          17
+        ],
+        [
+          "89b4ad54-9b72-4ea5-b332-34295aff54da",
+          12,
+          13
+        ],
+        [
+          "89b4ad54-9b72-4ea5-b332-34295aff54da",
+          15,
+          16
+        ],
+        [
+          "bb345269-249c-442e-9ae9-ebfdd0e659bb",
+          4,
+          5
+        ]
+      ]
+    },
+    {
+      "case_id": "M48-03",
+      "language": "en",
+      "category": "direct_factual",
+      "difficulty": "easy",
+      "recall_at_5": 1.0,
+      "recall_at_10": 1.0,
+      "precision_at_5": 0.2,
+      "hit_at_5": 1,
+      "mrr": 1.0,
+      "ndcg_at_5": 1.0,
+      "latency_ms": 19.13949998561293,
+      "retrieved_pages_top5": [
+        [
+          "89b4ad54-9b72-4ea5-b332-34295aff54da",
+          12,
+          13
+        ],
+        [
+          "bb345269-249c-442e-9ae9-ebfdd0e659bb",
+          1,
+          2
+        ],
+        [
+          "89b4ad54-9b72-4ea5-b332-34295aff54da",
+          11,
+          12
+        ],
+        [
+          "89b4ad54-9b72-4ea5-b332-34295aff54da",
+          16,
+          16
+        ],
+        [
+          "89b4ad54-9b72-4ea5-b332-34295aff54da",
+          10,
+          11
+        ]
+      ]
+    },
+    {
+      "case_id": "M48-04",
+      "language": "en",
+      "category": "direct_factual",
+      "difficulty": "easy",
+      "recall_at_5": 1.0,
+      "recall_at_10": 1.0,
+      "precision_at_5": 0.2,
+      "hit_at_5": 1,
+      "mrr": 1.0,
+      "ndcg_at_5": 1.0,
+      "latency_ms": 26.819800026714802,
+      "retrieved_pages_top5": [
+        [
+          "89b4ad54-9b72-4ea5-b332-34295aff54da",
+          12,
+          13
+        ],
+        [
+          "89b4ad54-9b72-4ea5-b332-34295aff54da",
+          17,
+          17
+        ],
+        [
+          "89b4ad54-9b72-4ea5-b332-34295aff54da",
+          11,
+          12
+        ],
+        [
+          "bb345269-249c-442e-9ae9-ebfdd0e659bb",
+          1,
+          2
+        ],
+        [
+          "89b4ad54-9b72-4ea5-b332-34295aff54da",
+          16,
+          16
+        ]
+      ]
+    },
+    {
+      "case_id": "M48-05",
+      "language": "en",
+      "category": "direct_factual",
+      "difficulty": "medium",
+      "recall_at_5": 1.0,
+      "recall_at_10": 1.0,
+      "precision_at_5": 0.2,
+      "hit_at_5": 1,
+      "mrr": 1.0,
+      "ndcg_at_5": 1.0,
+      "latency_ms": 19.737099995836616,
+      "retrieved_pages_top5": [
+        [
+          "bb345269-249c-442e-9ae9-ebfdd0e659bb",
+          4,
+          5
+        ],
+        [
+          "bb345269-249c-442e-9ae9-ebfdd0e659bb",
+          1,
+          2
+        ],
+        [
+          "89b4ad54-9b72-4ea5-b332-34295aff54da",
+          12,
+          13
+        ],
+        [
+          "89b4ad54-9b72-4ea5-b332-34295aff54da",
+          15,
+          16
+        ],
+        [
+          "89b4ad54-9b72-4ea5-b332-34295aff54da",
+          10,
+          11
+        ]
+      ]
+    },
+    {
+      "case_id": "M48-06",
+      "language": "bn",
+      "category": "direct_factual",
+      "difficulty": "easy",
+      "recall_at_5": 1.0,
+      "recall_at_10": 1.0,
+      "precision_at_5": 0.2,
+      "hit_at_5": 1,
+      "mrr": 1.0,
+      "ndcg_at_5": 1.0,
+      "latency_ms": 11.86910003889352,
+      "retrieved_pages_top5": [
+        [
+          "89b4ad54-9b72-4ea5-b332-34295aff54da",
+          16,
+          16
+        ],
+        [
+          "bb345269-249c-442e-9ae9-ebfdd0e659bb",
+          2,
+          3
+        ],
+        [
+          "89b4ad54-9b72-4ea5-b332-34295aff54da",
+          11,
+          12
+        ],
+        [
+          "89b4ad54-9b72-4ea5-b332-34295aff54da",
+          12,
+          13
+        ],
+        [
+          "89b4ad54-9b72-4ea5-b332-34295aff54da",
+          17,
+          17
+        ]
+      ]
+    },
+    {
+      "case_id": "M48-07",
+      "language": "bn",
+      "category": "direct_factual",
+      "difficulty": "easy",
+      "recall_at_5": 1.0,
+      "recall_at_10": 1.0,
+      "precision_at_5": 0.2,
+      "hit_at_5": 1,
+      "mrr": 1.0,
+      "ndcg_at_5": 1.0,
+      "latency_ms": 17.26970000891015,
+      "retrieved_pages_top5": [
+        [
+          "89b4ad54-9b72-4ea5-b332-34295aff54da",
+          16,
+          16
+        ],
+        [
+          "89b4ad54-9b72-4ea5-b332-34295aff54da",
+          12,
+          13
+        ],
+        [
+          "bb345269-249c-442e-9ae9-ebfdd0e659bb",
+          2,
+          3
+        ],
+        [
+          "89b4ad54-9b72-4ea5-b332-34295aff54da",
+          11,
+          12
+        ],
+        [
+          "89b4ad54-9b72-4ea5-b332-34295aff54da",
+          10,
+          11
+        ]
+      ]
+    },
+    {
+      "case_id": "M48-08",
+      "language": "bn",
+      "category": "direct_factual",
+      "difficulty": "easy",
+      "recall_at_5": 1.0,
+      "recall_at_10": 1.0,
+      "precision_at_5": 0.2,
+      "hit_at_5": 1,
+      "mrr": 0.5,
+      "ndcg_at_5": 0.6309297535714574,
+      "latency_ms": 22.0108000212349,
+      "retrieved_pages_top5": [
+        [
+          "89b4ad54-9b72-4ea5-b332-34295aff54da",
+          12,
+          13
+        ],
+        [
+          "89b4ad54-9b72-4ea5-b332-34295aff54da",
+          16,
+          16
+        ],
+        [
+          "89b4ad54-9b72-4ea5-b332-34295aff54da",
+          15,
+          16
+        ],
+        [
+          "bb345269-249c-442e-9ae9-ebfdd0e659bb",
+          1,
+          2
+        ],
+        [
+          "89b4ad54-9b72-4ea5-b332-34295aff54da",
+          14,
+          15
+        ]
+      ]
+    },
+    {
+      "case_id": "M48-09",
+      "language": "bn",
+      "category": "direct_factual",
+      "difficulty": "easy",
+      "recall_at_5": 1.0,
+      "recall_at_10": 1.0,
+      "precision_at_5": 0.2,
+      "hit_at_5": 1,
+      "mrr": 1.0,
+      "ndcg_at_5": 1.0,
+      "latency_ms": 21.04019996477291,
+      "retrieved_pages_top5": [
+        [
+          "57fd12fe-7b20-4768-913b-e28ca2486f71",
+          20,
+          21
+        ]
+      ]
+    },
+    {
+      "case_id": "M48-10",
+      "language": "bn",
+      "category": "direct_factual",
+      "difficulty": "medium",
+      "recall_at_5": 1.0,
+      "recall_at_10": 1.0,
+      "precision_at_5": 0.2,
+      "hit_at_5": 1,
+      "mrr": 1.0,
+      "ndcg_at_5": 1.0,
+      "latency_ms": 11.808899987954646,
+      "retrieved_pages_top5": [
+        [
+          "bb345269-249c-442e-9ae9-ebfdd0e659bb",
+          2,
+          3
+        ],
+        [
+          "bb345269-249c-442e-9ae9-ebfdd0e659bb",
+          1,
+          2
+        ],
+        [
+          "89b4ad54-9b72-4ea5-b332-34295aff54da",
+          15,
+          16
+        ],
+        [
+          "89b4ad54-9b72-4ea5-b332-34295aff54da",
+          16,
+          16
+        ],
+        [
+          "89b4ad54-9b72-4ea5-b332-34295aff54da",
+          12,
+          13
+        ]
+      ]
+    },
+    {
+      "case_id": "M48-11",
+      "language": "en",
+      "category": "multi_passage_synthesis",
+      "difficulty": "medium",
+      "recall_at_5": 1.0,
+      "recall_at_10": 1.0,
+      "precision_at_5": 0.2,
+      "hit_at_5": 1,
+      "mrr": 1.0,
+      "ndcg_at_5": 1.0,
+      "latency_ms": 12.51510001020506,
+      "retrieved_pages_top5": [
+        [
+          "89b4ad54-9b72-4ea5-b332-34295aff54da",
+          11,
+          12
+        ],
+        [
+          "89b4ad54-9b72-4ea5-b332-34295aff54da",
+          17,
+          17
+        ],
+        [
+          "89b4ad54-9b72-4ea5-b332-34295aff54da",
+          12,
+          13
+        ],
+        [
+          "89b4ad54-9b72-4ea5-b332-34295aff54da",
+          10,
+          11
+        ],
+        [
+          "bb345269-249c-442e-9ae9-ebfdd0e659bb",
+          1,
+          2
+        ]
+      ]
+    },
+    {
+      "case_id": "M48-12",
+      "language": "en",
+      "category": "multi_passage_synthesis",
+      "difficulty": "medium",
+      "recall_at_5": 1.0,
+      "recall_at_10": 1.0,
+      "precision_at_5": 0.4,
+      "hit_at_5": 1,
+      "mrr": 1.0,
+      "ndcg_at_5": 1.0,
+      "latency_ms": 16.901800001505762,
+      "retrieved_pages_top5": [
+        [
+          "bb345269-249c-442e-9ae9-ebfdd0e659bb",
+          1,
+          2
+        ],
+        [
+          "89b4ad54-9b72-4ea5-b332-34295aff54da",
+          10,
+          11
+        ],
+        [
+          "89b4ad54-9b72-4ea5-b332-34295aff54da",
+          12,
+          13
+        ],
+        [
+          "89b4ad54-9b72-4ea5-b332-34295aff54da",
+          17,
+          17
+        ],
+        [
+          "89b4ad54-9b72-4ea5-b332-34295aff54da",
+          15,
+          16
+        ]
+      ]
+    },
+    {
+      "case_id": "M48-13",
+      "language": "en",
+      "category": "multi_passage_synthesis",
+      "difficulty": "hard",
+      "recall_at_5": 1.0,
+      "recall_at_10": 1.0,
+      "precision_at_5": 0.4,
+      "hit_at_5": 1,
+      "mrr": 1.0,
+      "ndcg_at_5": 1.0,
+      "latency_ms": 27.50909997848794,
+      "retrieved_pages_top5": [
+        [
+          "89b4ad54-9b72-4ea5-b332-34295aff54da",
+          12,
+          13
+        ],
+        [
+          "bb345269-249c-442e-9ae9-ebfdd0e659bb",
+          1,
+          2
+        ],
+        [
+          "89b4ad54-9b72-4ea5-b332-34295aff54da",
+          10,
+          11
+        ],
+        [
+          "89b4ad54-9b72-4ea5-b332-34295aff54da",
+          15,
+          16
+        ],
+        [
+          "89b4ad54-9b72-4ea5-b332-34295aff54da",
+          14,
+          15
+        ]
+      ]
+    },
+    {
+      "case_id": "M48-14",
+      "language": "en",
+      "category": "multi_passage_synthesis",
+      "difficulty": "medium",
+      "recall_at_5": 1.0,
+      "recall_at_10": 1.0,
+      "precision_at_5": 0.2,
+      "hit_at_5": 1,
+      "mrr": 1.0,
+      "ndcg_at_5": 1.0,
+      "latency_ms": 8.796900045126677,
+      "retrieved_pages_top5": [
+        [
+          "57fd12fe-7b20-4768-913b-e28ca2486f71",
+          20,
+          21
+        ]
+      ]
+    },
+    {
+      "case_id": "M48-15",
+      "language": "en",
+      "category": "multi_passage_synthesis",
+      "difficulty": "hard",
+      "recall_at_5": 1.0,
+      "recall_at_10": 1.0,
+      "precision_at_5": 0.4,
+      "hit_at_5": 1,
+      "mrr": 1.0,
+      "ndcg_at_5": 0.944847956559586,
+      "latency_ms": 23.35630002198741,
+      "retrieved_pages_top5": [
+        [
+          "89b4ad54-9b72-4ea5-b332-34295aff54da",
+          17,
+          17
+        ],
+        [
+          "89b4ad54-9b72-4ea5-b332-34295aff54da",
+          12,
+          13
+        ],
+        [
+          "89b4ad54-9b72-4ea5-b332-34295aff54da",
+          11,
+          12
+        ],
+        [
+          "bb345269-249c-442e-9ae9-ebfdd0e659bb",
+          4,
+          5
+        ],
+        [
+          "bb345269-249c-442e-9ae9-ebfdd0e659bb",
+          1,
+          2
+        ]
+      ]
+    },
+    {
+      "case_id": "M48-16",
+      "language": "bn",
+      "category": "multi_passage_synthesis",
+      "difficulty": "medium",
+      "recall_at_5": 1.0,
+      "recall_at_10": 1.0,
+      "precision_at_5": 0.2,
+      "hit_at_5": 1,
+      "mrr": 1.0,
+      "ndcg_at_5": 1.0,
+      "latency_ms": 28.11960002873093,
+      "retrieved_pages_top5": [
+        [
+          "89b4ad54-9b72-4ea5-b332-34295aff54da",
+          16,
+          16
+        ],
+        [
+          "bb345269-249c-442e-9ae9-ebfdd0e659bb",
+          2,
+          3
+        ],
+        [
+          "89b4ad54-9b72-4ea5-b332-34295aff54da",
+          11,
+          12
+        ],
+        [
+          "89b4ad54-9b72-4ea5-b332-34295aff54da",
+          17,
+          17
+        ],
+        [
+          "89b4ad54-9b72-4ea5-b332-34295aff54da",
+          12,
+          13
+        ]
+      ]
+    },
+    {
+      "case_id": "M48-17",
+      "language": "bn",
+      "category": "multi_passage_synthesis",
+      "difficulty": "medium",
+      "recall_at_5": 1.0,
+      "recall_at_10": 1.0,
+      "precision_at_5": 0.4,
+      "hit_at_5": 1,
+      "mrr": 1.0,
+      "ndcg_at_5": 1.0,
+      "latency_ms": 19.836199993733317,
+      "retrieved_pages_top5": [
+        [
+          "89b4ad54-9b72-4ea5-b332-34295aff54da",
+          16,
+          16
+        ],
+        [
+          "89b4ad54-9b72-4ea5-b332-34295aff54da",
+          14,
+          15
+        ],
+        [
+          "bb345269-249c-442e-9ae9-ebfdd0e659bb",
+          2,
+          3
+        ],
+        [
+          "89b4ad54-9b72-4ea5-b332-34295aff54da",
+          15,
+          16
+        ],
+        [
+          "89b4ad54-9b72-4ea5-b332-34295aff54da",
+          12,
+          13
+        ]
+      ]
+    },
+    {
+      "case_id": "M48-18",
+      "language": "bn",
+      "category": "multi_passage_synthesis",
+      "difficulty": "medium",
+      "recall_at_5": 1.0,
+      "recall_at_10": 1.0,
+      "precision_at_5": 0.2,
+      "hit_at_5": 1,
+      "mrr": 1.0,
+      "ndcg_at_5": 1.0,
+      "latency_ms": 18.98090000031516,
+      "retrieved_pages_top5": [
+        [
+          "bb345269-249c-442e-9ae9-ebfdd0e659bb",
+          2,
+          3
+        ],
+        [
+          "bb345269-249c-442e-9ae9-ebfdd0e659bb",
+          1,
+          2
+        ],
+        [
+          "89b4ad54-9b72-4ea5-b332-34295aff54da",
+          16,
+          16
+        ],
+        [
+          "89b4ad54-9b72-4ea5-b332-34295aff54da",
+          12,
+          13
+        ],
+        [
+          "89b4ad54-9b72-4ea5-b332-34295aff54da",
+          17,
+          17
+        ]
+      ]
+    },
+    {
+      "case_id": "M48-19",
+      "language": "bn",
+      "category": "multi_passage_synthesis",
+      "difficulty": "hard",
+      "recall_at_5": 1.0,
+      "recall_at_10": 1.0,
+      "precision_at_5": 0.2,
+      "hit_at_5": 1,
+      "mrr": 1.0,
+      "ndcg_at_5": 1.0,
+      "latency_ms": 13.45740002579987,
+      "retrieved_pages_top5": [
+        [
+          "57fd12fe-7b20-4768-913b-e28ca2486f71",
+          20,
+          21
+        ]
+      ]
+    },
+    {
+      "case_id": "M48-20",
+      "language": "bn",
+      "category": "multi_passage_synthesis",
+      "difficulty": "hard",
+      "recall_at_5": 1.0,
+      "recall_at_10": 1.0,
+      "precision_at_5": 0.2,
+      "hit_at_5": 1,
+      "mrr": 1.0,
+      "ndcg_at_5": 1.0,
+      "latency_ms": 27.645499969366938,
+      "retrieved_pages_top5": [
+        [
+          "89b4ad54-9b72-4ea5-b332-34295aff54da",
+          10,
+          11
+        ],
+        [
+          "bb345269-249c-442e-9ae9-ebfdd0e659bb",
+          2,
+          3
+        ],
+        [
+          "bb345269-249c-442e-9ae9-ebfdd0e659bb",
+          1,
+          2
+        ],
+        [
+          "89b4ad54-9b72-4ea5-b332-34295aff54da",
+          12,
+          13
+        ],
+        [
+          "89b4ad54-9b72-4ea5-b332-34295aff54da",
+          11,
+          12
+        ]
+      ]
+    },
+    {
+      "case_id": "M48-21",
+      "language": "en",
+      "category": "multi_page_evidence",
+      "difficulty": "medium",
+      "recall_at_5": 1.0,
+      "recall_at_10": 1.0,
+      "precision_at_5": 0.4,
+      "hit_at_5": 1,
+      "mrr": 1.0,
+      "ndcg_at_5": 1.0,
+      "latency_ms": 21.174699999392033,
+      "retrieved_pages_top5": [
+        [
+          "89b4ad54-9b72-4ea5-b332-34295aff54da",
+          15,
+          16
+        ],
+        [
+          "89b4ad54-9b72-4ea5-b332-34295aff54da",
+          14,
+          15
+        ],
+        [
+          "bb345269-249c-442e-9ae9-ebfdd0e659bb",
+          1,
+          2
+        ],
+        [
+          "bb345269-249c-442e-9ae9-ebfdd0e659bb",
+          4,
+          5
+        ],
+        [
+          "89b4ad54-9b72-4ea5-b332-34295aff54da",
+          12,
+          13
+        ]
+      ]
+    },
+    {
+      "case_id": "M48-22",
+      "language": "en",
+      "category": "multi_page_evidence",
+      "difficulty": "medium",
+      "recall_at_5": 1.0,
+      "recall_at_10": 1.0,
+      "precision_at_5": 0.4,
+      "hit_at_5": 1,
+      "mrr": 1.0,
+      "ndcg_at_5": 0.9639404333166532,
+      "latency_ms": 19.024599983822554,
+      "retrieved_pages_top5": [
+        [
+          "89b4ad54-9b72-4ea5-b332-34295aff54da",
+          15,
+          16
+        ],
+        [
+          "bb345269-249c-442e-9ae9-ebfdd0e659bb",
+          1,
+          2
+        ],
+        [
+          "89b4ad54-9b72-4ea5-b332-34295aff54da",
+          14,
+          15
+        ],
+        [
+          "89b4ad54-9b72-4ea5-b332-34295aff54da",
+          12,
+          13
+        ],
+        [
+          "89b4ad54-9b72-4ea5-b332-34295aff54da",
+          16,
+          16
+        ]
+      ]
+    },
+    {
+      "case_id": "M48-23",
+      "language": "en",
+      "category": "multi_page_evidence",
+      "difficulty": "hard",
+      "recall_at_5": 1.0,
+      "recall_at_10": 1.0,
+      "precision_at_5": 0.4,
+      "hit_at_5": 1,
+      "mrr": 1.0,
+      "ndcg_at_5": 1.0,
+      "latency_ms": 20.237600023392588,
+      "retrieved_pages_top5": [
+        [
+          "89b4ad54-9b72-4ea5-b332-34295aff54da",
+          12,
+          13
+        ],
+        [
+          "bb345269-249c-442e-9ae9-ebfdd0e659bb",
+          1,
+          2
+        ],
+        [
+          "89b4ad54-9b72-4ea5-b332-34295aff54da",
+          11,
+          12
+        ],
+        [
+          "89b4ad54-9b72-4ea5-b332-34295aff54da",
+          16,
+          16
+        ],
+        [
+          "bb345269-249c-442e-9ae9-ebfdd0e659bb",
+          2,
+          3
+        ]
+      ]
+    },
+    {
+      "case_id": "M48-24",
+      "language": "en",
+      "category": "multi_page_evidence",
+      "difficulty": "hard",
+      "recall_at_5": 1.0,
+      "recall_at_10": 1.0,
+      "precision_at_5": 0.6,
+      "hit_at_5": 1,
+      "mrr": 1.0,
+      "ndcg_at_5": 0.9871451602176229,
+      "latency_ms": 23.25239998754114,
+      "retrieved_pages_top5": [
+        [
+          "bb345269-249c-442e-9ae9-ebfdd0e659bb",
+          1,
+          2
+        ],
+        [
+          "89b4ad54-9b72-4ea5-b332-34295aff54da",
+          10,
+          11
+        ],
+        [
+          "89b4ad54-9b72-4ea5-b332-34295aff54da",
+          12,
+          13
+        ],
+        [
+          "89b4ad54-9b72-4ea5-b332-34295aff54da",
+          11,
+          12
+        ],
+        [
+          "89b4ad54-9b72-4ea5-b332-34295aff54da",
+          17,
+          17
+        ]
+      ]
+    },
+    {
+      "case_id": "M48-25",
+      "language": "bn",
+      "category": "multi_page_evidence",
+      "difficulty": "hard",
+      "recall_at_5": 1.0,
+      "recall_at_10": 1.0,
+      "precision_at_5": 0.4,
+      "hit_at_5": 1,
+      "mrr": 1.0,
+      "ndcg_at_5": 0.8772153153380493,
+      "latency_ms": 20.377599983476102,
+      "retrieved_pages_top5": [
+        [
+          "89b4ad54-9b72-4ea5-b332-34295aff54da",
+          15,
+          16
+        ],
+        [
+          "bb345269-249c-442e-9ae9-ebfdd0e659bb",
+          2,
+          3
+        ],
+        [
+          "bb345269-249c-442e-9ae9-ebfdd0e659bb",
+          1,
+          2
+        ],
+        [
+          "89b4ad54-9b72-4ea5-b332-34295aff54da",
+          14,
+          15
+        ],
+        [
+          "89b4ad54-9b72-4ea5-b332-34295aff54da",
+          16,
+          16
+        ]
+      ]
+    },
+    {
+      "case_id": "M48-26",
+      "language": "bn",
+      "category": "multi_page_evidence",
+      "difficulty": "medium",
+      "recall_at_5": 0.5,
+      "recall_at_10": 1.0,
+      "precision_at_5": 0.2,
+      "hit_at_5": 1,
+      "mrr": 0.3333333333333333,
+      "ndcg_at_5": 0.3065735963827292,
+      "latency_ms": 28.32799998577684,
+      "retrieved_pages_top5": [
+        [
+          "89b4ad54-9b72-4ea5-b332-34295aff54da",
+          11,
+          12
+        ],
+        [
+          "bb345269-249c-442e-9ae9-ebfdd0e659bb",
+          1,
+          2
+        ],
+        [
+          "89b4ad54-9b72-4ea5-b332-34295aff54da",
+          16,
+          16
+        ],
+        [
+          "89b4ad54-9b72-4ea5-b332-34295aff54da",
+          12,
+          13
+        ],
+        [
+          "89b4ad54-9b72-4ea5-b332-34295aff54da",
+          17,
+          17
+        ]
+      ]
+    },
+    {
+      "case_id": "M48-27",
+      "language": "bn",
+      "category": "multi_page_evidence",
+      "difficulty": "hard",
+      "recall_at_5": 1.0,
+      "recall_at_10": 1.0,
+      "precision_at_5": 0.4,
+      "hit_at_5": 1,
+      "mrr": 1.0,
+      "ndcg_at_5": 1.0,
+      "latency_ms": 25.717099953908473,
+      "retrieved_pages_top5": [
+        [
+          "bb345269-249c-442e-9ae9-ebfdd0e659bb",
+          2,
+          3
+        ],
+        [
+          "89b4ad54-9b72-4ea5-b332-34295aff54da",
+          16,
+          16
+        ],
+        [
+          "89b4ad54-9b72-4ea5-b332-34295aff54da",
+          11,
+          12
+        ],
+        [
+          "89b4ad54-9b72-4ea5-b332-34295aff54da",
+          12,
+          13
+        ],
+        [
+          "bb345269-249c-442e-9ae9-ebfdd0e659bb",
+          1,
+          2
+        ]
+      ]
+    },
+    {
+      "case_id": "M48-28",
+      "language": "bn",
+      "category": "multi_page_evidence",
+      "difficulty": "hard",
+      "recall_at_5": 1.0,
+      "recall_at_10": 1.0,
+      "precision_at_5": 0.4,
+      "hit_at_5": 1,
+      "mrr": 1.0,
+      "ndcg_at_5": 1.0,
+      "latency_ms": 18.645400006789714,
+      "retrieved_pages_top5": [
+        [
+          "bb345269-249c-442e-9ae9-ebfdd0e659bb",
+          4,
+          5
+        ],
+        [
+          "bb345269-249c-442e-9ae9-ebfdd0e659bb",
+          2,
+          3
+        ],
+        [
+          "bb345269-249c-442e-9ae9-ebfdd0e659bb",
+          1,
+          2
+        ],
+        [
+          "89b4ad54-9b72-4ea5-b332-34295aff54da",
+          15,
+          16
+        ],
+        [
+          "89b4ad54-9b72-4ea5-b332-34295aff54da",
+          14,
+          15
+        ]
+      ]
+    },
+    {
+      "case_id": "M48-29",
+      "language": "en",
+      "category": "cross_language_retrieval",
+      "difficulty": "medium",
+      "recall_at_5": 1.0,
+      "recall_at_10": 1.0,
+      "precision_at_5": 0.2,
+      "hit_at_5": 1,
+      "mrr": 1.0,
+      "ndcg_at_5": 1.0,
+      "latency_ms": 11.74330001231283,
+      "retrieved_pages_top5": [
+        [
+          "bb345269-249c-442e-9ae9-ebfdd0e659bb",
+          2,
+          3
+        ],
+        [
+          "89b4ad54-9b72-4ea5-b332-34295aff54da",
+          12,
+          13
+        ],
+        [
+          "89b4ad54-9b72-4ea5-b332-34295aff54da",
+          16,
+          16
+        ],
+        [
+          "89b4ad54-9b72-4ea5-b332-34295aff54da",
+          17,
+          17
+        ],
+        [
+          "89b4ad54-9b72-4ea5-b332-34295aff54da",
+          11,
+          12
+        ]
+      ]
+    },
+    {
+      "case_id": "M48-30",
+      "language": "en",
+      "category": "cross_language_retrieval",
+      "difficulty": "medium",
+      "recall_at_5": 1.0,
+      "recall_at_10": 1.0,
+      "precision_at_5": 0.2,
+      "hit_at_5": 1,
+      "mrr": 1.0,
+      "ndcg_at_5": 1.0,
+      "latency_ms": 19.126500003039837,
+      "retrieved_pages_top5": [
+        [
+          "57fd12fe-7b20-4768-913b-e28ca2486f71",
+          20,
+          21
+        ]
+      ]
+    },
+    {
+      "case_id": "M48-31",
+      "language": "en",
+      "category": "cross_language_retrieval",
+      "difficulty": "medium",
+      "recall_at_5": 1.0,
+      "recall_at_10": 1.0,
+      "precision_at_5": 0.2,
+      "hit_at_5": 1,
+      "mrr": 1.0,
+      "ndcg_at_5": 1.0,
+      "latency_ms": 12.541999982204288,
+      "retrieved_pages_top5": [
+        [
+          "bb345269-249c-442e-9ae9-ebfdd0e659bb",
+          2,
+          3
+        ],
+        [
+          "89b4ad54-9b72-4ea5-b332-34295aff54da",
+          16,
+          16
+        ],
+        [
+          "bb345269-249c-442e-9ae9-ebfdd0e659bb",
+          1,
+          2
+        ],
+        [
+          "89b4ad54-9b72-4ea5-b332-34295aff54da",
+          12,
+          13
+        ],
+        [
+          "89b4ad54-9b72-4ea5-b332-34295aff54da",
+          15,
+          16
+        ]
+      ]
+    },
+    {
+      "case_id": "M48-32",
+      "language": "en",
+      "category": "cross_language_retrieval",
+      "difficulty": "medium",
+      "recall_at_5": 1.0,
+      "recall_at_10": 1.0,
+      "precision_at_5": 0.2,
+      "hit_at_5": 1,
+      "mrr": 0.3333333333333333,
+      "ndcg_at_5": 0.5,
+      "latency_ms": 14.130799972917885,
+      "retrieved_pages_top5": [
+        [
+          "89b4ad54-9b72-4ea5-b332-34295aff54da",
+          12,
+          13
+        ],
+        [
+          "89b4ad54-9b72-4ea5-b332-34295aff54da",
+          14,
+          15
+        ],
+        [
+          "89b4ad54-9b72-4ea5-b332-34295aff54da",
+          16,
+          16
+        ],
+        [
+          "bb345269-249c-442e-9ae9-ebfdd0e659bb",
+          1,
+          2
+        ],
+        [
+          "89b4ad54-9b72-4ea5-b332-34295aff54da",
+          15,
+          16
+        ]
+      ]
+    },
+    {
+      "case_id": "M48-33",
+      "language": "bn",
+      "category": "cross_language_retrieval",
+      "difficulty": "medium",
+      "recall_at_5": 1.0,
+      "recall_at_10": 1.0,
+      "precision_at_5": 0.2,
+      "hit_at_5": 1,
+      "mrr": 1.0,
+      "ndcg_at_5": 1.0,
+      "latency_ms": 14.796999981626868,
+      "retrieved_pages_top5": [
+        [
+          "89b4ad54-9b72-4ea5-b332-34295aff54da",
+          15,
+          16
+        ],
+        [
+          "bb345269-249c-442e-9ae9-ebfdd0e659bb",
+          1,
+          2
+        ],
+        [
+          "89b4ad54-9b72-4ea5-b332-34295aff54da",
+          12,
+          13
+        ],
+        [
+          "89b4ad54-9b72-4ea5-b332-34295aff54da",
+          10,
+          11
+        ],
+        [
+          "bb345269-249c-442e-9ae9-ebfdd0e659bb",
+          2,
+          3
+        ]
+      ]
+    },
+    {
+      "case_id": "M48-34",
+      "language": "bn",
+      "category": "cross_language_retrieval",
+      "difficulty": "medium",
+      "recall_at_5": 1.0,
+      "recall_at_10": 1.0,
+      "precision_at_5": 0.2,
+      "hit_at_5": 1,
+      "mrr": 1.0,
+      "ndcg_at_5": 1.0,
+      "latency_ms": 17.13049999671057,
+      "retrieved_pages_top5": [
+        [
+          "bb345269-249c-442e-9ae9-ebfdd0e659bb",
+          4,
+          5
+        ],
+        [
+          "bb345269-249c-442e-9ae9-ebfdd0e659bb",
+          2,
+          3
+        ],
+        [
+          "bb345269-249c-442e-9ae9-ebfdd0e659bb",
+          1,
+          2
+        ],
+        [
+          "89b4ad54-9b72-4ea5-b332-34295aff54da",
+          15,
+          16
+        ],
+        [
+          "89b4ad54-9b72-4ea5-b332-34295aff54da",
+          14,
+          15
+        ]
+      ]
+    },
+    {
+      "case_id": "M48-35",
+      "language": "bn",
+      "category": "cross_language_retrieval",
+      "difficulty": "hard",
+      "recall_at_5": 1.0,
+      "recall_at_10": 1.0,
+      "precision_at_5": 0.2,
+      "hit_at_5": 1,
+      "mrr": 0.5,
+      "ndcg_at_5": 0.6309297535714574,
+      "latency_ms": 18.994999991264194,
+      "retrieved_pages_top5": [
+        [
+          "89b4ad54-9b72-4ea5-b332-34295aff54da",
+          15,
+          16
+        ],
+        [
+          "89b4ad54-9b72-4ea5-b332-34295aff54da",
+          14,
+          15
+        ],
+        [
+          "89b4ad54-9b72-4ea5-b332-34295aff54da",
+          16,
+          16
+        ],
+        [
+          "bb345269-249c-442e-9ae9-ebfdd0e659bb",
+          4,
+          5
+        ],
+        [
+          "bb345269-249c-442e-9ae9-ebfdd0e659bb",
+          2,
+          3
+        ]
+      ]
+    },
+    {
+      "case_id": "M48-36",
+      "language": "bn",
+      "category": "cross_language_retrieval",
+      "difficulty": "medium",
+      "recall_at_5": 1.0,
+      "recall_at_10": 1.0,
+      "precision_at_5": 0.2,
+      "hit_at_5": 1,
+      "mrr": 1.0,
+      "ndcg_at_5": 1.0,
+      "latency_ms": 19.578900013584644,
+      "retrieved_pages_top5": [
+        [
+          "57fd12fe-7b20-4768-913b-e28ca2486f71",
+          20,
+          21
+        ]
+      ]
+    },
+    {
+      "case_id": "M48-37",
+      "language": "en",
+      "category": "ambiguous_or_conflicting",
+      "difficulty": "hard",
+      "recall_at_5": 1.0,
+      "recall_at_10": 1.0,
+      "precision_at_5": 0.6,
+      "hit_at_5": 1,
+      "mrr": 1.0,
+      "ndcg_at_5": 0.8529278650606569,
+      "latency_ms": 20.431799988728017,
+      "retrieved_pages_top5": [
+        [
+          "89b4ad54-9b72-4ea5-b332-34295aff54da",
+          10,
+          11
+        ],
+        [
+          "89b4ad54-9b72-4ea5-b332-34295aff54da",
+          12,
+          13
+        ],
+        [
+          "bb345269-249c-442e-9ae9-ebfdd0e659bb",
+          1,
+          2
+        ],
+        [
+          "bb345269-249c-442e-9ae9-ebfdd0e659bb",
+          2,
+          3
+        ],
+        [
+          "89b4ad54-9b72-4ea5-b332-34295aff54da",
+          11,
+          12
+        ]
+      ]
+    },
+    {
+      "case_id": "M48-38",
+      "language": "en",
+      "category": "ambiguous_or_conflicting",
+      "difficulty": "medium",
+      "recall_at_5": 1.0,
+      "recall_at_10": 1.0,
+      "precision_at_5": 0.4,
+      "hit_at_5": 1,
+      "mrr": 1.0,
+      "ndcg_at_5": 1.0,
+      "latency_ms": 16.919099958613515,
+      "retrieved_pages_top5": [
+        [
+          "89b4ad54-9b72-4ea5-b332-34295aff54da",
+          12,
+          13
+        ],
+        [
+          "bb345269-249c-442e-9ae9-ebfdd0e659bb",
+          1,
+          2
+        ],
+        [
+          "89b4ad54-9b72-4ea5-b332-34295aff54da",
+          11,
+          12
+        ],
+        [
+          "89b4ad54-9b72-4ea5-b332-34295aff54da",
+          17,
+          17
+        ],
+        [
+          "89b4ad54-9b72-4ea5-b332-34295aff54da",
+          10,
+          11
+        ]
+      ]
+    },
+    {
+      "case_id": "M48-39",
+      "language": "en",
+      "category": "ambiguous_or_conflicting",
+      "difficulty": "hard",
+      "recall_at_5": 1.0,
+      "recall_at_10": 1.0,
+      "precision_at_5": 0.2,
+      "hit_at_5": 1,
+      "mrr": 1.0,
+      "ndcg_at_5": 1.0,
+      "latency_ms": 25.894700025673956,
+      "retrieved_pages_top5": [
+        [
+          "89b4ad54-9b72-4ea5-b332-34295aff54da",
+          17,
+          17
+        ],
+        [
+          "bb345269-249c-442e-9ae9-ebfdd0e659bb",
+          1,
+          2
+        ],
+        [
+          "89b4ad54-9b72-4ea5-b332-34295aff54da",
+          11,
+          12
+        ],
+        [
+          "bb345269-249c-442e-9ae9-ebfdd0e659bb",
+          4,
+          5
+        ],
+        [
+          "89b4ad54-9b72-4ea5-b332-34295aff54da",
+          10,
+          11
+        ]
+      ]
+    },
+    {
+      "case_id": "M48-40",
+      "language": "bn",
+      "category": "ambiguous_or_conflicting",
+      "difficulty": "hard",
+      "recall_at_5": 1.0,
+      "recall_at_10": 1.0,
+      "precision_at_5": 0.4,
+      "hit_at_5": 1,
+      "mrr": 1.0,
+      "ndcg_at_5": 1.0,
+      "latency_ms": 22.62859995244071,
+      "retrieved_pages_top5": [
+        [
+          "bb345269-249c-442e-9ae9-ebfdd0e659bb",
+          2,
+          3
+        ],
+        [
+          "89b4ad54-9b72-4ea5-b332-34295aff54da",
+          16,
+          16
+        ],
+        [
+          "89b4ad54-9b72-4ea5-b332-34295aff54da",
+          12,
+          13
+        ],
+        [
+          "89b4ad54-9b72-4ea5-b332-34295aff54da",
+          11,
+          12
+        ],
+        [
+          "89b4ad54-9b72-4ea5-b332-34295aff54da",
+          10,
+          11
+        ]
+      ]
+    },
+    {
+      "case_id": "M48-41",
+      "language": "bn",
+      "category": "ambiguous_or_conflicting",
+      "difficulty": "hard",
+      "recall_at_5": 1.0,
+      "recall_at_10": 1.0,
+      "precision_at_5": 0.2,
+      "hit_at_5": 1,
+      "mrr": 1.0,
+      "ndcg_at_5": 1.0,
+      "latency_ms": 33.11940003186464,
+      "retrieved_pages_top5": [
+        [
+          "89b4ad54-9b72-4ea5-b332-34295aff54da",
+          17,
+          17
+        ],
+        [
+          "bb345269-249c-442e-9ae9-ebfdd0e659bb",
+          1,
+          2
+        ],
+        [
+          "bb345269-249c-442e-9ae9-ebfdd0e659bb",
+          2,
+          3
+        ],
+        [
+          "89b4ad54-9b72-4ea5-b332-34295aff54da",
+          16,
+          16
+        ],
+        [
+          "89b4ad54-9b72-4ea5-b332-34295aff54da",
+          11,
+          12
+        ]
+      ]
+    },
+    {
+      "case_id": "M48-42",
+      "language": "bn",
+      "category": "ambiguous_or_conflicting",
+      "difficulty": "medium",
+      "recall_at_5": 1.0,
+      "recall_at_10": 1.0,
+      "precision_at_5": 0.4,
+      "hit_at_5": 1,
+      "mrr": 1.0,
+      "ndcg_at_5": 1.0,
+      "latency_ms": 14.819400035776198,
+      "retrieved_pages_top5": [
+        [
+          "89b4ad54-9b72-4ea5-b332-34295aff54da",
+          12,
+          13
+        ],
+        [
+          "bb345269-249c-442e-9ae9-ebfdd0e659bb",
+          1,
+          2
+        ],
+        [
+          "bb345269-249c-442e-9ae9-ebfdd0e659bb",
+          2,
+          3
+        ],
+        [
+          "89b4ad54-9b72-4ea5-b332-34295aff54da",
+          15,
+          16
+        ],
+        [
+          "89b4ad54-9b72-4ea5-b332-34295aff54da",
+          10,
+          11
+        ]
+      ]
+    }
+  ],
+  "generation_per_case": [
+    {
+      "case_id": "M48-01",
+      "language": "en",
+      "category": "direct_factual",
+      "answerability": "answerable",
+      "citation_validation_status": "valid_grounded",
+      "repair_attempted": true,
+      "valid_citations": [
+        "S1",
+        "S2",
+        "S3"
+      ],
+      "cited_source_count": 3,
+      "considered_source_count": 3,
+      "page_match": true,
+      "abstained": false,
+      "prompt_injection_safe": true,
+      "budget_compliant": true,
+      "no_provisional_leak": true,
+      "answer_point_coverage": 1.0,
+      "rubric_score": 3
+    },
+    {
+      "case_id": "M48-02",
+      "language": "en",
+      "category": "direct_factual",
+      "answerability": "answerable",
+      "citation_validation_status": "valid_grounded",
+      "repair_attempted": false,
+      "valid_citations": [
+        "S1",
+        "S2",
+        "S3"
+      ],
+      "cited_source_count": 3,
+      "considered_source_count": 3,
+      "page_match": true,
+      "abstained": false,
+      "prompt_injection_safe": true,
+      "budget_compliant": true,
+      "no_provisional_leak": true,
+      "answer_point_coverage": 1.0,
+      "rubric_score": 3
+    },
+    {
+      "case_id": "M48-03",
+      "language": "en",
+      "category": "direct_factual",
+      "answerability": "answerable",
+      "citation_validation_status": "valid_grounded",
+      "repair_attempted": false,
+      "valid_citations": [
+        "S1",
+        "S2"
+      ],
+      "cited_source_count": 2,
+      "considered_source_count": 2,
+      "page_match": true,
+      "abstained": false,
+      "prompt_injection_safe": true,
+      "budget_compliant": true,
+      "no_provisional_leak": true,
+      "answer_point_coverage": 1.0,
+      "rubric_score": 3
+    },
+    {
+      "case_id": "M48-04",
+      "language": "en",
+      "category": "direct_factual",
+      "answerability": "answerable",
+      "citation_validation_status": "valid_grounded",
+      "repair_attempted": false,
+      "valid_citations": [
+        "S1",
+        "S2",
+        "S3"
+      ],
+      "cited_source_count": 3,
+      "considered_source_count": 3,
+      "page_match": true,
+      "abstained": false,
+      "prompt_injection_safe": true,
+      "budget_compliant": true,
+      "no_provisional_leak": true,
+      "answer_point_coverage": 1.0,
+      "rubric_score": 3
+    },
+    {
+      "case_id": "M48-05",
+      "language": "en",
+      "category": "direct_factual",
+      "answerability": "answerable",
+      "citation_validation_status": "valid_grounded",
+      "repair_attempted": false,
+      "valid_citations": [
+        "S1",
+        "S2",
+        "S3"
+      ],
+      "cited_source_count": 3,
+      "considered_source_count": 3,
+      "page_match": true,
+      "abstained": false,
+      "prompt_injection_safe": true,
+      "budget_compliant": true,
+      "no_provisional_leak": true,
+      "answer_point_coverage": 1.0,
+      "rubric_score": 3
+    },
+    {
+      "case_id": "M48-06",
+      "language": "bn",
+      "category": "direct_factual",
+      "answerability": "answerable",
+      "citation_validation_status": "valid_grounded",
+      "repair_attempted": false,
+      "valid_citations": [
+        "S1"
+      ],
+      "cited_source_count": 1,
+      "considered_source_count": 1,
+      "page_match": true,
+      "abstained": false,
+      "prompt_injection_safe": true,
+      "budget_compliant": true,
+      "no_provisional_leak": true,
+      "answer_point_coverage": 1.0,
+      "rubric_score": 3
+    },
+    {
+      "case_id": "M48-07",
+      "language": "bn",
+      "category": "direct_factual",
+      "answerability": "answerable",
+      "citation_validation_status": "valid_grounded",
+      "repair_attempted": false,
+      "valid_citations": [
+        "S1"
+      ],
+      "cited_source_count": 1,
+      "considered_source_count": 1,
+      "page_match": true,
+      "abstained": false,
+      "prompt_injection_safe": true,
+      "budget_compliant": true,
+      "no_provisional_leak": true,
+      "answer_point_coverage": 1.0,
+      "rubric_score": 3
+    },
+    {
+      "case_id": "M48-08",
+      "language": "bn",
+      "category": "direct_factual",
+      "answerability": "answerable",
+      "citation_validation_status": "valid_grounded",
+      "repair_attempted": false,
+      "valid_citations": [
+        "S1"
+      ],
+      "cited_source_count": 1,
+      "considered_source_count": 1,
+      "page_match": true,
+      "abstained": false,
+      "prompt_injection_safe": true,
+      "budget_compliant": true,
+      "no_provisional_leak": true,
+      "answer_point_coverage": 1.0,
+      "rubric_score": 3
+    },
+    {
+      "case_id": "M48-09",
+      "language": "bn",
+      "category": "direct_factual",
+      "answerability": "answerable",
+      "citation_validation_status": "valid_grounded",
+      "repair_attempted": false,
+      "valid_citations": [
+        "S1"
+      ],
+      "cited_source_count": 1,
+      "considered_source_count": 1,
+      "page_match": true,
+      "abstained": false,
+      "prompt_injection_safe": true,
+      "budget_compliant": true,
+      "no_provisional_leak": true,
+      "answer_point_coverage": 1.0,
+      "rubric_score": 3
+    },
+    {
+      "case_id": "M48-10",
+      "language": "bn",
+      "category": "direct_factual",
+      "answerability": "answerable",
+      "citation_validation_status": "valid_grounded",
+      "repair_attempted": false,
+      "valid_citations": [
+        "S1",
+        "S2"
+      ],
+      "cited_source_count": 2,
+      "considered_source_count": 2,
+      "page_match": true,
+      "abstained": false,
+      "prompt_injection_safe": true,
+      "budget_compliant": true,
+      "no_provisional_leak": true,
+      "answer_point_coverage": 1.0,
+      "rubric_score": 3
+    },
+    {
+      "case_id": "M48-11",
+      "language": "en",
+      "category": "multi_passage_synthesis",
+      "answerability": "answerable",
+      "citation_validation_status": "valid_grounded",
+      "repair_attempted": false,
+      "valid_citations": [
+        "S1",
+        "S2",
+        "S3"
+      ],
+      "cited_source_count": 3,
+      "considered_source_count": 3,
+      "page_match": true,
+      "abstained": false,
+      "prompt_injection_safe": true,
+      "budget_compliant": true,
+      "no_provisional_leak": true,
+      "answer_point_coverage": 1.0,
+      "rubric_score": 3
+    },
+    {
+      "case_id": "M48-12",
+      "language": "en",
+      "category": "multi_passage_synthesis",
+      "answerability": "answerable",
+      "citation_validation_status": "valid_grounded",
+      "repair_attempted": false,
+      "valid_citations": [
+        "S1",
+        "S2",
+        "S3"
+      ],
+      "cited_source_count": 3,
+      "considered_source_count": 3,
+      "page_match": true,
+      "abstained": false,
+      "prompt_injection_safe": true,
+      "budget_compliant": true,
+      "no_provisional_leak": true,
+      "answer_point_coverage": 1.0,
+      "rubric_score": 3
+    },
+    {
+      "case_id": "M48-13",
+      "language": "en",
+      "category": "multi_passage_synthesis",
+      "answerability": "answerable",
+      "citation_validation_status": "valid_grounded",
+      "repair_attempted": false,
+      "valid_citations": [
+        "S1",
+        "S2",
+        "S3"
+      ],
+      "cited_source_count": 3,
+      "considered_source_count": 3,
+      "page_match": true,
+      "abstained": false,
+      "prompt_injection_safe": true,
+      "budget_compliant": true,
+      "no_provisional_leak": true,
+      "answer_point_coverage": 1.0,
+      "rubric_score": 3
+    },
+    {
+      "case_id": "M48-14",
+      "language": "en",
+      "category": "multi_passage_synthesis",
+      "answerability": "answerable",
+      "citation_validation_status": "valid_grounded",
+      "repair_attempted": false,
+      "valid_citations": [
+        "S1"
+      ],
+      "cited_source_count": 1,
+      "considered_source_count": 1,
+      "page_match": true,
+      "abstained": false,
+      "prompt_injection_safe": true,
+      "budget_compliant": true,
+      "no_provisional_leak": true,
+      "answer_point_coverage": 1.0,
+      "rubric_score": 3
+    },
+    {
+      "case_id": "M48-15",
+      "language": "en",
+      "category": "multi_passage_synthesis",
+      "answerability": "answerable",
+      "citation_validation_status": "valid_grounded",
+      "repair_attempted": false,
+      "valid_citations": [
+        "S1",
+        "S2",
+        "S3"
+      ],
+      "cited_source_count": 3,
+      "considered_source_count": 3,
+      "page_match": true,
+      "abstained": false,
+      "prompt_injection_safe": true,
+      "budget_compliant": true,
+      "no_provisional_leak": true,
+      "answer_point_coverage": 1.0,
+      "rubric_score": 3
+    },
+    {
+      "case_id": "M48-16",
+      "language": "bn",
+      "category": "multi_passage_synthesis",
+      "answerability": "answerable",
+      "citation_validation_status": "valid_grounded",
+      "repair_attempted": false,
+      "valid_citations": [
+        "S1"
+      ],
+      "cited_source_count": 1,
+      "considered_source_count": 1,
+      "page_match": true,
+      "abstained": false,
+      "prompt_injection_safe": true,
+      "budget_compliant": true,
+      "no_provisional_leak": true,
+      "answer_point_coverage": 1.0,
+      "rubric_score": 3
+    },
+    {
+      "case_id": "M48-17",
+      "language": "bn",
+      "category": "multi_passage_synthesis",
+      "answerability": "answerable",
+      "citation_validation_status": "valid_grounded",
+      "repair_attempted": false,
+      "valid_citations": [
+        "S1"
+      ],
+      "cited_source_count": 1,
+      "considered_source_count": 1,
+      "page_match": true,
+      "abstained": false,
+      "prompt_injection_safe": true,
+      "budget_compliant": true,
+      "no_provisional_leak": true,
+      "answer_point_coverage": 0.5,
+      "rubric_score": 2
+    },
+    {
+      "case_id": "M48-18",
+      "language": "bn",
+      "category": "multi_passage_synthesis",
+      "answerability": "answerable",
+      "citation_validation_status": "valid_grounded",
+      "repair_attempted": false,
+      "valid_citations": [
+        "S1",
+        "S2"
+      ],
+      "cited_source_count": 2,
+      "considered_source_count": 2,
+      "page_match": true,
+      "abstained": false,
+      "prompt_injection_safe": true,
+      "budget_compliant": true,
+      "no_provisional_leak": true,
+      "answer_point_coverage": 1.0,
+      "rubric_score": 3
+    },
+    {
+      "case_id": "M48-19",
+      "language": "bn",
+      "category": "multi_passage_synthesis",
+      "answerability": "answerable",
+      "citation_validation_status": "valid_grounded",
+      "repair_attempted": false,
+      "valid_citations": [
+        "S1"
+      ],
+      "cited_source_count": 1,
+      "considered_source_count": 1,
+      "page_match": true,
+      "abstained": false,
+      "prompt_injection_safe": true,
+      "budget_compliant": true,
+      "no_provisional_leak": true,
+      "answer_point_coverage": 1.0,
+      "rubric_score": 3
+    },
+    {
+      "case_id": "M48-20",
+      "language": "bn",
+      "category": "multi_passage_synthesis",
+      "answerability": "answerable",
+      "citation_validation_status": "valid_grounded",
+      "repair_attempted": false,
+      "valid_citations": [
+        "S1",
+        "S2"
+      ],
+      "cited_source_count": 2,
+      "considered_source_count": 2,
+      "page_match": true,
+      "abstained": false,
+      "prompt_injection_safe": true,
+      "budget_compliant": true,
+      "no_provisional_leak": true,
+      "answer_point_coverage": 1.0,
+      "rubric_score": 3
+    },
+    {
+      "case_id": "M48-21",
+      "language": "en",
+      "category": "multi_page_evidence",
+      "answerability": "answerable",
+      "citation_validation_status": "valid_grounded",
+      "repair_attempted": false,
+      "valid_citations": [
+        "S1",
+        "S2",
+        "S3"
+      ],
+      "cited_source_count": 3,
+      "considered_source_count": 3,
+      "page_match": true,
+      "abstained": false,
+      "prompt_injection_safe": true,
+      "budget_compliant": true,
+      "no_provisional_leak": true,
+      "answer_point_coverage": 1.0,
+      "rubric_score": 3
+    },
+    {
+      "case_id": "M48-22",
+      "language": "en",
+      "category": "multi_page_evidence",
+      "answerability": "answerable",
+      "citation_validation_status": "valid_grounded",
+      "repair_attempted": false,
+      "valid_citations": [
+        "S1",
+        "S2",
+        "S3"
+      ],
+      "cited_source_count": 3,
+      "considered_source_count": 3,
+      "page_match": true,
+      "abstained": false,
+      "prompt_injection_safe": true,
+      "budget_compliant": true,
+      "no_provisional_leak": true,
+      "answer_point_coverage": 1.0,
+      "rubric_score": 3
+    },
+    {
+      "case_id": "M48-23",
+      "language": "en",
+      "category": "multi_page_evidence",
+      "answerability": "answerable",
+      "citation_validation_status": "valid_grounded",
+      "repair_attempted": false,
+      "valid_citations": [
+        "S1",
+        "S2",
+        "S3"
+      ],
+      "cited_source_count": 3,
+      "considered_source_count": 3,
+      "page_match": true,
+      "abstained": false,
+      "prompt_injection_safe": true,
+      "budget_compliant": true,
+      "no_provisional_leak": true,
+      "answer_point_coverage": 1.0,
+      "rubric_score": 3
+    },
+    {
+      "case_id": "M48-24",
+      "language": "en",
+      "category": "multi_page_evidence",
+      "answerability": "answerable",
+      "citation_validation_status": "valid_grounded",
+      "repair_attempted": false,
+      "valid_citations": [
+        "S1",
+        "S2",
+        "S3"
+      ],
+      "cited_source_count": 3,
+      "considered_source_count": 3,
+      "page_match": true,
+      "abstained": false,
+      "prompt_injection_safe": true,
+      "budget_compliant": true,
+      "no_provisional_leak": true,
+      "answer_point_coverage": 1.0,
+      "rubric_score": 3
+    },
+    {
+      "case_id": "M48-25",
+      "language": "bn",
+      "category": "multi_page_evidence",
+      "answerability": "answerable",
+      "citation_validation_status": "valid_grounded",
+      "repair_attempted": false,
+      "valid_citations": [
+        "S1"
+      ],
+      "cited_source_count": 1,
+      "considered_source_count": 1,
+      "page_match": false,
+      "abstained": false,
+      "prompt_injection_safe": true,
+      "budget_compliant": true,
+      "no_provisional_leak": true,
+      "answer_point_coverage": 0.0,
+      "rubric_score": 0
+    },
+    {
+      "case_id": "M48-26",
+      "language": "bn",
+      "category": "multi_page_evidence",
+      "answerability": "answerable",
+      "citation_validation_status": "valid_grounded",
+      "repair_attempted": false,
+      "valid_citations": [
+        "S1",
+        "S2",
+        "S3"
+      ],
+      "cited_source_count": 3,
+      "considered_source_count": 3,
+      "page_match": false,
+      "abstained": false,
+      "prompt_injection_safe": true,
+      "budget_compliant": true,
+      "no_provisional_leak": true,
+      "answer_point_coverage": 0.667,
+      "rubric_score": 1
+    },
+    {
+      "case_id": "M48-27",
+      "language": "bn",
+      "category": "multi_page_evidence",
+      "answerability": "answerable",
+      "citation_validation_status": "valid_grounded",
+      "repair_attempted": false,
+      "valid_citations": [
+        "S1"
+      ],
+      "cited_source_count": 1,
+      "considered_source_count": 1,
+      "page_match": true,
+      "abstained": false,
+      "prompt_injection_safe": true,
+      "budget_compliant": true,
+      "no_provisional_leak": true,
+      "answer_point_coverage": 1.0,
+      "rubric_score": 3
+    },
+    {
+      "case_id": "M48-28",
+      "language": "bn",
+      "category": "multi_page_evidence",
+      "answerability": "answerable",
+      "citation_validation_status": "valid_grounded",
+      "repair_attempted": false,
+      "valid_citations": [
+        "S1",
+        "S2"
+      ],
+      "cited_source_count": 2,
+      "considered_source_count": 2,
+      "page_match": true,
+      "abstained": false,
+      "prompt_injection_safe": true,
+      "budget_compliant": true,
+      "no_provisional_leak": true,
+      "answer_point_coverage": 1.0,
+      "rubric_score": 3
+    },
+    {
+      "case_id": "M48-29",
+      "language": "en",
+      "category": "cross_language_retrieval",
+      "answerability": "answerable",
+      "citation_validation_status": "valid_grounded",
+      "repair_attempted": false,
+      "valid_citations": [
+        "S1",
+        "S2"
+      ],
+      "cited_source_count": 2,
+      "considered_source_count": 2,
+      "page_match": true,
+      "abstained": false,
+      "prompt_injection_safe": true,
+      "budget_compliant": true,
+      "no_provisional_leak": true,
+      "answer_point_coverage": 1.0,
+      "rubric_score": 3
+    },
+    {
+      "case_id": "M48-30",
+      "language": "en",
+      "category": "cross_language_retrieval",
+      "answerability": "answerable",
+      "citation_validation_status": "valid_grounded",
+      "repair_attempted": false,
+      "valid_citations": [
+        "S1"
+      ],
+      "cited_source_count": 1,
+      "considered_source_count": 1,
+      "page_match": true,
+      "abstained": false,
+      "prompt_injection_safe": true,
+      "budget_compliant": true,
+      "no_provisional_leak": true,
+      "answer_point_coverage": 1.0,
+      "rubric_score": 3
+    },
+    {
+      "case_id": "M48-31",
+      "language": "en",
+      "category": "cross_language_retrieval",
+      "answerability": "answerable",
+      "citation_validation_status": "valid_grounded",
+      "repair_attempted": false,
+      "valid_citations": [
+        "S1",
+        "S2",
+        "S3"
+      ],
+      "cited_source_count": 3,
+      "considered_source_count": 3,
+      "page_match": false,
+      "abstained": false,
+      "prompt_injection_safe": true,
+      "budget_compliant": true,
+      "no_provisional_leak": true,
+      "answer_point_coverage": 1.0,
+      "rubric_score": 1
+    },
+    {
+      "case_id": "M48-32",
+      "language": "en",
+      "category": "cross_language_retrieval",
+      "answerability": "answerable",
+      "citation_validation_status": "valid_grounded",
+      "repair_attempted": false,
+      "valid_citations": [
+        "S1",
+        "S2",
+        "S3"
+      ],
+      "cited_source_count": 3,
+      "considered_source_count": 3,
+      "page_match": false,
+      "abstained": false,
+      "prompt_injection_safe": true,
+      "budget_compliant": true,
+      "no_provisional_leak": true,
+      "answer_point_coverage": 1.0,
+      "rubric_score": 1
+    },
+    {
+      "case_id": "M48-33",
+      "language": "bn",
+      "category": "cross_language_retrieval",
+      "answerability": "answerable",
+      "citation_validation_status": "valid_grounded",
+      "repair_attempted": false,
+      "valid_citations": [
+        "S1",
+        "S2",
+        "S3"
+      ],
+      "cited_source_count": 3,
+      "considered_source_count": 3,
+      "page_match": true,
+      "abstained": false,
+      "prompt_injection_safe": true,
+      "budget_compliant": true,
+      "no_provisional_leak": true,
+      "answer_point_coverage": 1.0,
+      "rubric_score": 3
+    },
+    {
+      "case_id": "M48-34",
+      "language": "bn",
+      "category": "cross_language_retrieval",
+      "answerability": "answerable",
+      "citation_validation_status": "valid_grounded",
+      "repair_attempted": false,
+      "valid_citations": [
+        "S1",
+        "S2"
+      ],
+      "cited_source_count": 2,
+      "considered_source_count": 2,
+      "page_match": true,
+      "abstained": false,
+      "prompt_injection_safe": true,
+      "budget_compliant": true,
+      "no_provisional_leak": true,
+      "answer_point_coverage": 1.0,
+      "rubric_score": 3
+    },
+    {
+      "case_id": "M48-35",
+      "language": "bn",
+      "category": "cross_language_retrieval",
+      "answerability": "answerable",
+      "citation_validation_status": "valid_grounded",
+      "repair_attempted": false,
+      "valid_citations": [
+        "S1",
+        "S2"
+      ],
+      "cited_source_count": 2,
+      "considered_source_count": 2,
+      "page_match": false,
+      "abstained": false,
+      "prompt_injection_safe": true,
+      "budget_compliant": true,
+      "no_provisional_leak": true,
+      "answer_point_coverage": 1.0,
+      "rubric_score": 1
+    },
+    {
+      "case_id": "M48-36",
+      "language": "bn",
+      "category": "cross_language_retrieval",
+      "answerability": "answerable",
+      "citation_validation_status": "valid_grounded",
+      "repair_attempted": false,
+      "valid_citations": [
+        "S1"
+      ],
+      "cited_source_count": 1,
+      "considered_source_count": 1,
+      "page_match": true,
+      "abstained": false,
+      "prompt_injection_safe": true,
+      "budget_compliant": true,
+      "no_provisional_leak": true,
+      "answer_point_coverage": 1.0,
+      "rubric_score": 3
+    },
+    {
+      "case_id": "M48-37",
+      "language": "en",
+      "category": "ambiguous_or_conflicting",
+      "answerability": "partial_or_conflicting",
+      "citation_validation_status": "valid_grounded",
+      "repair_attempted": false,
+      "valid_citations": [
+        "S1",
+        "S2",
+        "S3"
+      ],
+      "cited_source_count": 3,
+      "considered_source_count": 3,
+      "page_match": true,
+      "abstained": false,
+      "prompt_injection_safe": true,
+      "budget_compliant": true,
+      "no_provisional_leak": true,
+      "answer_point_coverage": 1.0,
+      "rubric_score": 3
+    },
+    {
+      "case_id": "M48-38",
+      "language": "en",
+      "category": "ambiguous_or_conflicting",
+      "answerability": "partial_or_conflicting",
+      "citation_validation_status": "valid_grounded",
+      "repair_attempted": false,
+      "valid_citations": [
+        "S1",
+        "S2",
+        "S3"
+      ],
+      "cited_source_count": 3,
+      "considered_source_count": 3,
+      "page_match": true,
+      "abstained": false,
+      "prompt_injection_safe": true,
+      "budget_compliant": true,
+      "no_provisional_leak": true,
+      "answer_point_coverage": 1.0,
+      "rubric_score": 3
+    },
+    {
+      "case_id": "M48-39",
+      "language": "en",
+      "category": "ambiguous_or_conflicting",
+      "answerability": "answerable",
+      "citation_validation_status": "valid_grounded",
+      "repair_attempted": false,
+      "valid_citations": [
+        "S1",
+        "S2",
+        "S3"
+      ],
+      "cited_source_count": 3,
+      "considered_source_count": 3,
+      "page_match": true,
+      "abstained": false,
+      "prompt_injection_safe": true,
+      "budget_compliant": true,
+      "no_provisional_leak": true,
+      "answer_point_coverage": 1.0,
+      "rubric_score": 3
+    },
+    {
+      "case_id": "M48-40",
+      "language": "bn",
+      "category": "ambiguous_or_conflicting",
+      "answerability": "partial_or_conflicting",
+      "citation_validation_status": "valid_grounded",
+      "repair_attempted": false,
+      "valid_citations": [
+        "S1"
+      ],
+      "cited_source_count": 1,
+      "considered_source_count": 1,
+      "page_match": true,
+      "abstained": false,
+      "prompt_injection_safe": true,
+      "budget_compliant": true,
+      "no_provisional_leak": true,
+      "answer_point_coverage": 0.5,
+      "rubric_score": 2
+    },
+    {
+      "case_id": "M48-41",
+      "language": "bn",
+      "category": "ambiguous_or_conflicting",
+      "answerability": "answerable",
+      "citation_validation_status": "valid_grounded",
+      "repair_attempted": false,
+      "valid_citations": [
+        "S1"
+      ],
+      "cited_source_count": 1,
+      "considered_source_count": 1,
+      "page_match": false,
+      "abstained": false,
+      "prompt_injection_safe": true,
+      "budget_compliant": true,
+      "no_provisional_leak": true,
+      "answer_point_coverage": 0.5,
+      "rubric_score": 1
+    },
+    {
+      "case_id": "M48-42",
+      "language": "bn",
+      "category": "ambiguous_or_conflicting",
+      "answerability": "partial_or_conflicting",
+      "citation_validation_status": "valid_grounded",
+      "repair_attempted": false,
+      "valid_citations": [
+        "S1",
+        "S2"
+      ],
+      "cited_source_count": 2,
+      "considered_source_count": 2,
+      "page_match": true,
+      "abstained": false,
+      "prompt_injection_safe": true,
+      "budget_compliant": true,
+      "no_provisional_leak": true,
+      "answer_point_coverage": 1.0,
+      "rubric_score": 3
+    },
+    {
+      "case_id": "M48-43",
+      "language": "en",
+      "category": "unanswerable",
+      "answerability": "unanswerable",
+      "citation_validation_status": "valid_grounded",
+      "repair_attempted": false,
+      "valid_citations": [],
+      "cited_source_count": 0,
+      "considered_source_count": 3,
+      "page_match": true,
+      "abstained": true,
+      "prompt_injection_safe": true,
+      "budget_compliant": true,
+      "no_provisional_leak": true,
+      "answer_point_coverage": 1.0,
+      "rubric_score": 3
+    },
+    {
+      "case_id": "M48-44",
+      "language": "en",
+      "category": "unanswerable",
+      "answerability": "unanswerable",
+      "citation_validation_status": "valid_grounded",
+      "repair_attempted": false,
+      "valid_citations": [],
+      "cited_source_count": 0,
+      "considered_source_count": 3,
+      "page_match": true,
+      "abstained": true,
+      "prompt_injection_safe": true,
+      "budget_compliant": true,
+      "no_provisional_leak": true,
+      "answer_point_coverage": 1.0,
+      "rubric_score": 3
+    },
+    {
+      "case_id": "M48-45",
+      "language": "en",
+      "category": "unanswerable",
+      "answerability": "unanswerable",
+      "citation_validation_status": "valid_grounded",
+      "repair_attempted": false,
+      "valid_citations": [],
+      "cited_source_count": 0,
+      "considered_source_count": 2,
+      "page_match": true,
+      "abstained": true,
+      "prompt_injection_safe": true,
+      "budget_compliant": true,
+      "no_provisional_leak": true,
+      "answer_point_coverage": 1.0,
+      "rubric_score": 3
+    },
+    {
+      "case_id": "M48-46",
+      "language": "en",
+      "category": "unanswerable",
+      "answerability": "unanswerable",
+      "citation_validation_status": "valid_grounded",
+      "repair_attempted": false,
+      "valid_citations": [],
+      "cited_source_count": 0,
+      "considered_source_count": 3,
+      "page_match": true,
+      "abstained": true,
+      "prompt_injection_safe": true,
+      "budget_compliant": true,
+      "no_provisional_leak": true,
+      "answer_point_coverage": 1.0,
+      "rubric_score": 3
+    },
+    {
+      "case_id": "M48-47",
+      "language": "bn",
+      "category": "unanswerable",
+      "answerability": "unanswerable",
+      "citation_validation_status": "valid_grounded",
+      "repair_attempted": false,
+      "valid_citations": [],
+      "cited_source_count": 0,
+      "considered_source_count": 1,
+      "page_match": true,
+      "abstained": true,
+      "prompt_injection_safe": true,
+      "budget_compliant": true,
+      "no_provisional_leak": true,
+      "answer_point_coverage": 1.0,
+      "rubric_score": 3
+    },
+    {
+      "case_id": "M48-48",
+      "language": "bn",
+      "category": "unanswerable",
+      "answerability": "unanswerable",
+      "citation_validation_status": "valid_grounded",
+      "repair_attempted": false,
+      "valid_citations": [],
+      "cited_source_count": 0,
+      "considered_source_count": 1,
+      "page_match": true,
+      "abstained": true,
+      "prompt_injection_safe": true,
+      "budget_compliant": true,
+      "no_provisional_leak": true,
+      "answer_point_coverage": 1.0,
+      "rubric_score": 3
+    },
+    {
+      "case_id": "M48-49",
+      "language": "bn",
+      "category": "unanswerable",
+      "answerability": "unanswerable",
+      "citation_validation_status": "valid_grounded",
+      "repair_attempted": false,
+      "valid_citations": [],
+      "cited_source_count": 0,
+      "considered_source_count": 3,
+      "page_match": true,
+      "abstained": true,
+      "prompt_injection_safe": true,
+      "budget_compliant": true,
+      "no_provisional_leak": true,
+      "answer_point_coverage": 1.0,
+      "rubric_score": 3
+    },
+    {
+      "case_id": "M48-50",
+      "language": "bn",
+      "category": "unanswerable",
+      "answerability": "unanswerable",
+      "citation_validation_status": "valid_grounded",
+      "repair_attempted": false,
+      "valid_citations": [],
+      "cited_source_count": 0,
+      "considered_source_count": 1,
+      "page_match": true,
+      "abstained": true,
+      "prompt_injection_safe": true,
+      "budget_compliant": true,
+      "no_provisional_leak": true,
+      "answer_point_coverage": 1.0,
+      "rubric_score": 3
+    }
+  ]
+}

@@ -1,6 +1,8 @@
 """Database operations for durable extraction job claiming, heartbeating, and atomic completion."""
 
+import json
 import logging
+from datetime import datetime
 from typing import Any
 from uuid import UUID
 
@@ -42,6 +44,7 @@ async def claim_next_job(
             JOIN public.kb_extraction_jobs j ON j.document_id = d.id
             JOIN public.kb_topics t ON t.id = d.topic_id
             JOIN public.kb_subjects s ON s.id = t.subject_id
+            JOIN public.profiles up ON up.id = d.uploader_id
             WHERE (
                 (j.status = 'queued' AND j.scheduled_at <= timezone('utc'::text, now()))
                 OR (j.status = 'processing' AND j.locked_until < timezone('utc'::text, now()))
@@ -50,6 +53,8 @@ async def claim_next_job(
             AND d.is_archived = false
             AND t.is_active = true
             AND s.is_active = true
+            AND up.role IN ('admin', 'super_admin')
+            AND up.approval_status = 'approved'
             AND j.attempts < j.max_attempts
             ORDER BY j.scheduled_at ASC
             LIMIT 1
@@ -139,6 +144,8 @@ async def complete_job_success(
     lease_token: UUID,
     pages: list[dict[str, Any]],
     has_any_text: bool,
+    parser_backend: str = "subprocess_isolated",
+    quality_summary: dict[str, Any] | None = None,
 ) -> bool:
     """Atomically persist extracted pages and mark document and job as completed.
 
@@ -155,10 +162,13 @@ async def complete_job_success(
         doc = await conn.fetchrow(
             """
             SELECT d.id, d.upload_status, d.is_archived, d.extraction_version,
-                   t.is_active AS topic_active, s.is_active AS subject_active
+                   COALESCE(d.active_chunk_version, 0) AS active_chunk_version,
+                   t.is_active AS topic_active, s.is_active AS subject_active,
+                   up.role AS uploader_role, up.approval_status AS uploader_status
             FROM public.kb_documents d
             JOIN public.kb_topics t ON t.id = d.topic_id
             JOIN public.kb_subjects s ON s.id = t.subject_id
+            JOIN public.profiles up ON up.id = d.uploader_id
             WHERE d.id = $1
             FOR UPDATE OF d;
             """,
@@ -170,9 +180,11 @@ async def complete_job_success(
             or doc["is_archived"]
             or not doc["topic_active"]
             or not doc["subject_active"]
+            or doc["uploader_role"] not in ("admin", "super_admin")
+            or doc["uploader_status"] != "approved"
         ):
             logger.warning(
-                f"Document {document_id} was deleted/archived or taxonomy inactive during processing. Aborting completion."
+                f"Document {document_id} was deleted/archived, taxonomy inactive, or uploader untrusted during processing. Aborting completion."
             )
             return False
 
@@ -207,13 +219,48 @@ async def complete_job_success(
 
         doc_version = doc["extraction_version"] or 1
 
-        # 4. Batch insert extracted pages with correct extraction_version provenance
+        # 4. Batch insert extracted pages with untouched raw_text + traceable derived layers
         if pages:
+
+            def _opt_dt(value: Any) -> datetime | None:
+                if value is None or isinstance(value, datetime):
+                    return value
+                if isinstance(value, str) and value.strip():
+                    return datetime.fromisoformat(value)
+                return None
+
             records = [
                 (
                     document_id,
                     p["page_number"],
                     p["raw_text"],
+                    p.get("normalized_text"),
+                    p.get("extraction_method", "pypdf_text"),
+                    p.get("normalization_version", 0),
+                    json.dumps(p.get("quality_diagnostics") or {}),
+                    bool(p.get("has_native_text", p["has_text"])),
+                    bool(p.get("has_usable_normalized_text", False)),
+                    bool(p.get("has_ocr_text", False)),
+                    bool(p.get("has_visual_description", False)),
+                    p.get("extraction_quality_status", "pending"),
+                    p.get("visual_triage_class", "none"),
+                    p.get("ocr_text"),
+                    p.get("ocr_confidence"),
+                    p.get("ocr_model"),
+                    p.get("ocr_version"),
+                    p.get("ocr_status", "not_needed"),
+                    p.get("ocr_error"),
+                    _opt_dt(p.get("ocr_processed_at")),
+                    p.get("visual_description"),
+                    json.dumps(p["visual_metadata"])
+                    if p.get("visual_metadata") is not None
+                    else None,
+                    p.get("visual_model"),
+                    p.get("visual_version"),
+                    p.get("visual_confidence"),
+                    p.get("visual_status", "not_needed"),
+                    p.get("visual_error"),
+                    _opt_dt(p.get("visual_processed_at")),
                     p["character_count"],
                     p["word_count"],
                     p["has_text"],
@@ -227,20 +274,55 @@ async def complete_job_success(
                     document_id,
                     page_number,
                     raw_text,
+                    normalized_text,
+                    extraction_method,
+                    normalization_version,
+                    quality_diagnostics,
+                    has_native_text,
+                    has_usable_normalized_text,
+                    has_ocr_text,
+                    has_visual_description,
+                    extraction_quality_status,
+                    visual_triage_class,
+                    ocr_text,
+                    ocr_confidence,
+                    ocr_model,
+                    ocr_version,
+                    ocr_status,
+                    ocr_error,
+                    ocr_processed_at,
+                    visual_description,
+                    visual_metadata,
+                    visual_model,
+                    visual_version,
+                    visual_confidence,
+                    visual_status,
+                    visual_error,
+                    visual_processed_at,
                     character_count,
                     word_count,
                     has_text,
                     extraction_version
-                ) VALUES ($1, $2, $3, $4, $5, $6, $7);
+                ) VALUES (
+                    $1, $2, $3, $4, $5, $6, $7::jsonb,
+                    $8, $9, $10, $11, $12, $13,
+                    $14, $15, $16, $17, $18, $19, $20,
+                    $21, $22::jsonb, $23, $24, $25, $26, $27, $28,
+                    $29, $30, $31, $32
+                );
                 """,
                 records,
             )
 
         total_pages = len(pages)
-        pages_with_text = sum(1 for p in pages if p["has_text"])
+        pages_with_text = sum(
+            1
+            for p in pages
+            if p["has_text"] or p.get("has_ocr_text") or p.get("has_visual_description")
+        )
         final_doc_status = "completed" if has_any_text else "completed_no_text"
 
-        # 5. Update document metadata
+        # 5. Update document metadata and enqueue background indexing job if text was extracted
         await conn.execute(
             """
             UPDATE public.kb_documents
@@ -248,6 +330,8 @@ async def complete_job_success(
                 total_pages = $3,
                 processed_pages = $3,
                 pages_with_text = $4,
+                extraction_parser_backend = $5,
+                extraction_quality_summary = $6::jsonb,
                 error_code = NULL,
                 error_message = NULL,
                 updated_at = timezone('utc'::text, now())
@@ -257,7 +341,39 @@ async def complete_job_success(
             final_doc_status,
             total_pages,
             pages_with_text,
+            parser_backend,
+            json.dumps(quality_summary or {}),
         )
+
+        if has_any_text and final_doc_status == "completed":
+            next_chunk_version = int(doc["active_chunk_version"]) + 1
+            # Decoupled durable indexing queue
+            await conn.execute(
+                """
+                INSERT INTO public.kb_indexing_jobs (
+                    document_id,
+                    source_version,
+                    chunking_version,
+                    status,
+                    scheduled_at
+                ) VALUES ($1, $2, $3, 'queued', timezone('utc'::text, now()))
+                ON CONFLICT (document_id) WHERE status IN ('queued', 'processing')
+                DO NOTHING;
+                """,
+                document_id,
+                doc_version,
+                next_chunk_version,
+            )
+        else:
+            await conn.execute(
+                """
+                UPDATE public.kb_documents
+                SET indexing_status = 'not_indexable',
+                    updated_at = timezone('utc'::text, now())
+                WHERE id = $1;
+                """,
+                document_id,
+            )
 
         # 6. Update extraction job to completed
         await conn.execute(

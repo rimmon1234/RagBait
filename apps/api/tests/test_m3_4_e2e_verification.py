@@ -210,12 +210,14 @@ def make_pdf(pages_text: list[str | None]) -> bytes:
 
 @pytest.mark.asyncio
 async def test_two_student_e2e_pdf_upload_and_lifecycle(client: httpx.AsyncClient):
-    """Full scenario: Student A uploads PDF, extraction runs, Student B views/downloads, cross-deletion blocked."""
+    """Full scenario: Trusted admin uploads PDF, extraction runs, approved students view/download, cross-deletion blocked."""
     subject_id, topic_id = await create_taxonomy()
-    student_a_id, email_a = await create_db_user(email="student_a@univ.edu", status="approved")
+    student_a_id, email_a = await create_db_user(
+        email="admin_uploader@univ.edu", role="admin", status="approved"
+    )
     student_b_id, email_b = await create_db_user(email="student_b@univ.edu", status="approved")
 
-    # 1. Student A prepares a 3-page academic PDF
+    # 1. Admin prepares a 3-page academic PDF
     page1 = "Page 1: Selection σ_salary > 50000 and Projection π_name,salary"
     page2 = "Page 2: Natural Join Relation_R ⨝ Relation_S"
     page3 = "Page 3: Query Tree Optimization"
@@ -223,8 +225,8 @@ async def test_two_student_e2e_pdf_upload_and_lifecycle(client: httpx.AsyncClien
     pdf_size = len(pdf_bytes)
     pdf_sha256 = hashlib.sha256(pdf_bytes).hexdigest()
 
-    # Student A authenticates
-    headers_a = setup_auth(student_a_id, email=email_a)
+    # Admin authenticates
+    headers_a = setup_auth(student_a_id, email=email_a, role="admin")
 
     # Step 2: Student A requests upload reservation intent
     intent_resp = await client.post(
@@ -347,9 +349,9 @@ async def test_two_student_e2e_pdf_upload_and_lifecycle(client: httpx.AsyncClien
     assert del_b.json()["error"]["code"] == "UNAUTHORIZED_DELETION"
 
     # =========================================================================
-    # Step 10: Student A safely deletes their own document
+    # Step 10: Admin uploader safely deletes their own document
     # =========================================================================
-    headers_a = setup_auth(student_a_id, email=email_a)
+    headers_a = setup_auth(student_a_id, email=email_a, role="admin")
     del_a = await client.delete(f"/api/v1/kb/documents/{doc_id}", headers=headers_a)
     assert del_a.status_code == 204
 
@@ -369,16 +371,18 @@ async def test_two_student_e2e_pdf_upload_and_lifecycle(client: httpx.AsyncClien
 
 @pytest.mark.asyncio
 async def test_two_student_e2e_txt_upload(client: httpx.AsyncClient):
-    """Full scenario for TXT document upload, logical pagination, and cross-student viewing."""
+    """Full scenario for TXT document upload, logical pagination, and student viewing."""
     subject_id, topic_id = await create_taxonomy()
-    student_a_id, email_a = await create_db_user(email="student_txt_a@univ.edu", status="approved")
+    student_a_id, email_a = await create_db_user(
+        email="admin_txt_a@univ.edu", role="admin", status="approved"
+    )
     student_b_id, email_b = await create_db_user(email="student_txt_b@univ.edu", status="approved")
 
     txt_content = b"Database Normalization.\n1NF: Atomic values.\n\x0c2NF: No partial dependencies.\n\x0c3NF: No transitive dependencies.\n"
     txt_size = len(txt_content)
     txt_sha256 = hashlib.sha256(txt_content).hexdigest()
 
-    headers_a = setup_auth(student_a_id, email=email_a)
+    headers_a = setup_auth(student_a_id, email=email_a, role="admin")
 
     # Upload intent
     intent_resp = await client.post(
@@ -433,9 +437,9 @@ async def test_scanned_pdf_completed_no_text_lifecycle(client: httpx.AsyncClient
     """Scanned image-only PDF with zero text transitions to completed_no_text safely."""
     subject_id, topic_id = await create_taxonomy()
     student_id, student_email = await create_db_user(
-        email="scanned_uploader@univ.edu", status="approved"
+        email="scanned_uploader@univ.edu", role="admin", status="approved"
     )
-    headers = setup_auth(student_id, email=student_email)
+    headers = setup_auth(student_id, email=student_email, role="admin")
 
     # PDF with 2 blank / non-selectable pages
     scanned_pdf = make_pdf([None, None])

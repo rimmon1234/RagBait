@@ -1,8 +1,10 @@
 """User identity, access status, profile, and heartbeat endpoints."""
 
 from fastapi import APIRouter, Depends
+from pydantic import BaseModel
 
 from app.core.dependencies import (
+    check_user_chat_entitlement,
     get_current_profile,
     get_current_user,
     get_token,
@@ -23,12 +25,46 @@ from app.modules.users.service import update_user_display_name
 router = APIRouter(prefix="/me", tags=["Identity"])
 
 
+class ChatEntitlementResponse(BaseModel):
+    """Authoritative chat contribution entitlement response."""
+
+    eligible: bool
+    can_chat: bool
+    reason_code: str | None = None
+    reason: str | None = None
+    eligible_credential_count: int = 0
+
+
 @router.get("", response_model=UserProfile, dependencies=[Depends(rate_limit_general)])
 async def get_my_profile(
     profile: UserProfile = Depends(require_not_suspended),
 ) -> UserProfile:
     """Return the profile of the currently authenticated user."""
     return profile
+
+
+@router.get(
+    "/chat-entitlement",
+    response_model=ChatEntitlementResponse,
+    dependencies=[Depends(rate_limit_general)],
+    summary="Get user AI chat contribution entitlement status",
+)
+async def get_my_chat_entitlement(
+    current_user: AuthenticatedUser = Depends(get_current_user),
+    profile: UserProfile = Depends(require_not_suspended),
+) -> ChatEntitlementResponse:
+    """Evaluate whether the user satisfies the platform chat contribution requirement."""
+    eligible, reason_code, message, count = await check_user_chat_entitlement(
+        user_id=current_user.user_id,
+        profile=profile,
+    )
+    return ChatEntitlementResponse(
+        eligible=eligible,
+        can_chat=eligible,
+        reason_code=reason_code,
+        reason=message,
+        eligible_credential_count=count,
+    )
 
 
 @router.get(

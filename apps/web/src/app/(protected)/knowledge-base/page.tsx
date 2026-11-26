@@ -4,11 +4,14 @@ import Link from "next/link";
 import { useMemo, useState } from "react";
 import { BookOpen, Plus, UploadCloud } from "lucide-react";
 import { useKnowledgeSubjects } from "@/lib/knowledge-base/useKnowledgeSubjects";
+import { useCurrentUser } from "@/lib/knowledge-base/useCurrentUser";
 import { KnowledgeSearch } from "@/components/knowledge-base/KnowledgeSearch";
 import { SubjectGrid } from "@/components/knowledge-base/SubjectGrid";
 import { DocumentUploadModal } from "@/components/knowledge-base/DocumentUploadModal";
 
 export default function KnowledgeBaseCataloguePage() {
+  const { user: currentUser } = useCurrentUser();
+  const isAdmin = currentUser?.role === "admin" || currentUser?.role === "super_admin";
   const { subjects, loading, error, refetch } = useKnowledgeSubjects();
   const [search, setSearch] = useState("");
   const [isUploadModalOpen, setIsUploadModalOpen] = useState(false);
@@ -39,28 +42,32 @@ export default function KnowledgeBaseCataloguePage() {
             Knowledge Base
           </h1>
           <p className="mt-1.5 text-sm text-gray-600 max-w-2xl">
-            Browse peer-curated lecture notes, syllabus materials, and past papers organized by subject.
-            Students and faculty administrators can contribute study materials directly.
+            Browse curated lecture notes, syllabus materials, and study guides organized by subject.
+            {isAdmin
+              ? " Administrators can manage subjects and upload materials directly."
+              : " Curated materials are published by faculty administrators."}
           </p>
         </div>
 
-        <div className="flex flex-wrap items-center gap-2 self-start sm:self-auto">
-          <Link
-            href="/admin/knowledge-base/subjects"
-            className="inline-flex items-center gap-1.5 rounded-xl border border-gray-300 bg-white px-3.5 py-2.5 text-sm font-semibold text-gray-700 shadow-sm hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2"
-          >
-            <Plus className="h-4 w-4 text-blue-600" />
-            <span>Manage / Add Subjects</span>
-          </Link>
-          <button
-            type="button"
-            onClick={() => setIsUploadModalOpen(true)}
-            className="inline-flex items-center gap-2 rounded-xl bg-blue-600 px-4 py-2.5 text-sm font-semibold text-white shadow-sm hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2"
-          >
-            <UploadCloud className="h-4 w-4" />
-            <span>Upload Material</span>
-          </button>
-        </div>
+        {isAdmin && (
+          <div className="flex flex-wrap items-center gap-2 self-start sm:self-auto">
+            <Link
+              href="/admin/knowledge-base/subjects"
+              className="inline-flex items-center gap-1.5 rounded-xl border border-gray-300 bg-white px-3.5 py-2.5 text-sm font-semibold text-gray-700 shadow-sm hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2"
+            >
+              <Plus className="h-4 w-4 text-blue-600" />
+              <span>Manage / Add Subjects</span>
+            </Link>
+            <button
+              type="button"
+              onClick={() => setIsUploadModalOpen(true)}
+              className="inline-flex items-center gap-2 rounded-xl bg-blue-600 px-4 py-2.5 text-sm font-semibold text-white shadow-sm hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2"
+            >
+              <UploadCloud className="h-4 w-4" />
+              <span>Upload Material</span>
+            </button>
+          </div>
+        )}
       </div>
 
       {/* Search Bar */}
@@ -90,12 +97,14 @@ export default function KnowledgeBaseCataloguePage() {
       </div>
 
       {/* Direct Upload Modal */}
-      <DocumentUploadModal
-        isOpen={isUploadModalOpen}
-        onClose={() => setIsUploadModalOpen(false)}
-        onSuccess={() => refetch()}
-        availableSubjects={subjects}
-      />
+      {isAdmin && (
+        <DocumentUploadModal
+          isOpen={isUploadModalOpen}
+          onClose={() => setIsUploadModalOpen(false)}
+          onSuccess={() => refetch()}
+          availableSubjects={subjects}
+        />
+      )}
     </div>
   );
 }

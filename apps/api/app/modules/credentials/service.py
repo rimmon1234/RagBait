@@ -328,7 +328,7 @@ async def validate_user_credential(
         outcome=outcome_val,  # type: ignore[arg-type]
         safe_code=probe_result.safe_code,
         message=probe_result.message,
-        billing_tier=probe_result.billing_tier,  # type: ignore[arg-type]
+        billing_tier=probe_result.billing_tier,
         billing_verification_error=probe_result.billing_error,
         validated_at=datetime.now(UTC),
         is_valid=(outcome_val == "valid"),

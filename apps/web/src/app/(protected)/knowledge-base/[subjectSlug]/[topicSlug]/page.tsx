@@ -21,6 +21,7 @@ export default function TopicDocumentsPage() {
   const topicSlug = routeParams?.topicSlug;
 
   const { user: currentUser } = useCurrentUser();
+  const isAdmin = currentUser?.role === "admin" || currentUser?.role === "super_admin";
 
   // Find Subject
   const { subjects, loading: subjectsLoading } = useKnowledgeSubjects();
@@ -122,14 +123,16 @@ export default function TopicDocumentsPage() {
           )}
         </div>
 
-        <button
-          type="button"
-          onClick={() => setIsUploadModalOpen(true)}
-          className="inline-flex items-center gap-2 rounded-xl bg-blue-600 px-4 py-2.5 text-sm font-semibold text-white shadow-sm hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 self-start sm:self-auto"
-        >
-          <UploadCloud className="h-4 w-4" />
-          <span>Upload Material</span>
-        </button>
+        {isAdmin && (
+          <button
+            type="button"
+            onClick={() => setIsUploadModalOpen(true)}
+            className="inline-flex items-center gap-2 rounded-xl bg-blue-600 px-4 py-2.5 text-sm font-semibold text-white shadow-sm hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 self-start sm:self-auto"
+          >
+            <UploadCloud className="h-4 w-4" />
+            <span>Upload Material</span>
+          </button>
+        )}
       </div>
 
       {/* Error state */}
@@ -152,18 +155,20 @@ export default function TopicDocumentsPage() {
           onPreview={(doc) => setPreviewDoc(doc)}
           onDownload={handleDownload}
           onDelete={handleDelete}
-          onUploadClick={() => setIsUploadModalOpen(true)}
+          onUploadClick={isAdmin ? () => setIsUploadModalOpen(true) : undefined}
         />
       </div>
 
       {/* Document Upload Modal */}
-      <DocumentUploadModal
-        isOpen={isUploadModalOpen}
-        onClose={() => setIsUploadModalOpen(false)}
-        onSuccess={() => refetchDocs()}
-        initialSubjectId={currentSubject.id}
-        initialTopicId={currentTopic.id}
-      />
+      {isAdmin && (
+        <DocumentUploadModal
+          isOpen={isUploadModalOpen}
+          onClose={() => setIsUploadModalOpen(false)}
+          onSuccess={() => refetchDocs()}
+          initialSubjectId={currentSubject.id}
+          initialTopicId={currentTopic.id}
+        />
+      )}
 
       {/* Document Preview Drawer */}
       <DocumentPreviewDrawer

@@ -3,6 +3,7 @@
 import logging
 from typing import Any
 
+from app.modules.routing.free_models import is_approved_free_model
 from app.modules.routing.schemas import (
     CandidateFilterResult,
     RoutingCandidate,
@@ -64,7 +65,22 @@ def filter_candidates(
             )
             continue
 
-        # 2. Model matching if specific model requested
+        # 2. Strict Free-Model boundary for community-shared credentials
+        if c.is_shared_credential and not is_approved_free_model(c.provider_id, c.model_id):
+            results.append(
+                CandidateFilterResult(
+                    candidate=c,
+                    eligible=False,
+                    rejection_code="PAID_MODEL_COMMUNITY_DISALLOWED",
+                    rejection_reason=(
+                        f"Community-shared credential for provider '{c.provider_id}' "
+                        f"cannot be dispatched with non-free model '{c.model_id}'"
+                    ),
+                )
+            )
+            continue
+
+        # 3. Model matching if specific model requested
         if requested_model_id:
             # Match exact model_id or dynamic alias
             model_matches = (

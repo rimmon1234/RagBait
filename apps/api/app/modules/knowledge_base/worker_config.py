@@ -1,6 +1,7 @@
 """Configuration settings for the Knowledge Base background extraction worker."""
 
 import os
+from typing import Literal
 from uuid import uuid4
 
 from pydantic import Field, model_validator
@@ -101,6 +102,52 @@ class WorkerSettings(BaseSettings):
         ge=4096,
         le=1_048_576,
         description="Chunk size for streaming file downloads from Supabase Storage",
+    )
+
+    # Stage 3 Parser Sandbox Isolation Settings
+    PARSER_ISOLATION_MODE: Literal[
+        "container_required",
+        "container_preferred",
+        "subprocess_legacy",
+    ] = Field(
+        default="container_preferred",
+        description="Isolation mode for untrusted document parsing",
+    )
+    PARSER_SANDBOX_IMAGE: str = Field(
+        default="ragbait-parser-sandbox:latest",
+        description="Hardened non-root Docker image for isolated parsing",
+    )
+    PARSER_ENGINE: Literal["pypdf", "pymupdf"] = Field(
+        default="pypdf",
+        description="PDF extraction engine used inside the parser boundary",
+    )
+    PARSER_SANDBOX_MEMORY: str = Field(
+        default="512m",
+        description="Memory limit for parser sandbox container",
+    )
+    PARSER_SANDBOX_CPUS: str = Field(
+        default="1.0",
+        description="CPU limit for parser sandbox container",
+    )
+    PARSER_SANDBOX_PIDS_LIMIT: int = Field(
+        default=32,
+        ge=8,
+        le=256,
+        description="PID ceiling inside parser sandbox container",
+    )
+    ENABLE_CONDITIONAL_OCR: bool = Field(
+        default=True,
+        description="Run Stage 4 conditional OCR inside container sandbox for flagged pages",
+    )
+    ENABLE_VISUAL_UNDERSTANDING: bool = Field(
+        default=True,
+        description="Run Stage 5 trusted vision understanding for rendered diagrams/tables",
+    )
+    VISUAL_MAX_CONCURRENCY: int = Field(
+        default=4,
+        ge=1,
+        le=8,
+        description="Max concurrent vision model calls per document",
     )
 
     @model_validator(mode="after")

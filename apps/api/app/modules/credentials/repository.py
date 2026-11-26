@@ -5,7 +5,7 @@ from datetime import datetime
 from typing import Any
 from uuid import UUID, uuid4
 
-import asyncpg
+import asyncpg  # type: ignore[import-untyped]
 
 from app.core.config import settings
 from app.modules.credentials.crypto import (
@@ -626,7 +626,7 @@ async def update_validation_status(
     billing_verification_error: str | None = None,
     billing_verification_source: str | None = None,
 ) -> StoredCredentialResult:
-    """Record validation outcome timestamp, billing tier, and error code."""
+    """Record validation outcome timestamp, error code, and billing tier verification."""
     async with get_vault_session() as conn:
         updated = await conn.fetchval(
             """
@@ -635,7 +635,7 @@ async def update_validation_status(
                 last_validated_at = now(),
                 validation_error_code = $2,
                 billing_tier = $3,
-                billing_verified_at = CASE WHEN $3 != 'unknown' THEN now() ELSE NULL END,
+                billing_verified_at = now(),
                 billing_verification_error = $4,
                 billing_verification_source = $5,
                 updated_at = now()

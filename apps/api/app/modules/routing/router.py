@@ -4,7 +4,7 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends
 
-from app.core.dependencies import rate_limit_general, require_chat_entitled_user
+from app.core.dependencies import rate_limit_general, require_chat_entitlement
 from app.modules.llm_gateway.schemas import ChatCompletionRequest
 from app.modules.routing import service
 from app.modules.routing.schemas import RoutePreviewResponse
@@ -20,7 +20,7 @@ routing_router = APIRouter(prefix="/routing", tags=["Inference Routing"])
 )
 async def preview_route_decision(
     req: ChatCompletionRequest,
-    current_user: Annotated[UserProfile, Depends(require_chat_entitled_user)],
+    current_user: Annotated[UserProfile, Depends(require_chat_entitlement)],
 ) -> RoutePreviewResponse:
     """Preview prospective route selection, eligible candidates, and ranking without executing."""
     return await service.preview_route(user_id=current_user.id, req=req)

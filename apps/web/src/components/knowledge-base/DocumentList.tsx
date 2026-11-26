@@ -19,7 +19,7 @@ interface DocumentListProps {
   onPreview: (doc: DocumentListItem) => void;
   onDownload: (doc: DocumentListItem) => Promise<void>;
   onDelete: (doc: DocumentListItem) => Promise<void>;
-  onUploadClick: () => void;
+  onUploadClick?: () => void;
 }
 
 type SortField = "title" | "date" | "size" | "pages";
@@ -94,7 +94,11 @@ export function DocumentList({
     return (
       <DocumentEmptyState
         title="No notes in this topic yet"
-        description="Be the first student to upload lecture notes, slides, or study guides for this topic."
+        description={
+          onUploadClick
+            ? "Upload lecture notes, slides, or study guides for this topic."
+            : "No curated lecture notes, slides, or study guides have been published in this topic yet."
+        }
         onUploadClick={onUploadClick}
         uploadButtonText="Upload Note"
       />

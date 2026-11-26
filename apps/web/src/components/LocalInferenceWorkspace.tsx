@@ -364,11 +364,11 @@ export function LocalInferenceWorkspace({
           prev.map((m) =>
             m.id === assistantMessageId
               ? {
-                  ...m,
-                  content:
-                    m.content +
-                    (m.content ? "\n\n*(Generation stopped by user)*" : "*(Generation stopped)*"),
-                }
+                ...m,
+                content:
+                  m.content +
+                  (m.content ? "\n\n*(Generation stopped by user)*" : "*(Generation stopped)*"),
+              }
               : m
           )
         );
@@ -465,11 +465,11 @@ export function LocalInferenceWorkspace({
           prev.map((m) =>
             m.id === assistantMessageId
               ? {
-                  ...m,
-                  content:
-                    m.content +
-                    (m.content ? "\n\n*(Generation stopped by user)*" : "*(Generation stopped)*"),
-                }
+                ...m,
+                content:
+                  m.content +
+                  (m.content ? "\n\n*(Generation stopped by user)*" : "*(Generation stopped)*"),
+              }
               : m
           )
         );
@@ -696,11 +696,10 @@ export function LocalInferenceWorkspace({
             role="radio"
             aria-checked={executionMode === "auto"}
             onClick={() => setExecutionMode("auto")}
-            className={`flex flex-col items-start rounded-lg p-3 text-left transition-all ${
-              executionMode === "auto"
+            className={`flex flex-col items-start rounded-lg p-3 text-left transition-all ${executionMode === "auto"
                 ? "bg-white shadow-xs border border-indigo-200 text-indigo-950 font-semibold"
                 : "text-gray-600 hover:bg-white/60 hover:text-gray-900 border border-transparent"
-            }`}
+              }`}
           >
             <div className="flex items-center gap-2">
               <Sparkles className={`h-4 w-4 ${executionMode === "auto" ? "text-indigo-600" : "text-gray-400"}`} />
@@ -716,11 +715,10 @@ export function LocalInferenceWorkspace({
             role="radio"
             aria-checked={executionMode === "owner_only"}
             onClick={() => setExecutionMode("owner_only")}
-            className={`flex flex-col items-start rounded-lg p-3 text-left transition-all ${
-              executionMode === "owner_only"
+            className={`flex flex-col items-start rounded-lg p-3 text-left transition-all ${executionMode === "owner_only"
                 ? "bg-white shadow-xs border border-purple-200 text-purple-950 font-semibold"
                 : "text-gray-600 hover:bg-white/60 hover:text-gray-900 border border-transparent"
-            }`}
+              }`}
           >
             <div className="flex items-center gap-2">
               <Key className={`h-4 w-4 ${executionMode === "owner_only" ? "text-purple-600" : "text-gray-400"}`} />
@@ -736,11 +734,10 @@ export function LocalInferenceWorkspace({
             role="radio"
             aria-checked={executionMode === "private"}
             onClick={() => setExecutionMode("private")}
-            className={`flex flex-col items-start rounded-lg p-3 text-left transition-all ${
-              executionMode === "private"
+            className={`flex flex-col items-start rounded-lg p-3 text-left transition-all ${executionMode === "private"
                 ? "bg-white shadow-xs border border-emerald-200 text-emerald-950 font-semibold"
                 : "text-gray-600 hover:bg-white/60 hover:text-gray-900 border border-transparent"
-            }`}
+              }`}
           >
             <div className="flex items-center gap-2">
               <Cpu className={`h-4 w-4 ${executionMode === "private" ? "text-emerald-600" : "text-gray-400"}`} />
@@ -1026,11 +1023,10 @@ Environment="OLLAMA_ORIGINS=http://localhost:3000,http://127.0.0.1:3000"`}
             <div className="flex items-center gap-2">
               <button
                 onClick={() => setShowConfig(!showConfig)}
-                className={`inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-xs font-medium transition-colors ${
-                  showConfig
+                className={`inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-xs font-medium transition-colors ${showConfig
                     ? "border-blue-300 bg-blue-50 text-blue-700"
                     : "border-gray-300 bg-white text-gray-700 hover:bg-gray-50"
-                }`}
+                  }`}
               >
                 <Settings2 className="h-3.5 w-3.5" />
                 Parameters
@@ -1128,25 +1124,23 @@ Environment="OLLAMA_ORIGINS=http://localhost:3000,http://127.0.0.1:3000"`}
               messages.map((msg) => (
                 <div
                   key={msg.id}
-                  className={`flex flex-col ${
-                    msg.role === "user" ? "items-end" : "items-start"
-                  }`}
+                  className={`flex flex-col ${msg.role === "user" ? "items-end" : "items-start"
+                    }`}
                 >
                   <div className="text-[11px] font-semibold text-gray-400 mb-1 px-1 uppercase tracking-wider">
                     {msg.role === "user"
                       ? "You"
                       : msg.modelName ||
-                        (executionMode === "private"
-                          ? selectedModel || "Local Assistant"
-                          : lastRouteHeaders?.selectedModel || selectedCloudModel || "AI Assistant")}
+                      (executionMode === "private"
+                        ? selectedModel || "Local Assistant"
+                        : lastRouteHeaders?.selectedModel || selectedCloudModel || "AI Assistant")}
                   </div>
 
                   <div
-                    className={`rounded-2xl px-4 py-3 text-sm max-w-[85%] leading-relaxed ${
-                      msg.role === "user"
+                    className={`rounded-2xl px-4 py-3 text-sm max-w-[85%] leading-relaxed ${msg.role === "user"
                         ? "bg-blue-600 text-white rounded-tr-xs"
                         : "bg-gray-100 text-gray-800 rounded-tl-xs border border-gray-200/80"
-                    }`}
+                      }`}
                   >
                     <div className="whitespace-pre-wrap font-sans">
                       {msg.content || (isStreaming && msg.role === "assistant" ? "..." : "")}
@@ -1180,10 +1174,10 @@ Environment="OLLAMA_ORIGINS=http://localhost:3000,http://127.0.0.1:3000"`}
                   executionMode === "auto"
                     ? "Ask AI assistant (Automatic)... (Enter to send, Shift+Enter for newline)"
                     : executionMode === "owner_only"
-                    ? "Ask AI assistant (My API Keys)... (Enter to send, Shift+Enter for newline)"
-                    : connectionState === "connected" && models.length > 0
-                    ? `Ask ${selectedModel}... (Enter to send, Shift+Enter for newline)`
-                    : "Connect to Ollama to begin inference..."
+                      ? "Ask AI assistant (My API Keys)... (Enter to send, Shift+Enter for newline)"
+                      : connectionState === "connected" && models.length > 0
+                        ? `Ask ${selectedModel}... (Enter to send, Shift+Enter for newline)`
+                        : "Connect to Ollama to begin inference..."
                 }
                 className="w-full resize-none rounded-xl border border-gray-300 bg-gray-50/50 p-3 pr-20 text-sm text-gray-900 shadow-inner placeholder:text-gray-400 focus:border-blue-500 focus:bg-white focus:outline-none focus:ring-1 focus:ring-blue-500 disabled:opacity-50"
               />
@@ -1242,8 +1236,8 @@ Environment="OLLAMA_ORIGINS=http://localhost:3000,http://127.0.0.1:3000"`}
                   {executionMode === "private"
                     ? "100% On-Device"
                     : executionMode === "owner_only"
-                    ? "Owner-Only Cloud"
-                    : "Shared Pool / Private"}
+                      ? "Owner-Only Cloud"
+                      : "Shared Pool / Private"}
                 </span>
               </div>
               {lastRouteHeaders?.selectedSource && (

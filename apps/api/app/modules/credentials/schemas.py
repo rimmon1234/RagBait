@@ -60,7 +60,7 @@ class ApiKeyMetadataRecord(BaseModel):
     account_scope_verified: bool = False
     account_scope_source: str | None = None
     account_scope_verified_at: datetime | None = None
-    billing_tier: BillingTier = "unknown"
+    billing_tier: str = "unknown"
     billing_verified_at: datetime | None = None
     billing_verification_error: str | None = None
     billing_verification_source: str | None = None
@@ -93,7 +93,7 @@ class StoredCredentialResult(BaseModel):
     account_scope_verified: bool = False
     account_scope_source: str | None = None
     account_scope_verified_at: datetime | None = None
-    billing_tier: BillingTier = "unknown"
+    billing_tier: str = "unknown"
     billing_verified_at: datetime | None = None
     billing_verification_error: str | None = None
     billing_verification_source: str | None = None
@@ -221,7 +221,7 @@ class CredentialResponse(BaseModel):
     account_scope_verified: bool = False
     account_scope_source: str | None = None
     account_scope_verified_at: datetime | None = None
-    billing_tier: BillingTier = "unknown"
+    billing_tier: str = "unknown"
     billing_verified_at: datetime | None = None
     billing_verification_error: str | None = None
     billing_verification_source: str | None = None
@@ -254,7 +254,7 @@ class ValidationResultResponse(BaseModel):
     outcome: ValidationStatus
     safe_code: str
     message: str
-    billing_tier: BillingTier = "unknown"
+    billing_tier: str = "unknown"
     billing_verification_error: str | None = None
     validated_at: datetime
     is_valid: bool = False

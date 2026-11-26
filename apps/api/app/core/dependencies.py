@@ -2,12 +2,13 @@
 
 import logging
 from collections.abc import Callable
+from datetime import UTC, datetime
 from typing import Any
 
 from fastapi import Depends, Header, Request
 
 from app.core.config import settings
-from app.core.database import get_user_db_session
+from app.core.database import get_pool, get_user_db_session
 from app.core.errors import AuthenticationError, AuthorizationError
 from app.core.redis import check_rate_limit
 from app.core.security import AuthenticatedUser, verify_supabase_jwt
@@ -87,22 +88,183 @@ async def require_approved_user(
     return profile
 
 
-async def require_chat_entitled_user(
+async def check_user_chat_entitlement(
+    user_id: Any,
+    profile: UserProfile,
+) -> tuple[bool, str | None, str, int]:
+    """Authoritatively evaluate whether a user satisfies the Chat contribution requirement.
+
+    Rules (applies uniformly to all approved accounts, including admins):
+    - Non-approved user: eligible = False, code = ACCOUNT_NOT_APPROVED.
+    - Approved user (any role): MUST have at least one active, validated, explicitly consented
+      free-tier cloud credential (allows_community_sharing = true on an approved cloud_api provider).
+      Owner-only private keys, paid keys, and Private local Ollama do NOT qualify.
+    """
+    if profile.approval_status != "approved":
+        return (
+            False,
+            "ACCOUNT_NOT_APPROVED",
+            f"Account approval status is {profile.approval_status}.",
+            0,
+        )
+
+    pool = get_pool()
+    async with pool.acquire() as conn:
+        rows = await conn.fetch(
+            """
+            SELECT c.id, c.provider_id, c.status, c.validation_status, c.sharing_scope, c.shared_consent,
+                   c.billing_tier, c.billing_verified_at, c.billing_verification_error,
+                   p.runtime_type, p.allows_community_sharing, p.is_enabled
+            FROM public.api_key_metadata c
+            JOIN public.llm_providers p ON p.id = c.provider_id
+            WHERE c.owner_id = $1
+            ORDER BY c.created_at DESC
+            """,
+            user_id,
+        )
+
+    if not rows:
+        return (
+            False,
+            "NO_CREDENTIAL_CONTRIBUTED",
+            "A qualifying free-tier cloud credential is required before accessing AI Chat. Please contribute an approved free-tier key.",
+            0,
+        )
+
+    now = datetime.now(UTC)
+    qualifying_count = 0
+    for r in rows:
+        b_verified = r["billing_verified_at"]
+        if b_verified and b_verified.tzinfo is None:
+            b_verified = b_verified.replace(tzinfo=UTC)
+
+        is_fresh = b_verified is not None and (now - b_verified).total_seconds() <= 30 * 86400
+
+        if (
+            r["runtime_type"] == "cloud_api"
+            and r["allows_community_sharing"] is True
+            and r["is_enabled"] is True
+            and r["sharing_scope"] == "community_shared"
+            and r["shared_consent"] is True
+            and r["validation_status"] == "valid"
+            and r["status"] in ("active", "rate_limited", "quota_exhausted")
+            and r["billing_tier"] == "verified_free_only"
+            and is_fresh
+        ):
+            qualifying_count += 1
+
+    if qualifying_count > 0:
+        return (
+            True,
+            None,
+            "Qualifying free-tier cloud credential contributed and active.",
+            qualifying_count,
+        )
+
+    # Filter sharable cloud providers vs local or non-sharable
+    sharable_cloud_rows = [
+        r
+        for r in rows
+        if r["runtime_type"] == "cloud_api"
+        and r["allows_community_sharing"] is True
+        and r["is_enabled"] is True
+    ]
+
+    if not sharable_cloud_rows:
+        return (
+            False,
+            "PROVIDER_NOT_ELIGIBLE_FOR_SHARING",
+            "Private local Ollama models or non-sharable providers do not satisfy the shared cloud contribution requirement. Please contribute an approved free-tier key.",
+            0,
+        )
+
+    # Check paid tier rejection
+    for r in sharable_cloud_rows:
+        if r["billing_tier"] == "paid":
+            return (
+                False,
+                "PAID_CREDENTIAL_INELIGIBLE",
+                "Paid credentials are not eligible for community contribution. Please contribute a free-tier key.",
+                0,
+            )
+
+    # Check unvalidated credentials
+    for r in sharable_cloud_rows:
+        if r["validation_status"] != "valid":
+            return (
+                False,
+                "VALIDATION_REQUIRED",
+                "Key validation required. Please run the validation probe in Key Management.",
+                0,
+            )
+
+    # Check billing verification required (unknown tier)
+    for r in sharable_cloud_rows:
+        if r["billing_tier"] == "unknown":
+            return (
+                False,
+                "BILLING_VERIFICATION_REQUIRED",
+                "Key billing verification could not be verified automatically. Please verify your credential or use a provider with automated free-tier verification.",
+                0,
+            )
+
+    # Check stale billing verification (> 30 days)
+    for r in sharable_cloud_rows:
+        if r["billing_tier"] == "verified_free_only":
+            b_verified = r["billing_verified_at"]
+            if b_verified and b_verified.tzinfo is None:
+                b_verified = b_verified.replace(tzinfo=UTC)
+            if b_verified is None or (now - b_verified).total_seconds() > 30 * 86400:
+                return (
+                    False,
+                    "BILLING_VERIFICATION_STALE",
+                    "Key billing verification has expired (must be verified within 30 days). Please re-run key validation in Key Management.",
+                    0,
+                )
+
+    # Check sharing scope and consent
+    for r in sharable_cloud_rows:
+        if r["sharing_scope"] != "community_shared" or not r["shared_consent"]:
+            return (
+                False,
+                "SHARING_CONSENT_REQUIRED",
+                "Sharing consent required. Please enable community sharing on your key.",
+                0,
+            )
+
+    # Check inactive credentials
+    for r in sharable_cloud_rows:
+        if r["status"] in ("disabled", "revoked"):
+            return (
+                False,
+                "CREDENTIAL_INACTIVE",
+                "Your contributed credential is currently inactive. Please enable your key in Key Management.",
+                0,
+            )
+
+    return (
+        False,
+        "NO_CREDENTIAL_CONTRIBUTED",
+        "A qualifying free-tier cloud credential is required before accessing AI Chat. Please contribute an approved free-tier key.",
+        0,
+    )
+
+
+async def require_chat_entitlement(
+    current_user: AuthenticatedUser = Depends(get_current_user),
     profile: UserProfile = Depends(require_approved_user),
 ) -> UserProfile:
-    """Require approved user status AND a qualifying free-tier cloud API credential contribution.
-
-    Under RagBait product policy, all users (including administrators) must contribute at least
-    one valid, active, provider-approved free-tier cloud API credential to the shared pool
-    before accessing AI Chat. Private local Ollama and paid keys do not satisfy this requirement.
-    """
-    from app.modules.credentials.service import check_chat_contribution_entitlement
-
-    is_entitled, reason_code, _ = await check_chat_contribution_entitlement(profile.id)
-    if not is_entitled:
+    """Enforce Chat contribution entitlement on conversation creation and generation."""
+    eligible, reason_code, message, _ = await check_user_chat_entitlement(
+        user_id=current_user.user_id,
+        profile=profile,
+    )
+    if not eligible:
         raise AuthorizationError(
-            "A valid, approved free-tier cloud API credential must be contributed before accessing AI Chat.",
-            code="CONTRIBUTION_REQUIRED",
+            message=message,
+            code="ACCOUNT_NOT_APPROVED"
+            if reason_code == "ACCOUNT_NOT_APPROVED"
+            else "CHAT_CONTRIBUTION_REQUIRED",
         )
     return profile
 
@@ -125,6 +287,18 @@ async def require_super_admin(
     if profile.role != "super_admin":
         raise AuthorizationError(
             "Super-administrator privileges required", code="SUPER_ADMIN_REQUIRED"
+        )
+    return profile
+
+
+async def require_trusted_kb_uploader(
+    profile: UserProfile = Depends(require_approved_user),
+) -> UserProfile:
+    """Restrict Knowledge Base uploads/parsing to trusted administrators while parser lacks OS sandbox."""
+    if profile.role not in ("admin", "super_admin"):
+        raise AuthorizationError(
+            "Knowledge Base document uploads are currently restricted to administrators.",
+            code="ADMIN_REQUIRED",
         )
     return profile
 

@@ -1,0 +1,20 @@
+{
+  "dataset": "adaptive_dataset_v1.json",
+  "total_cases": 30,
+  "notes_grounded_correct": 11,
+  "notes_grounded_total": 11,
+  "general_knowledge_useful": 8,
+  "general_knowledge_total": 8,
+  "web_triggered_when_needed": 7,
+  "web_needed_total": 7,
+  "unnecessary_web_triggers": 0,
+  "not_web_total": 18,
+  "abstain_correct": 3,
+  "abstain_total": 3,
+  "kb_citation_validity": 1.0,
+  "web_citation_validity": 1.0,
+  "unsupported_factual_claim_rate": 0.0,
+  "budget_compliance_rate": 1.0,
+  "security_injection_pass_rate": 1.0,
+  "average_web_searches_per_turn": 0.2333
+}

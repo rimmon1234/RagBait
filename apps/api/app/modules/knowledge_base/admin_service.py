@@ -605,6 +605,48 @@ class KBAdminService:
                         document_id,
                     )
 
+                # Fence and cancel any active indexing jobs
+                await conn.execute(
+                    """
+                    UPDATE public.kb_indexing_jobs
+                    SET status = 'cancelled',
+                        lease_token = NULL,
+                        locked_until = NULL,
+                        error_code = 'ARCHIVED_BY_ADMIN',
+                        error_message = 'Indexing cancelled: document was archived by administrator.',
+                        completed_at = timezone('utc'::text, now()),
+                        updated_at = timezone('utc'::text, now())
+                    WHERE document_id = $1 AND status IN ('queued', 'processing');
+                    """,
+                    document_id,
+                )
+
+                # Fence and cancel any active embedding jobs
+                await conn.execute(
+                    """
+                    UPDATE public.kb_embedding_jobs
+                    SET status = 'cancelled',
+                        lease_token = NULL,
+                        locked_until = NULL,
+                        error_code = 'ARCHIVED_BY_ADMIN',
+                        error_message = 'Embedding cancelled: document was archived by administrator.',
+                        completed_at = timezone('utc'::text, now()),
+                        updated_at = timezone('utc'::text, now())
+                    WHERE document_id = $1 AND status IN ('queued', 'processing');
+                    """,
+                    document_id,
+                )
+
+                # Deactivate any active chunks for this archived document
+                await conn.execute(
+                    """
+                    UPDATE public.kb_document_chunks
+                    SET is_active = false
+                    WHERE document_id = $1;
+                    """,
+                    document_id,
+                )
+
                 # Record audit log within the same transaction
                 await admin_repository.insert_admin_audit_log(
                     conn=conn,
@@ -672,6 +714,23 @@ class KBAdminService:
                     """,
                     document_id,
                 )
+
+                # If document was previously extracted and has text, re-enqueue an indexing job
+                if doc["extraction_status"] == "completed":
+                    await conn.execute(
+                        """
+                        INSERT INTO public.kb_indexing_jobs (
+                            document_id,
+                            source_version,
+                            chunking_version,
+                            status,
+                            scheduled_at
+                        ) VALUES ($1, 1, 1, 'queued', timezone('utc'::text, now()))
+                        ON CONFLICT (document_id) WHERE status IN ('queued', 'processing')
+                        DO NOTHING;
+                        """,
+                        document_id,
+                    )
 
                 await admin_repository.insert_admin_audit_log(
                     conn=conn,
@@ -842,10 +901,13 @@ class KBAdminService:
                 # 2. Document-first lock
                 doc = await conn.fetchrow(
                     """
-                    SELECT id, title, subject_id, topic_id, upload_status, is_archived, storage_path
-                    FROM public.kb_documents
-                    WHERE id = $1
-                    FOR UPDATE
+                    SELECT d.id, d.title, d.subject_id, d.topic_id, d.upload_status,
+                           d.is_archived, d.storage_path,
+                           up.role AS uploader_role, up.approval_status AS uploader_status
+                    FROM public.kb_documents d
+                    JOIN public.profiles up ON up.id = d.uploader_id
+                    WHERE d.id = $1
+                    FOR UPDATE OF d
                     """,
                     doc_id,
                 )
@@ -863,6 +925,14 @@ class KBAdminService:
                     raise BadRequestError(
                         "Cannot retry extraction on an archived document. Restore the document first.",
                         code="DOCUMENT_ARCHIVED",
+                    )
+                if (
+                    doc["uploader_role"] not in ("admin", "super_admin")
+                    or doc["uploader_status"] != "approved"
+                ):
+                    raise BadRequestError(
+                        "Cannot retry parser extraction on a document uploaded by a non-admin account until parser sandboxing is enabled.",
+                        code="UNTRUSTED_DOCUMENT_PARSER_BLOCKED",
                     )
 
                 # 3. Check taxonomy is active

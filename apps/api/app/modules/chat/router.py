@@ -1,0 +1,373 @@
+"""FastAPI router for Phase 4 persistent conversations and message history."""
+
+from typing import Literal
+from uuid import UUID
+
+from fastapi import APIRouter, Depends, Query, Request, status
+from fastapi.responses import StreamingResponse
+
+from app.core.dependencies import (
+    get_current_user,
+    rate_limit_general,
+    require_chat_entitlement,
+)
+from app.core.security import AuthenticatedUser
+from app.modules.chat.citations.schemas import MessageSourcesResponse
+from app.modules.chat.orchestration.cancellation import request_generation_cancellation
+from app.modules.chat.orchestration.schemas import (
+    CancelGenerationResponse,
+    ChatMessageCreateRequest,
+    ChatTurnResponse,
+    FinalizeLocalRequest,
+    FinalizeLocalResponse,
+    PrepareLocalRequest,
+    PrepareLocalResponse,
+)
+from app.modules.chat.orchestration.service import ChatOrchestrationService
+from app.modules.chat.orchestration.streaming_service import (
+    prepare_cloud_sse_stream,
+    stream_cloud_sse_events,
+)
+from app.modules.chat.schemas import (
+    ConversationCreate,
+    ConversationListResponse,
+    ConversationRead,
+    ConversationRename,
+    MessageListResponse,
+)
+from app.modules.chat.service import ChatService
+from app.modules.users.schemas import UserProfile
+
+chat_router = APIRouter(prefix="/chat", tags=["chat"])
+
+
+@chat_router.post(
+    "/conversations",
+    response_model=ConversationRead,
+    status_code=status.HTTP_201_CREATED,
+    dependencies=[Depends(rate_limit_general)],
+    summary="Create a new subject-scoped conversation",
+)
+async def create_conversation(
+    body: ConversationCreate,
+    current_user: AuthenticatedUser = Depends(get_current_user),
+    _: UserProfile = Depends(require_chat_entitlement),
+) -> ConversationRead:
+    """Create a new independent conversation bound to an academic subject."""
+    return await ChatService.create_conversation(
+        user_id=current_user.user_id,
+        claims=current_user.claims,
+        subject_id=body.subject_id,
+        title=body.title,
+    )
+
+
+@chat_router.get(
+    "/conversations",
+    response_model=ConversationListResponse,
+    dependencies=[Depends(rate_limit_general)],
+    summary="List conversations with cursor pagination",
+)
+async def list_conversations(
+    subject_id: UUID | None = Query(None, description="Filter by academic subject UUID"),
+    status_filter: Literal["active", "archived"] = Query(
+        "active", alias="status", description="Filter by lifecycle status"
+    ),
+    limit: int = Query(20, ge=1, le=100, description="Page limit"),
+    cursor: str | None = Query(None, description="Opaque pagination cursor"),
+    search: str | None = Query(None, description="Search term filtering conversation titles"),
+    current_user: AuthenticatedUser = Depends(get_current_user),
+    _: UserProfile = Depends(require_chat_entitlement),
+) -> ConversationListResponse:
+    """List authenticated user's conversations."""
+    return await ChatService.list_conversations(
+        user_id=current_user.user_id,
+        claims=current_user.claims,
+        subject_id=subject_id,
+        status=status_filter,
+        limit=limit,
+        cursor=cursor,
+        search=search,
+    )
+
+
+@chat_router.get(
+    "/conversations/{conversation_id}",
+    response_model=ConversationRead,
+    dependencies=[Depends(rate_limit_general)],
+    summary="Retrieve conversation details",
+)
+async def get_conversation(
+    conversation_id: UUID,
+    current_user: AuthenticatedUser = Depends(get_current_user),
+    _: UserProfile = Depends(require_chat_entitlement),
+) -> ConversationRead:
+    """Retrieve metadata for an owned conversation."""
+    return await ChatService.get_conversation(
+        user_id=current_user.user_id,
+        claims=current_user.claims,
+        conversation_id=conversation_id,
+    )
+
+
+@chat_router.patch(
+    "/conversations/{conversation_id}",
+    response_model=ConversationRead,
+    dependencies=[Depends(rate_limit_general)],
+    summary="Rename an owned conversation",
+)
+async def rename_conversation(
+    conversation_id: UUID,
+    body: ConversationRename,
+    current_user: AuthenticatedUser = Depends(get_current_user),
+    _: UserProfile = Depends(require_chat_entitlement),
+) -> ConversationRead:
+    """Update title of an owned conversation."""
+    return await ChatService.rename_conversation(
+        user_id=current_user.user_id,
+        claims=current_user.claims,
+        conversation_id=conversation_id,
+        title=body.title,
+    )
+
+
+@chat_router.post(
+    "/conversations/{conversation_id}/archive",
+    response_model=ConversationRead,
+    dependencies=[Depends(rate_limit_general)],
+    summary="Archive an active conversation",
+)
+async def archive_conversation(
+    conversation_id: UUID,
+    current_user: AuthenticatedUser = Depends(get_current_user),
+    _: UserProfile = Depends(require_chat_entitlement),
+) -> ConversationRead:
+    """Archive conversation thread, removing it from default active list."""
+    return await ChatService.archive_conversation(
+        user_id=current_user.user_id,
+        claims=current_user.claims,
+        conversation_id=conversation_id,
+    )
+
+
+@chat_router.post(
+    "/conversations/{conversation_id}/restore",
+    response_model=ConversationRead,
+    dependencies=[Depends(rate_limit_general)],
+    summary="Restore an archived conversation",
+)
+async def restore_conversation(
+    conversation_id: UUID,
+    current_user: AuthenticatedUser = Depends(get_current_user),
+    _: UserProfile = Depends(require_chat_entitlement),
+) -> ConversationRead:
+    """Restore conversation thread back to active list."""
+    return await ChatService.restore_conversation(
+        user_id=current_user.user_id,
+        claims=current_user.claims,
+        conversation_id=conversation_id,
+    )
+
+
+@chat_router.delete(
+    "/conversations/{conversation_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    dependencies=[Depends(rate_limit_general)],
+    summary="Delete a conversation and message history",
+)
+async def delete_conversation(
+    conversation_id: UUID,
+    current_user: AuthenticatedUser = Depends(get_current_user),
+    _: UserProfile = Depends(require_chat_entitlement),
+) -> None:
+    """Permanently delete an owned conversation thread."""
+    await ChatService.delete_conversation(
+        user_id=current_user.user_id,
+        claims=current_user.claims,
+        conversation_id=conversation_id,
+    )
+
+
+@chat_router.get(
+    "/conversations/{conversation_id}/messages",
+    response_model=MessageListResponse,
+    dependencies=[Depends(rate_limit_general)],
+    summary="Retrieve paginated message history",
+)
+async def get_conversation_messages(
+    conversation_id: UUID,
+    limit: int = Query(50, ge=1, le=100, description="Items per page"),
+    cursor: int | None = Query(
+        None, ge=1, description="Sequence number cursor for loading older messages"
+    ),
+    current_user: AuthenticatedUser = Depends(get_current_user),
+    _: UserProfile = Depends(require_chat_entitlement),
+) -> MessageListResponse:
+    """Load paginated messages for an owned conversation."""
+    return await ChatService.get_conversation_messages(
+        user_id=current_user.user_id,
+        claims=current_user.claims,
+        conversation_id=conversation_id,
+        limit=limit,
+        cursor=cursor,
+    )
+
+
+@chat_router.post(
+    "/conversations/{conversation_id}/messages",
+    response_model=None,
+    responses={
+        200: {
+            "model": ChatTurnResponse,
+            "description": "SSE text/event-stream (default) or ChatTurnResponse JSON when stream=false",
+        }
+    },
+    dependencies=[Depends(rate_limit_general)],
+    summary="Submit user question and generate grounded cloud answer (SSE default or sync JSON)",
+)
+async def create_grounded_message(
+    conversation_id: UUID,
+    body: ChatMessageCreateRequest,
+    http_request: Request,
+    current_user: AuthenticatedUser = Depends(get_current_user),
+    _: UserProfile = Depends(require_chat_entitlement),
+) -> StreamingResponse | ChatTurnResponse:
+    """Execute grounded RAG retrieval, concurrency admission, streaming/sync generation, and persistence."""
+    accept_header = (http_request.headers.get("accept") or "").lower()
+    wants_stream = body.stream or ("text/event-stream" in accept_header)
+    if not wants_stream:
+        return await ChatOrchestrationService.execute_cloud_chat_turn(
+            user_id=current_user.user_id,
+            conversation_id=conversation_id,
+            request=body,
+        )
+
+    plan = await prepare_cloud_sse_stream(
+        user_id=current_user.user_id,
+        conversation_id=conversation_id,
+        request=body,
+    )
+    return StreamingResponse(
+        stream_cloud_sse_events(plan, is_disconnected=http_request.is_disconnected),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache, no-transform",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
+
+
+@chat_router.post(
+    "/messages/{message_id}/cancel",
+    response_model=CancelGenerationResponse,
+    dependencies=[Depends(rate_limit_general)],
+    summary="Cancel an active or queued streaming generation",
+)
+async def cancel_generation_message(
+    message_id: UUID,
+    current_user: AuthenticatedUser = Depends(get_current_user),
+    _: UserProfile = Depends(require_chat_entitlement),
+) -> CancelGenerationResponse:
+    """Signal distributed cancellation for an owned active generation message."""
+    res = await request_generation_cancellation(
+        user_id=current_user.user_id,
+        message_id=message_id,
+    )
+    return CancelGenerationResponse(
+        message_id=UUID(str(res["message_id"])),
+        conversation_id=UUID(str(res["conversation_id"])),
+        status="cancelled",
+        already_cancelled=bool(res["already_cancelled"]),
+        retained_length=int(res["retained_length"]),  # type: ignore[call-overload]
+    )
+
+
+@chat_router.post(
+    "/conversations/{conversation_id}/messages/{message_id}/cancel",
+    response_model=CancelGenerationResponse,
+    dependencies=[Depends(rate_limit_general)],
+    summary="Cancel an active or queued generation within a conversation",
+)
+async def cancel_conversation_generation_message(
+    conversation_id: UUID,
+    message_id: UUID,
+    current_user: AuthenticatedUser = Depends(get_current_user),
+    _: UserProfile = Depends(require_chat_entitlement),
+) -> CancelGenerationResponse:
+    """Signal distributed cancellation scoped explicitly by conversation_id and message_id."""
+    res = await request_generation_cancellation(
+        user_id=current_user.user_id,
+        message_id=message_id,
+        conversation_id=conversation_id,
+    )
+    return CancelGenerationResponse(
+        message_id=UUID(str(res["message_id"])),
+        conversation_id=UUID(str(res["conversation_id"])),
+        status="cancelled",
+        already_cancelled=bool(res["already_cancelled"]),
+        retained_length=int(res["retained_length"]),  # type: ignore[call-overload]
+    )
+
+
+@chat_router.post(
+    "/conversations/{conversation_id}/messages/prepare-local",
+    response_model=PrepareLocalResponse,
+    dependencies=[Depends(rate_limit_general)],
+    summary="Prepare grounded RAG context and prompt for Private Local Ollama inference",
+)
+async def prepare_local_message(
+    conversation_id: UUID,
+    body: PrepareLocalRequest,
+    current_user: AuthenticatedUser = Depends(get_current_user),
+    _: UserProfile = Depends(require_chat_entitlement),
+) -> PrepareLocalResponse:
+    """Prepare subject-scoped evidence and prompt for direct loopback Ollama execution."""
+    return await ChatOrchestrationService.prepare_local_chat_turn(
+        user_id=current_user.user_id,
+        conversation_id=conversation_id,
+        request=body,
+    )
+
+
+@chat_router.post(
+    "/conversations/{conversation_id}/messages/finalize-local",
+    response_model=FinalizeLocalResponse,
+    dependencies=[Depends(rate_limit_general)],
+    summary="Validate citations and finalize Private Local Ollama generation",
+)
+async def finalize_local_message(
+    conversation_id: UUID,
+    body: FinalizeLocalRequest,
+    current_user: AuthenticatedUser = Depends(get_current_user),
+    _: UserProfile = Depends(require_chat_entitlement),
+) -> FinalizeLocalResponse:
+    """Reconcile citations against server-stored sources and persist Private Local answer."""
+    return await ChatOrchestrationService.finalize_local_chat_turn(
+        user_id=current_user.user_id,
+        conversation_id=conversation_id,
+        request=body,
+    )
+
+
+@chat_router.get(
+    "/messages/{message_id}/sources",
+    response_model=MessageSourcesResponse,
+    dependencies=[Depends(rate_limit_general)],
+    summary="Retrieve immutable evidence snapshots with live KB visibility revalidation",
+)
+async def get_message_sources(
+    message_id: UUID,
+    current_user: AuthenticatedUser = Depends(get_current_user),
+    _: UserProfile = Depends(require_chat_entitlement),
+) -> MessageSourcesResponse:
+    """Return message sources revalidated against current document/topic/subject status."""
+    conv_id, sources = await ChatOrchestrationService.get_message_sources(
+        user_id=current_user.user_id,
+        message_id=message_id,
+    )
+    return MessageSourcesResponse(
+        message_id=message_id,
+        conversation_id=conv_id,
+        sources=sources,
+    )

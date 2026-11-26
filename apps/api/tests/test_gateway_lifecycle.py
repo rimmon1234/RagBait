@@ -24,6 +24,7 @@ from tests.conftest import create_test_jwt, make_test_profile
 
 CREATED_TEST_USERS: list[UUID] = []
 CREATED_TEST_CREDS: list[UUID] = []
+CREATED_GATE_CREDS: list[UUID] = []
 
 
 @pytest.fixture(autouse=True)
@@ -34,6 +35,19 @@ async def setup_test_environment():
     yield
     app.dependency_overrides.clear()
     pool = get_pool()
+    if CREATED_GATE_CREDS:
+        try:
+            async with pool.acquire() as conn:
+                await conn.execute(
+                    "UPDATE public.api_key_metadata SET status = 'revoked' WHERE id = ANY($1)",
+                    CREATED_GATE_CREDS,
+                )
+                await conn.execute(
+                    "DELETE FROM public.api_key_metadata WHERE id = ANY($1)", CREATED_GATE_CREDS
+                )
+        except Exception:
+            pass
+        CREATED_GATE_CREDS.clear()
     if CREATED_TEST_CREDS:
         try:
             async with pool.acquire() as conn:
@@ -53,6 +67,32 @@ async def setup_test_environment():
     await close_vault_pool()
     await close_db_pool()
     await close_redis()
+
+
+async def _grant_qualifying_contribution(user_id: UUID) -> None:
+    """Grant a qualifying verified free-tier OpenRouter credential so the user satisfies Gate 2."""
+    cred_id = uuid4()
+    pool = get_pool()
+    async with pool.acquire() as conn:
+        await conn.execute(
+            """
+            INSERT INTO public.api_key_metadata (
+                id, owner_id, provider_id, nickname, masked_key, key_fingerprint,
+                status, validation_status, sharing_scope, shared_consent,
+                sharing_consent_timestamp, consent_version,
+                billing_tier, billing_verified_at, billing_verification_source
+            )
+            VALUES (
+                $1, $2, 'openrouter', 'Qualifying Key', 'sk-or-...gw', $3,
+                'active', 'valid', 'community_shared', true,
+                now(), 'v1', 'verified_free_only', now(), 'openrouter_auth_probe'
+            )
+            """,
+            cred_id,
+            user_id,
+            uuid4().hex[:16],
+        )
+    CREATED_GATE_CREDS.append(cred_id)
 
 
 async def create_db_user(
@@ -149,6 +189,7 @@ async def _mock_stream_generator() -> AsyncIterator[NormalizedStreamChunk]:
 @pytest.mark.asyncio
 async def test_unified_gateway_streaming_e2e(client: httpx.AsyncClient):
     user_id = await create_db_user(email="stream_user@studyhub.edu")
+    await _grant_qualifying_contribution(user_id)
     headers = setup_auth_context(user_id, email="stream_user@studyhub.edu")
 
     # Store a valid credential in the vault
@@ -234,6 +275,7 @@ async def test_unified_gateway_streaming_e2e(client: httpx.AsyncClient):
 @pytest.mark.asyncio
 async def test_unified_gateway_non_streaming_e2e(client: httpx.AsyncClient):
     user_id = await create_db_user(email="nonstream_user@studyhub.edu")
+    await _grant_qualifying_contribution(user_id)
     headers = setup_auth_context(user_id, email="nonstream_user@studyhub.edu")
 
     unique_key = f"valid-test-gemini-key-{uuid4().hex}"

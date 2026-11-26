@@ -4,7 +4,7 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, Query, status
 
-from app.core.dependencies import require_approved_user
+from app.core.dependencies import require_approved_user, require_trusted_kb_uploader
 from app.modules.knowledge_base.admin_router import kb_admin_router
 from app.modules.knowledge_base.schemas import (
     ConfirmUploadRequest,
@@ -101,7 +101,7 @@ async def get_document_pages(
 )
 async def create_upload_intent(
     request: UploadIntentRequest,
-    current_user: UserProfile = Depends(require_approved_user),
+    current_user: UserProfile = Depends(require_trusted_kb_uploader),
 ) -> UploadIntentResponse:
     """Validate upload parameters and return a time-limited signed upload URL and capability."""
     return await KBService.create_upload_intent(current_user, request)
@@ -115,7 +115,7 @@ async def create_upload_intent(
 async def confirm_upload(
     document_id: UUID,
     request: ConfirmUploadRequest | None = None,
-    current_user: UserProfile = Depends(require_approved_user),
+    current_user: UserProfile = Depends(require_trusted_kb_uploader),
 ) -> ConfirmUploadResponse:
     """Independently verify uploaded file in private storage, validate format, and queue extraction."""
     payload = request or ConfirmUploadRequest()

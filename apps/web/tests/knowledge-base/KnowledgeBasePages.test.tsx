@@ -247,4 +247,40 @@ describe("Knowledge Base Pages Integration", () => {
       expect(screen.getByText(/INNER JOIN returns matching rows across both relations/i)).toBeInTheDocument();
     });
   });
+
+  it("hides Upload Material and Manage Subjects buttons for ordinary students and shows them for admins", async () => {
+    vi.mocked(api.fetchWithAuth).mockImplementation(async (url: string) => {
+      if (url.includes("/api/v1/me")) {
+        return mockProfile; // role: "user"
+      }
+      if (url.includes("/api/v1/kb/subjects")) {
+        return mockSubjects;
+      }
+      throw new Error(`Unhandled url: ${url}`);
+    });
+
+    const { unmount } = render(<KnowledgeBaseCataloguePage />);
+    await waitFor(() => {
+      expect(screen.getByText("Database Management Systems")).toBeInTheDocument();
+    });
+    expect(screen.queryByRole("button", { name: /Upload Material/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: /Manage \/ Add Subjects/i })).not.toBeInTheDocument();
+    unmount();
+
+    vi.mocked(api.fetchWithAuth).mockImplementation(async (url: string) => {
+      if (url.includes("/api/v1/me")) {
+        return { ...mockProfile, role: "admin" };
+      }
+      if (url.includes("/api/v1/kb/subjects")) {
+        return mockSubjects;
+      }
+      throw new Error(`Unhandled url: ${url}`);
+    });
+
+    render(<KnowledgeBaseCataloguePage />);
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: /Upload Material/i })).toBeInTheDocument();
+      expect(screen.getByRole("link", { name: /Manage \/ Add Subjects/i })).toBeInTheDocument();
+    });
+  });
 });

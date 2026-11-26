@@ -48,6 +48,32 @@ async def setup_test_environment():
     await close_redis()
 
 
+async def _grant_qualifying_contribution(user_id: UUID) -> None:
+    """Grant a qualifying verified free-tier OpenRouter credential so the user satisfies Gate 2."""
+    cred_id = uuid4()
+    pool = get_pool()
+    async with pool.acquire() as conn:
+        await conn.execute(
+            """
+            INSERT INTO public.api_key_metadata (
+                id, owner_id, provider_id, nickname, masked_key, key_fingerprint,
+                status, validation_status, sharing_scope, shared_consent,
+                sharing_consent_timestamp, consent_version,
+                billing_tier, billing_verified_at, billing_verification_source
+            )
+            VALUES (
+                $1, $2, 'openrouter', 'Qualifying Key', 'sk-or-...sec', $3,
+                'active', 'valid', 'community_shared', true,
+                now(), 'v1', 'verified_free_only', now(), 'openrouter_auth_probe'
+            )
+            """,
+            cred_id,
+            user_id,
+            uuid4().hex[:16],
+        )
+    CREATED_TEST_CREDS.append(cred_id)
+
+
 async def create_db_user(
     email: str | None = None,
     role: str = "user",
@@ -167,6 +193,7 @@ async def test_suspended_user_rejected(client: httpx.AsyncClient):
 @pytest.mark.asyncio
 async def test_cross_user_owner_only_credential_rejected(client: httpx.AsyncClient):
     user_a = await create_db_user(email="user_a@ragbait.app")
+    await _grant_qualifying_contribution(user_a)
     user_b = await create_db_user(email="user_b@ragbait.app")
 
     unique_key = f"user-b-secret-gemini-key-{uuid4().hex}"
@@ -213,6 +240,7 @@ async def test_cross_user_owner_only_credential_rejected(client: httpx.AsyncClie
 @pytest.mark.asyncio
 async def test_community_sharing_gated_by_provider_policy(client: httpx.AsyncClient):
     user_a = await create_db_user(email="user_a2@ragbait.app")
+    await _grant_qualifying_contribution(user_a)
     user_b = await create_db_user(email="user_b2@ragbait.app")
 
     pool = get_pool()
@@ -293,6 +321,7 @@ async def test_community_sharing_gated_by_provider_policy(client: httpx.AsyncCli
 async def test_missing_contributor_consent_rejected(client: httpx.AsyncClient):
     """When sharing_scope is community_shared but contributor shared_consent is false, reject with 403."""
     user_a = await create_db_user(email="requester@ragbait.app")
+    await _grant_qualifying_contribution(user_a)
     user_b = await create_db_user(email="contributor_noconsent@ragbait.app")
 
     unique_key = f"noconsent-key-{uuid4().hex}"
@@ -336,6 +365,7 @@ async def test_missing_contributor_consent_rejected(client: httpx.AsyncClient):
 async def test_admin_cannot_dispatch_other_users_private_credential(client: httpx.AsyncClient):
     """Administrator role alone does not bypass ownership isolation or authorize foreign private keys."""
     admin_id = await create_db_user(email="admin_user@ragbait.app", role="admin")
+    await _grant_qualifying_contribution(admin_id)
     student_id = await create_db_user(email="student_user@ragbait.app", role="user")
 
     unique_key = f"student-private-key-{uuid4().hex}"
@@ -380,6 +410,7 @@ async def test_admin_cannot_dispatch_other_users_private_credential(client: http
 async def test_mismatched_provider_credential_rejected(client: httpx.AsyncClient):
     """Passing a Gemini credential ID to a Groq dispatch request must be rejected with 409 Conflict."""
     user_id = await create_db_user(email="mismatch_user@ragbait.app")
+    await _grant_qualifying_contribution(user_id)
 
     unique_key = f"gemini-mismatch-key-{uuid4().hex}"
     gemini_cred = await store_credential(
@@ -422,6 +453,7 @@ async def test_mismatched_provider_credential_rejected(client: httpx.AsyncClient
 async def test_nonexistent_credential_id_returns_404(client: httpx.AsyncClient):
     """Supplying an unknown credential UUID returns 404 Not Found."""
     user_id = await create_db_user(email="notfound_user@ragbait.app")
+    await _grant_qualifying_contribution(user_id)
     headers = setup_auth_context(user_id, email="notfound_user@ragbait.app")
 
     random_id = uuid4()
