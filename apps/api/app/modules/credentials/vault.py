@@ -83,6 +83,20 @@ def get_vault_pool() -> asyncpg.Pool:
     return _vault_pool
 
 
+async def check_vault_health() -> bool:
+    """Ping dedicated vault database to confirm health for readiness check."""
+    global _vault_pool
+    if _vault_pool is None:
+        return False
+    try:
+        async with _vault_pool.acquire() as conn:
+            val = await conn.fetchval("SELECT 1")
+            return bool(val == 1)
+    except Exception as exc:
+        logger.warning(f"Vault database readiness ping failed: {exc}")
+        return False
+
+
 @asynccontextmanager
 async def get_vault_session() -> AsyncGenerator[asyncpg.Connection, None]:
     """Provide a transactional database session over the dedicated vault connection pool.

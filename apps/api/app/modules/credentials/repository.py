@@ -575,11 +575,15 @@ async def update_credential_metadata(
     updates: dict[str, Any],
 ) -> StoredCredentialResult:
     """Update permitted non-cryptographic metadata fields on an owned credential."""
-    # Strip any client-injected account scope fields to prevent manual tampering
+    # Strip any client-injected account scope or billing fields to prevent manual tampering
     updates.pop("account_scope_id", None)
     updates.pop("account_scope_verified", None)
     updates.pop("account_scope_source", None)
     updates.pop("account_scope_verified_at", None)
+    updates.pop("billing_tier", None)
+    updates.pop("billing_verified_at", None)
+    updates.pop("billing_verification_error", None)
+    updates.pop("billing_verification_source", None)
 
     if not updates:
         return await get_credential_metadata(credential_id, owner_id)

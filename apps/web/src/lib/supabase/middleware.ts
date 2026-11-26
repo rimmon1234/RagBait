@@ -27,8 +27,38 @@ export async function updateSession(request: NextRequest) {
     }
   );
 
-  // Refresh auth token
-  await supabase.auth.getUser();
+  // Refresh auth token and inspect user session
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+
+  const pathname = request.nextUrl.pathname;
+  const isAuthRoute =
+    pathname.startsWith("/login") ||
+    pathname.startsWith("/register") ||
+    pathname.startsWith("/auth");
+
+  const isProtectedRoute =
+    pathname.startsWith("/local-inference") ||
+    pathname.startsWith("/credentials") ||
+    pathname.startsWith("/access") ||
+    pathname.startsWith("/community-nodes") ||
+    pathname.startsWith("/knowledge-base") ||
+    pathname.startsWith("/admin");
+
+  if (!user && isProtectedRoute) {
+    const redirectUrl = request.nextUrl.clone();
+    redirectUrl.pathname = "/login";
+    redirectUrl.searchParams.set("redirectedFrom", pathname);
+    return NextResponse.redirect(redirectUrl);
+  }
+
+  if (user && isAuthRoute && !pathname.startsWith("/auth/callback")) {
+    const redirectUrl = request.nextUrl.clone();
+    redirectUrl.pathname = "/local-inference";
+    redirectUrl.searchParams.delete("redirectedFrom");
+    return NextResponse.redirect(redirectUrl);
+  }
 
   return supabaseResponse;
 }

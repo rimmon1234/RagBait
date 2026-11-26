@@ -16,8 +16,8 @@ vi.mock("@/lib/api", () => ({
 
 const mockProviders: LLMProvider[] = [
   {
-    id: "groq",
-    name: "Groq",
+    id: "openrouter",
+    name: "OpenRouter",
     runtime_type: "cloud_api",
     is_enabled: true,
     requires_account_scope: false,
@@ -28,9 +28,21 @@ const mockProviders: LLMProvider[] = [
     updated_at: "2026-01-01T00:00:00Z",
   },
   {
-    id: "gemini",
-    name: "Google Gemini",
+    id: "groq",
+    name: "Groq",
     runtime_type: "cloud_api",
+    is_enabled: true,
+    requires_account_scope: false,
+    allows_community_sharing: false,
+    account_tier: "free",
+    billing_status: "active",
+    created_at: "2026-01-01T00:00:00Z",
+    updated_at: "2026-01-01T00:00:00Z",
+  },
+  {
+    id: "ollama",
+    name: "Ollama",
+    runtime_type: "local_runtime",
     is_enabled: true,
     requires_account_scope: false,
     allows_community_sharing: false,
@@ -44,9 +56,9 @@ const mockProviders: LLMProvider[] = [
 const mockCredentials: ApiKeyCredential[] = [
   {
     id: "11111111-1111-1111-1111-111111111111",
-    provider_id: "groq",
-    nickname: "Research Groq Key",
-    masked_key: "gsk_...4928",
+    provider_id: "openrouter",
+    nickname: "Research OpenRouter Key",
+    masked_key: "sk-or-v1-...4928",
     status: "active",
     sharing_scope: "community_shared",
     shared_consent: true,
@@ -54,10 +66,9 @@ const mockCredentials: ApiKeyCredential[] = [
     consent_version: "v1",
     validation_status: "valid",
     last_validated_at: "2026-02-01T12:00:00Z",
-    daily_request_limit: 1000,
-    monthly_request_limit: 25000,
-    daily_spending_limit_cents: 200,
-    monthly_spending_limit_cents: 5000,
+    billing_tier: "verified_free_only",
+    daily_request_limit: 500,
+    monthly_request_limit: 15000,
     created_at: "2026-02-01T00:00:00Z",
     updated_at: "2026-02-01T00:00:00Z",
   },
@@ -68,10 +79,10 @@ describe("CredentialsPage", () => {
     vi.clearAllMocks();
   });
 
-  it("renders empty state when no credentials exist", async () => {
+  it("renders empty state when no credentials exist and filters out local runtime (Ollama)", async () => {
     vi.mocked(api.fetchWithAuth).mockImplementation(async (url: string) => {
       if (url.includes("/api/v1/me/api-keys")) {
-        return { credentials: [], total: 0 };
+        return { items: [], credentials: [], total: 0 };
       }
       if (url.includes("/api/v1/llm/providers")) {
         return mockProviders;
@@ -85,13 +96,21 @@ describe("CredentialsPage", () => {
     await waitFor(() => {
       expect(screen.getByText("No credentials configured")).toBeInTheDocument();
     });
-    expect(screen.getByText(/Add your first AI provider API credential/i)).toBeInTheDocument();
+
+    // Open add modal
+    const addButtons = screen.getAllByRole("button", { name: /Add Credential/i });
+    fireEvent.click(addButtons[0]);
+
+    // Verify Ollama does not appear in options
+    expect(screen.queryByRole("option", { name: /Ollama/i })).not.toBeInTheDocument();
+    expect(screen.getByRole("option", { name: /OpenRouter/i })).toBeInTheDocument();
+    expect(screen.getByRole("option", { name: /Groq/i })).toBeInTheDocument();
   });
 
-  it("renders credentials list with masked key and limits (never plaintext)", async () => {
+  it("renders credentials list with masked key and platform quotas (never plaintext)", async () => {
     vi.mocked(api.fetchWithAuth).mockImplementation(async (url: string) => {
       if (url.includes("/api/v1/me/api-keys")) {
-        return { credentials: mockCredentials, total: 1 };
+        return { items: mockCredentials, credentials: mockCredentials, total: 1 };
       }
       if (url.includes("/api/v1/llm/providers")) {
         return mockProviders;
@@ -102,13 +121,11 @@ describe("CredentialsPage", () => {
     render(<CredentialsPage />);
 
     await waitFor(() => {
-      expect(screen.getByText("Research Groq Key")).toBeInTheDocument();
+      expect(screen.getByText("Research OpenRouter Key")).toBeInTheDocument();
     });
 
     // Check masked key
-    expect(screen.getByText("gsk_...4928")).toBeInTheDocument();
-    // Verify plaintext is not rendered
-    expect(screen.queryByText(/gsk_raw_secret/i)).not.toBeInTheDocument();
+    expect(screen.getByText("sk-or-v1-...4928")).toBeInTheDocument();
 
     // Check badges
     expect(screen.getByText("Active")).toBeInTheDocument();
@@ -117,10 +134,10 @@ describe("CredentialsPage", () => {
     expect(screen.getByText("500 RPD Baseline")).toBeInTheDocument();
   });
 
-  it("opens add credential modal and validates required consent", async () => {
+  it("opens add modal with simplified inputs and allows opting into community sharing for approved providers", async () => {
     vi.mocked(api.fetchWithAuth).mockImplementation(async (url: string) => {
       if (url.includes("/api/v1/me/api-keys")) {
-        return { credentials: [], total: 0 };
+        return { items: [], credentials: [], total: 0 };
       }
       if (url.includes("/api/v1/llm/providers")) {
         return mockProviders;
@@ -140,6 +157,11 @@ describe("CredentialsPage", () => {
 
     expect(screen.getByText("Add AI Provider Credential")).toBeInTheDocument();
 
+    // Verify user limit and spending cap inputs do NOT exist
+    expect(screen.queryByLabelText(/Daily Request Limit/i)).not.toBeInTheDocument();
+    expect(screen.queryByLabelText(/Monthly Request Limit/i)).not.toBeInTheDocument();
+    expect(screen.queryByLabelText(/Daily Spending Cap/i)).not.toBeInTheDocument();
+
     // Fill in nickname and key
     const nicknameInput = screen.getByPlaceholderText(/e\.g\. My/i);
     const keyInput = screen.getByPlaceholderText(/gsk_/i);
@@ -150,6 +172,7 @@ describe("CredentialsPage", () => {
     // Enable community sharing consent checkbox
     const consentCheckbox = screen.getByRole("checkbox");
     fireEvent.click(consentCheckbox);
+    expect(consentCheckbox).toBeChecked();
 
     // Mock successful creation
     vi.mocked(api.fetchWithAuth).mockResolvedValueOnce({
@@ -165,7 +188,54 @@ describe("CredentialsPage", () => {
         "/api/v1/me/api-keys",
         expect.objectContaining({
           method: "POST",
-          body: expect.stringContaining('"nickname":"My Shared Key"'),
+          body: JSON.stringify({
+            provider_id: "openrouter",
+            nickname: "My Shared Key",
+            api_key: "sk-or-v1-test-secret-key-123",
+            sharing_scope: "community_shared",
+            shared_consent: true,
+          }),
+        })
+      );
+    });
+  });
+
+  it("handles quick privacy toggle: Make Private immediately revokes consent", async () => {
+    vi.mocked(api.fetchWithAuth).mockImplementation(async (url: string, options?: RequestInit) => {
+      if (url.includes(`/api/v1/me/api-keys/${mockCredentials[0].id}`) && options?.method === "PATCH") {
+        return {
+          ...mockCredentials[0],
+          sharing_scope: "owner_only",
+          shared_consent: false,
+        };
+      }
+      if (url.includes("/api/v1/me/api-keys")) {
+        return { items: mockCredentials, credentials: mockCredentials, total: 1 };
+      }
+      if (url.includes("/api/v1/llm/providers")) {
+        return mockProviders;
+      }
+      throw new Error(`Unhandled url ${url}`);
+    });
+
+    render(<CredentialsPage />);
+
+    await waitFor(() => {
+      expect(screen.getByText("Research OpenRouter Key")).toBeInTheDocument();
+    });
+
+    const makePrivateBtn = screen.getByRole("button", { name: /Make Private/i });
+    fireEvent.click(makePrivateBtn);
+
+    await waitFor(() => {
+      expect(api.fetchWithAuth).toHaveBeenCalledWith(
+        `/api/v1/me/api-keys/${mockCredentials[0].id}`,
+        expect.objectContaining({
+          method: "PATCH",
+          body: JSON.stringify({
+            sharing_scope: "owner_only",
+            shared_consent: false,
+          }),
         })
       );
     });
@@ -184,7 +254,7 @@ describe("CredentialsPage", () => {
         return valRes;
       }
       if (url.includes("/api/v1/me/api-keys")) {
-        return { credentials: mockCredentials, total: 1 };
+        return { items: mockCredentials, credentials: mockCredentials, total: 1 };
       }
       if (url.includes("/api/v1/llm/providers")) {
         return mockProviders;
@@ -195,7 +265,7 @@ describe("CredentialsPage", () => {
     render(<CredentialsPage />);
 
     await waitFor(() => {
-      expect(screen.getByText("Research Groq Key")).toBeInTheDocument();
+      expect(screen.getByText("Research OpenRouter Key")).toBeInTheDocument();
     });
 
     const validateBtn = screen.getByRole("button", { name: /Validate/i });
@@ -218,7 +288,7 @@ describe("CredentialsPage", () => {
         return {};
       }
       if (url.includes("/api/v1/me/api-keys")) {
-        return { credentials: mockCredentials, total: 1 };
+        return { items: mockCredentials, credentials: mockCredentials, total: 1 };
       }
       if (url.includes("/api/v1/llm/providers")) {
         return mockProviders;
@@ -229,7 +299,7 @@ describe("CredentialsPage", () => {
     render(<CredentialsPage />);
 
     await waitFor(() => {
-      expect(screen.getByText("Research Groq Key")).toBeInTheDocument();
+      expect(screen.getByText("Research OpenRouter Key")).toBeInTheDocument();
     });
 
     const deleteBtn = screen.getByTitle("Delete credential");

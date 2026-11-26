@@ -20,8 +20,6 @@ export interface StreamChatCompletionParams {
   credential_scope?: CredentialScope;
   model?: string;
   temperature?: number;
-  community_opt_in?: boolean;
-  idempotency_key?: string;
 }
 
 export interface RouteHeaders {

@@ -32,6 +32,28 @@ def filter_candidates(
 
     for c in candidates:
         # 1. Mode & Source constraints
+        if c.source_type == "community":
+            results.append(
+                CandidateFilterResult(
+                    candidate=c,
+                    eligible=False,
+                    rejection_code="LOCAL_MODEL_SHARING_DISABLED",
+                    rejection_reason="Local model sharing has been disabled; community local nodes are not eligible",
+                )
+            )
+            continue
+
+        if routing_mode == "community_only":
+            results.append(
+                CandidateFilterResult(
+                    candidate=c,
+                    eligible=False,
+                    rejection_code="COMMUNITY_LOCAL_INFERENCE_DISCONTINUED",
+                    rejection_reason="Community local inference has been discontinued",
+                )
+            )
+            continue
+
         if routing_mode == "cloud_only" and c.source_type != "cloud":
             results.append(
                 CandidateFilterResult(
@@ -39,28 +61,6 @@ def filter_candidates(
                     eligible=False,
                     rejection_code="MODE_SOURCE_MISMATCH",
                     rejection_reason="Candidate is community source but mode is cloud_only",
-                )
-            )
-            continue
-
-        if routing_mode == "community_only" and c.source_type != "community":
-            results.append(
-                CandidateFilterResult(
-                    candidate=c,
-                    eligible=False,
-                    rejection_code="MODE_SOURCE_MISMATCH",
-                    rejection_reason="Candidate is cloud source but mode is community_only",
-                )
-            )
-            continue
-
-        if c.source_type == "community" and not community_opt_in:
-            results.append(
-                CandidateFilterResult(
-                    candidate=c,
-                    eligible=False,
-                    rejection_code="COMMUNITY_CONSENT_MISSING",
-                    rejection_reason="Community candidate excluded because requester has not explicitly opted in",
                 )
             )
             continue
@@ -165,6 +165,41 @@ def filter_candidates(
                     )
                 )
                 continue
+
+            # Shared pool free-tier and cost invariants (RagBait mandatory policy)
+            if c.is_shared_credential:
+                if c.credential_billing_tier and c.credential_billing_tier != "verified_free_only":
+                    results.append(
+                        CandidateFilterResult(
+                            candidate=c,
+                            eligible=False,
+                            rejection_code="SHARED_POOL_UNVERIFIED_BILLING",
+                            rejection_reason="Shared pool credential billing tier is not verified as free-only",
+                        )
+                    )
+                    continue
+                if not c.free_tier_eligible:
+                    results.append(
+                        CandidateFilterResult(
+                            candidate=c,
+                            eligible=False,
+                            rejection_code="SHARED_POOL_FREE_TIER_ONLY",
+                            rejection_reason="Shared pool credentials can only be used for free-tier eligible models; paid shared usage is prohibited",
+                        )
+                    )
+                    continue
+                if (c.pricing_input_cents_per_million or 0) > 0 or (
+                    c.pricing_output_cents_per_million or 0
+                ) > 0:
+                    results.append(
+                        CandidateFilterResult(
+                            candidate=c,
+                            eligible=False,
+                            rejection_code="SHARED_POOL_ZERO_COST_ONLY",
+                            rejection_reason="Shared pool credentials cannot incur metered cloud charges",
+                        )
+                    )
+                    continue
 
         elif c.source_type == "community":
             if c.active_concurrency >= c.max_concurrent_jobs:

@@ -28,24 +28,31 @@ The development of RagBait follows a strict, sequential milestone architecture d
 
 ### Upcoming Milestones
 
-#### M2 — Secure API Credential Management & Shared LLM Gateway (Next)
-The architectural foundation for unified, affordable AI inference combining public APIs and community local compute:
+#### M2 — Secure API Credential Management & Shared LLM Gateway (Completed)
+The architectural foundation for unified, affordable AI inference combining public APIs and private local compute:
 - **M2.1 — Provider/Model Registry & Dynamic Quota Catalog**: Administrator-controlled model catalog (`public.llm_providers`, `public.llm_models`), dynamic provider quotas (`public.provider_quotas`) with full provenance tracking, Gemini free-tier data disclosures, and ToS compliance enforcement.
 - **M2.2 — Encrypted Credential Vault & Dedicated DB Service Role**: Isolated `private.api_key_secrets` schema, dedicated least-privilege DB role `ragbait_vault_service`, separate FastAPI `vault_pool`, AES-256-GCM envelope encryption with context-bound AAD, and HMAC key fingerprinting via independent `VAULT_PEPPER_SECRET`.
 - **M2.3 — Owner-Only Credential Management**: User API key CRUD (`/api/v1/me/api-keys`), masked presentation, non-mutating capability test probes, and instant pool withdrawal and active revocation (with 30-day backup lifecycle).
 - **M2.4 — Admission Control, Multi-Tier Rate Limiting & Usage Ledger**: Redis Lua scripts for 4-tier rate limits, common 5-RPM / 1-concurrency baseline safety envelope, provider-account quota scopes, atomic reservations, and transactional usage recording (`public.api_key_usage`) established **before** shared dispatch.
 - **M2.5 — Core Free/Low-Cost Cloud Adapters**: Normalized streaming and non-streaming HTTP adapters for Google Gemini (Gemini 3.8 Flash), GroqCloud (GPT-OSS 120B/20B, Qwen 3.8 27B), OpenRouter, and Cerebras.
 - **M2.6 — Optional Paid Provider Adapters**: Metered adapters for xAI / Grok and administrator-managed OpenAI project-scoped service accounts (`sk-proj-...`).
-- **M2.7 — Private Local Inference (Mode A)**: Student local Ollama / vLLM runtime registration and exclusive private routing.
-- **M2.8 — Community-Shared Local Nodes (Mode B)**: Dual-consent privacy controls, Ed25519 asymmetric WSS handshake (`CHALLENGE`, `RESPONSE`, `AUTH_OK`), server-signed job authorization tokens, progress-based lease renewals, and durable Redis Streams job dispatch with explicit `AGENT_ACCEPTED` confirmation before `XACK`.
-- **M2.9 — Unified Intelligent Routing & Anti-Amplification Engine**: Normalized endpoints (`/api/v1/llm/generate`, `/stream`), model capability resolution, cost scoring, and single-fallback circuit breaking.
-- **M2.10 — Verification & Security Hardening**: Comprehensive test suite covering credential isolation, envelope encryption, Ed25519 challenge-response replays, concurrency races, fallback behavior, streaming reconnections, and mock provider integration.
+- **M2.7 — Private Local Inference**: Student local Ollama runtime connection and exclusive private loopback routing. A student's locally installed Ollama models and local computing resources remain exclusively available to that student and are never pooled or shared.
+- **M2.8 — Community-Shared Local Compute (Discontinued)**: Discontinued per authoritative privacy policy. Local Ollama instances cannot be pooled or shared across students. Shared inference pooling is restricted exclusively to explicitly consented, provider-eligible cloud API credentials.
+- **M2.9 — Unified Intelligent Routing**: Unified deterministic routing layer selecting between user private keys and institutional/community-pooled cloud API credentials with quota enforcement, budget limits, and admission control. Local Ollama models remain strictly private to the student's browser.
+- **M2.10 — Verification & Security Hardening**: Comprehensive test suite covering credential isolation, envelope encryption, admission control, quota verification, fallback behavior, streaming, and privacy boundaries.
+- **M2 Free-Tier Contribution Integrity Hardening**: Defense-in-depth protection for credential metadata via PostgreSQL column-level privileges and protective triggers, authoritative billing tier verification (`verified_free_only`), OpenRouter fallback prevention (`allow_fallbacks: False`), dynamic alias paid model protection, and post-execution safety audits with instant credential disabling and incident logging on unexpected billable charges.
+
+> **Official Policy & Contribution Gate Statement:**
+> - *Every approved user must contribute at least one validated, provider-approved, free-tier cloud API credential to the RagBait shared pool before accessing AI Chat. This requirement applies even when using private local Ollama. Local models and paid API credentials do not count.*
+> - *RagBait allows students to use their own locally installed Ollama models privately. These models and their computing resources are never shared with other students. Shared inference pooling is restricted to explicitly consented, provider-eligible cloud API credentials.*
+> - *Unified workspace provides 3 execution modes: Automatic (Recommended), My API Keys Only, and Private Local (This Computer).*
 
 #### M3 — Collaborative Subject-Wise Knowledge Base & Document Ingestion
 - Subject folder hierarchy and collaborative access permissions.
 - Document uploads with strict validation (MIME types, magic byte verification, 25MB max size, 500-page limit).
 - Document ownership tracking, public subject sharing, and secure download signing.
 - Document parsing and ingestion pipeline for PDF and TXT materials.
+*(Note: M3 relies purely on cloud and private local compute; no peer-hosted local compute is utilized).*
 
 #### M4 — RAG Engine & Vector Retrieval
 - Document chunking strategies with contextual metadata preservation.

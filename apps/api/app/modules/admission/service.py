@@ -478,16 +478,23 @@ async def settle_reservation(
                 actual_cost_microcents = req.actual_cost_cents * 1_000_000
             else:
                 active_model_id = model_id or res["model_id"]
-                try:
-                    model = await _get_model_details(active_model_id)
-                except NotFoundError:
-                    model = await _get_model_details(res["model_id"])
-                actual_cost_microcents = compute_cost_microcents(
-                    req.actual_input_tokens,
-                    req.actual_output_tokens,
-                    model["input_cost_per_million_cents"],
-                    model["output_cost_per_million_cents"],
-                )
+                if (
+                    active_model_id.endswith(":free")
+                    or (resolved_model_id and resolved_model_id.endswith(":free"))
+                    or res["model_id"] == "openrouter/free"
+                ):
+                    actual_cost_microcents = 0
+                else:
+                    try:
+                        model = await _get_model_details(active_model_id)
+                    except NotFoundError:
+                        model = await _get_model_details(res["model_id"])
+                    actual_cost_microcents = compute_cost_microcents(
+                        req.actual_input_tokens,
+                        req.actual_output_tokens,
+                        model["input_cost_per_million_cents"],
+                        model["output_cost_per_million_cents"],
+                    )
 
         actual_cost_cents = microcents_to_ceiling_cents(actual_cost_microcents)
 

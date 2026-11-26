@@ -1,12 +1,12 @@
 """Candidate discovery for cloud providers and community local inference nodes."""
 
 import logging
-from typing import Any
+from datetime import UTC, datetime
+from typing import Any, Literal
 from uuid import UUID
 
 from app.core.database import get_pool
 from app.core.errors import AuthorizationError, ConflictError, NotFoundError
-from app.core.redis import get_community_redis
 from app.modules.admission.cooldown import check_cooldown
 from app.modules.routing.free_models import is_approved_free_model
 from app.modules.routing.schemas import RoutingCandidate, RoutingMode
@@ -19,6 +19,7 @@ async def discover_cloud_candidates(
     requested_provider_id: str | None = None,
     requested_model_id: str | None = None,
     explicit_credential_id: UUID | None = None,
+    credential_scope: Literal["eligible_pool", "owner_only"] = "eligible_pool",
 ) -> list[RoutingCandidate]:
     """Discover candidate cloud models and resolve authorized credentials for the user."""
     pool = get_pool()
@@ -56,7 +57,8 @@ async def discover_cloud_candidates(
         user_creds = await conn.fetch(
             """
             SELECT id, owner_id, provider_id, status, validation_status,
-                   sharing_scope, shared_consent, account_scope_id, account_scope_verified
+                   sharing_scope, shared_consent, account_scope_id, account_scope_verified,
+                   billing_tier, billing_verified_at
             FROM public.api_key_metadata
             WHERE owner_id = $1 AND status = 'active' AND validation_status = 'valid'
             ORDER BY created_at DESC
@@ -98,7 +100,8 @@ async def discover_cloud_candidates(
             row_explicit = await conn.fetchrow(
                 """
                 SELECT id, owner_id, provider_id, status, validation_status,
-                       sharing_scope, shared_consent, account_scope_id, account_scope_verified
+                       sharing_scope, shared_consent, account_scope_id, account_scope_verified,
+                       billing_tier, billing_verified_at
                 FROM public.api_key_metadata
                 WHERE id = $1
                 """,
@@ -129,12 +132,37 @@ async def discover_cloud_candidates(
                         f"Credential '{explicit_credential_id}' belongs to provider '{row_explicit['provider_id']}', not '{model_check['provider_id']}'"
                     )
 
+            if credential_scope == "owner_only" and row_explicit["owner_id"] != user_id:
+                raise AuthorizationError(
+                    "Access denied: credential_scope is owner_only but explicit credential belongs to another user"
+                )
+
             if row_explicit["owner_id"] != user_id:
                 if (
                     row_explicit["sharing_scope"] != "community_shared"
                     or not row_explicit["shared_consent"]
                 ):
                     raise AuthorizationError("Access denied: private owner-only credential")
+                if row_explicit.get("billing_tier") != "verified_free_only":
+                    raise AuthorizationError(
+                        "Access denied: credential billing tier is not verified for free-tier community sharing"
+                    )
+                verified_at = row_explicit.get("billing_verified_at")
+                if (
+                    not verified_at
+                    or (
+                        datetime.now(UTC)
+                        - (
+                            verified_at.replace(tzinfo=UTC)
+                            if verified_at.tzinfo is None
+                            else verified_at
+                        )
+                    ).days
+                    > 30
+                ):
+                    raise AuthorizationError(
+                        "Access denied: credential billing verification is stale or missing"
+                    )
                 prov_row = await conn.fetchrow(
                     "SELECT allows_community_sharing FROM public.llm_providers WHERE id = $1",
                     row_explicit["provider_id"],
@@ -156,7 +184,8 @@ async def discover_cloud_candidates(
                     if explicit_cred["owner_id"] == user_id:
                         candidate_creds.append((explicit_cred, False))
                     elif (
-                        explicit_cred["sharing_scope"] == "community_shared"
+                        credential_scope != "owner_only"
+                        and explicit_cred["sharing_scope"] == "community_shared"
                         and explicit_cred["shared_consent"]
                         and m["allows_community_sharing"]
                         and is_approved_free_model(provider_id, m["model_id"])
@@ -240,94 +269,41 @@ async def discover_cloud_candidates(
 async def discover_community_candidates(
     requested_model_id: str | None = None,
 ) -> list[RoutingCandidate]:
-    """Discover candidate volunteer community Ollama nodes sharing enabled models."""
-    pool = get_pool()
-    candidates: list[RoutingCandidate] = []
-    cr = get_community_redis()
+    """Community local inference candidate discovery is discontinued.
 
-    async with pool.acquire() as conn:
-        query = """
-            SELECT cn.id AS node_id, cn.display_name AS node_display_name,
-                   cn.max_concurrent_jobs, cn.max_execution_duration,
-                   cnm.model_name, cnm.parameter_size
-            FROM public.community_nodes cn
-            JOIN public.community_node_models cnm ON cn.id = cnm.node_id
-            WHERE cn.status = 'active'
-              AND cn.sharing_enabled = true
-              AND cn.active_session_id IS NOT NULL
-              AND cnm.enabled = true
-        """
-        params: list[Any] = []
-        if requested_model_id:
-            params.append(requested_model_id)
-            query += f" AND cnm.model_name = ${len(params)}"
-
-        rows = await conn.fetch(query, *params)
-        for r in rows:
-            node_id = r["node_id"]
-            active_conc = 0
-            if cr:
-                try:
-                    active_conc = await cr.zcard(f"ragbait:comm:node:{node_id}:reservations")
-                except Exception as exc:
-                    logger.debug(f"Could not read node reservations for {node_id}: {exc}")
-
-            candidates.append(
-                RoutingCandidate(
-                    source_type="community",
-                    provider_id="ollama",
-                    model_id=r["model_name"],
-                    display_name=f"{r['model_name']} ({r['node_display_name']})",
-                    family="ollama",
-                    release_stage="ga",
-                    capabilities=["streaming"],
-                    context_window=32768,
-                    max_output_tokens=4096,
-                    node_id=node_id,
-                    node_display_name=r["node_display_name"],
-                    max_concurrent_jobs=r["max_concurrent_jobs"],
-                    active_concurrency=active_conc,
-                    max_execution_duration=r["max_execution_duration"],
-                    free_tier_eligible=True,
-                    pricing_input_cents_per_million=None,
-                    pricing_output_cents_per_million=None,
-                    pricing_provenance="community_peer_compute",
-                )
-            )
-
-    return candidates
+    Authoritative Product Policy:
+    A student's local Ollama models and compute are strictly private and never shared.
+    Community Ollama nodes are never discovered as route candidates.
+    """
+    return []
 
 
 async def discover_all_candidates(
     user_id: UUID,
     routing_mode: RoutingMode,
+    credential_scope: Literal["eligible_pool", "owner_only"] = "eligible_pool",
     community_opt_in: bool = False,
     requested_provider_id: str | None = None,
     requested_model_id: str | None = None,
     explicit_credential_id: UUID | None = None,
 ) -> list[RoutingCandidate]:
-    """Unified entry point to gather all potential candidates based on routing mode and opt-in."""
+    """Unified entry point to gather all potential candidates based on routing mode.
+
+    Under RagBait's product privacy policy, only eligible cloud credentials (user-owned
+    and explicitly shared free-tier credentials) are eligible candidates.
+    Local models are strictly private and never returned.
+    """
     candidates: list[RoutingCandidate] = []
 
-    # 1. Cloud discovery
+    # 1. Cloud discovery only
     if routing_mode in ("auto", "cloud_only", "provider_specific"):
-        # If provider_specific is requested and it is NOT a registered cloud provider, skip cloud
         cloud_candidates = await discover_cloud_candidates(
             user_id=user_id,
             requested_provider_id=requested_provider_id,
             requested_model_id=requested_model_id,
             explicit_credential_id=explicit_credential_id,
+            credential_scope=credential_scope,
         )
         candidates.extend(cloud_candidates)
-
-    # 2. Community discovery
-    # Community candidates are considered ONLY when:
-    # - routing_mode == "community_only" (mandatory consent)
-    # - routing_mode == "auto" AND community_opt_in == True
-    if (routing_mode == "community_only") or (routing_mode == "auto" and community_opt_in):
-        comm_candidates = await discover_community_candidates(
-            requested_model_id=requested_model_id,
-        )
-        candidates.extend(comm_candidates)
 
     return candidates

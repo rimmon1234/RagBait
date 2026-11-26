@@ -213,6 +213,10 @@ class ChatCompletionRequest(BaseModel):
         default="provider_specific",
         description="Routing policy mode: 'auto', 'cloud_only', 'community_only', or 'provider_specific'",
     )
+    credential_scope: Literal["eligible_pool", "owner_only"] = Field(
+        default="eligible_pool",
+        description="Credential pool scope: 'eligible_pool' (recommended) or 'owner_only' (requester's keys only)",
+    )
     provider_id: str | None = Field(
         default=None,
         min_length=2,
@@ -245,17 +249,17 @@ class ChatCompletionRequest(BaseModel):
     params: GenerationParams = Field(default_factory=GenerationParams)
     stream: bool = Field(default=True, description="Whether to stream response via SSE")
     idempotency_key: str = Field(
-        default_factory=lambda: f"req-{uuid4().hex}",
+        default_factory=lambda: f"idem-{uuid4().hex}",
         min_length=4,
         max_length=128,
-        description="Unique idempotency key to prevent duplicate charges and reservations",
+        description="Idempotency key to prevent duplicate dispatch",
     )
 
     @model_validator(mode="before")
     @classmethod
     def reconcile_routing_fields(cls, data: Any) -> Any:
         if isinstance(data, dict):
-            # Normalize empty strings to None for model/model_id/provider_id
+            # Normalize empty strings to None for model, model_id, provider_id
             for str_field in ("model", "model_id", "provider_id"):
                 if str_field in data:
                     val = data[str_field]
@@ -264,17 +268,22 @@ class ChatCompletionRequest(BaseModel):
                     elif isinstance(val, str):
                         data[str_field] = val.strip()
 
-            # Reconcile idempotency_key if missing or empty
-            if not data.get("idempotency_key") or not str(data["idempotency_key"]).strip():
-                data["idempotency_key"] = f"req-{uuid4().hex}"
+            # Sanitize messages list: prune empty messages if list exists
+            if "messages" in data and isinstance(data["messages"], list):
+                sanitized_messages = []
+                for m in data["messages"]:
+                    if isinstance(m, dict):
+                        content = m.get("content")
+                        if content is not None and str(content).strip():
+                            sanitized_messages.append(m)
+                    else:
+                        sanitized_messages.append(m)
+                if sanitized_messages:
+                    data["messages"] = sanitized_messages
 
-            # Reconcile temperature into params if passed at root
-            if "temperature" in data:
-                temp_val = data["temperature"]
-                if "params" not in data or not isinstance(data.get("params"), dict):
-                    data["params"] = {"temperature": temp_val}
-                elif "temperature" not in data["params"]:
-                    data["params"]["temperature"] = temp_val
+            # Auto-generate idempotency_key if missing or empty
+            if not data.get("idempotency_key"):
+                data["idempotency_key"] = f"idem-{uuid4().hex}"
 
             # Reconcile model and model_id
             if not data.get("model_id") and data.get("model"):
@@ -282,25 +291,16 @@ class ChatCompletionRequest(BaseModel):
             elif not data.get("model") and data.get("model_id"):
                 data["model"] = data["model_id"]
 
-            # Filter out empty or whitespace-only messages if messages list is present
-            if "messages" in data and isinstance(data["messages"], list):
-                sanitized_messages = []
-                for m in data["messages"]:
-                    if isinstance(m, dict):
-                        role = str(m.get("role", "user")).strip().lower()
-                        content = m.get("content", "")
-                        if isinstance(content, str):
-                            content = content.strip()
-                        if content and role in ("system", "user", "assistant"):
-                            sanitized_messages.append({**m, "role": role, "content": content})
-                    elif hasattr(m, "content") and hasattr(m, "role"):
-                        role = str(getattr(m, "role", "")).strip().lower()
-                        content = getattr(m, "content", "")
-                        if isinstance(content, str):
-                            content = content.strip()
-                        if content and role in ("system", "user", "assistant"):
-                            sanitized_messages.append(m)
-                data["messages"] = sanitized_messages
+            # Reconcile temperature / top-level hyperparameters into params
+            if "temperature" in data or "max_output_tokens" in data or "top_p" in data:
+                gen_params = dict(data.get("params") or {})
+                if "temperature" in data and "temperature" not in gen_params:
+                    gen_params["temperature"] = data.pop("temperature")
+                if "max_output_tokens" in data and "max_output_tokens" not in gen_params:
+                    gen_params["max_output_tokens"] = data.pop("max_output_tokens")
+                if "top_p" in data and "top_p" not in gen_params:
+                    gen_params["top_p"] = data.pop("top_p")
+                data["params"] = gen_params
 
             # Default routing mode determination
             if not data.get("routing_mode"):

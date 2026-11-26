@@ -9,7 +9,6 @@ from datetime import UTC, datetime
 from typing import Any
 from uuid import UUID, uuid4
 
-from app.core.config import settings
 from app.core.database import get_pool
 from app.core.errors import BadRequestError, ConflictError, NotFoundError
 from app.modules.llm_gateway.interfaces import GatewayStreamEvent
@@ -40,6 +39,7 @@ def compute_request_payload_hash(req: ChatCompletionRequest) -> str:
     """Compute deterministic SHA-256 hash of the inference request payload for idempotency verification."""
     data = {
         "routing_mode": req.routing_mode,
+        "credential_scope": req.credential_scope,
         "provider_id": req.provider_id,
         "model_id": req.model_id,
         "community_opt_in": req.community_opt_in,
@@ -104,41 +104,49 @@ async def route_and_dispatch(
     request_id = correlation_id or f"req-{uuid4().hex[:12]}"
     payload_hash = compute_request_payload_hash(req)
 
+    # 0. Mandatory Chat Contribution Gate (Authoritative Product Requirement)
+    from app.modules.credentials.service import check_chat_contribution_entitlement
+
+    is_entitled, reason_code, _ = await check_chat_contribution_entitlement(user_id)
+    if not is_entitled:
+        raise AuthorizationError(
+            "A valid, approved free-tier cloud API credential must be contributed before accessing AI Chat.",
+            code="CONTRIBUTION_REQUIRED",
+        )
+
     # 1. User-scoped Idempotency Verification
     await check_user_idempotency(user_id, req.idempotency_key, payload_hash)
 
     # 2. Resolve target model preference
-    preferred_default = (
-        DEFAULT_COMMUNITY_MODEL if routing_mode == "community_only" else DEFAULT_CLOUD_MODEL
-    )
+    preferred_default = DEFAULT_CLOUD_MODEL
     target_model_id = req.model_id
 
-    # 3. Community Consent Verification
-    if routing_mode == "community_only" and not req.community_opt_in:
+    # 3. Community Local Inference Prohibition (Authoritative Product Decision)
+    if routing_mode == "community_only":
         raise BadRequestError(
-            "Explicit requester consent (community_opt_in: true) is required for community_only routing"
+            "Community local inference has been discontinued. A student's local Ollama models and computing resources are strictly private and never shared."
         )
-    if routing_mode in ("auto", "community_only") and req.community_opt_in:
-        if req.community_consent_version != settings.COMMUNITY_CONSENT_POLICY_VERSION:
-            raise BadRequestError(
-                f"Community consent policy version mismatch. Expected '{settings.COMMUNITY_CONSENT_POLICY_VERSION}'"
-            )
+    if req.community_opt_in:
+        raise BadRequestError(
+            "Local model sharing is disabled. Local Ollama instances cannot be pooled or shared across users."
+        )
+    if req.provider_id == "ollama":
+        raise BadRequestError(
+            "Provider 'ollama' is not supported as a server-side cloud provider. Local Ollama models run privately in the user's browser."
+        )
 
-    # 4. Discover Candidate Pool
+    # 4. Discover Candidate Pool (Cloud Candidates Only)
     candidates = await discover_all_candidates(
         user_id=user_id,
         routing_mode=routing_mode,
-        community_opt_in=req.community_opt_in,
+        credential_scope=req.credential_scope,
+        community_opt_in=False,
         requested_provider_id=req.provider_id,
         requested_model_id=target_model_id,
         explicit_credential_id=req.credential_id,
     )
 
     if not candidates:
-        if routing_mode == "community_only":
-            raise ConflictError(
-                f"No online community node is currently sharing model '{target_model_id or preferred_default}'. Please check back later."
-            )
         if routing_mode == "provider_specific":
             raise NotFoundError(
                 f"No eligible candidate found for requested provider '{req.provider_id}' and model '{req.model_id}'"
@@ -232,14 +240,9 @@ async def route_and_dispatch(
                 )
                 return result, is_streaming, decision
             elif candidate.source_type == "community":
-                result, is_streaming = await execute_community_candidate(
-                    user_id=user_id,
-                    candidate=candidate,
-                    req=req,
-                    token_estimate=token_estimate,
-                    request_id=request_id,
+                raise ConflictError(
+                    "Community local execution has been discontinued in RagBait product architecture"
                 )
-                return result, is_streaming, decision
 
         except PreDispatchCandidateError as pe:
             # Candidate-specific pre-dispatch failure: safe to try next eligible candidate!
@@ -437,15 +440,43 @@ async def preview_route(
 ) -> RoutePreviewResponse:
     """Preview prospective route selection without reserving admission or executing."""
     routing_mode = req.routing_mode
-    preferred_default = (
-        DEFAULT_COMMUNITY_MODEL if routing_mode == "community_only" else DEFAULT_CLOUD_MODEL
-    )
+    preferred_default = DEFAULT_CLOUD_MODEL
     target_model_id = req.model_id
+
+    # Enforce community local inference prohibition
+    if routing_mode == "community_only":
+        return RoutePreviewResponse(
+            routing_mode=routing_mode,
+            selected_candidate=None,
+            candidates_considered=0,
+            candidates_eligible=0,
+            decision_reason="COMMUNITY_LOCAL_INFERENCE_DISCONTINUED",
+            rejected_reasons_summary={"COMMUNITY_LOCAL_INFERENCE_DISCONTINUED": 1},
+        )
+    if req.community_opt_in:
+        raise BadRequestError(
+            "Local model sharing is disabled. Local Ollama instances cannot be pooled or shared across users."
+        )
+    if req.provider_id == "ollama":
+        raise BadRequestError(
+            "Provider 'ollama' is not supported as a server-side cloud provider. Local Ollama models run privately in the user's browser."
+        )
+
+    # 0. Mandatory Chat Contribution Gate
+    from app.modules.credentials.service import check_chat_contribution_entitlement
+
+    is_entitled, reason_code, _ = await check_chat_contribution_entitlement(user_id)
+    if not is_entitled:
+        raise AuthorizationError(
+            "A valid, approved free-tier cloud API credential must be contributed before accessing AI Chat.",
+            code="CONTRIBUTION_REQUIRED",
+        )
 
     candidates = await discover_all_candidates(
         user_id=user_id,
         routing_mode=routing_mode,
-        community_opt_in=req.community_opt_in,
+        credential_scope=req.credential_scope,
+        community_opt_in=False,
         requested_provider_id=req.provider_id,
         requested_model_id=target_model_id,
         explicit_credential_id=req.credential_id,

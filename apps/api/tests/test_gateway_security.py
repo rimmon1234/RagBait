@@ -75,7 +75,10 @@ async def _grant_qualifying_contribution(user_id: UUID) -> None:
 
 
 async def create_db_user(
-    email: str | None = None, role: str = "user", status: str = "approved"
+    email: str | None = None,
+    role: str = "user",
+    status: str = "approved",
+    with_entitlement: bool = True,
 ) -> UUID:
     pool = get_pool()
     user_id = uuid4()
@@ -106,6 +109,24 @@ async def create_db_user(
             user_id,
         )
     CREATED_TEST_USERS.append(user_id)
+
+    if with_entitlement:
+        cred = await store_credential(
+            owner_id=user_id,
+            provider_id="openrouter",
+            raw_key=f"sk-or-qualifying-{uuid4().hex}",
+            nickname="Contributed Shared Key",
+            sharing_scope="community_shared",
+            shared_consent=True,
+            status="active",
+        )
+        CREATED_TEST_CREDS.append(cred.id)
+        async with pool.acquire() as conn:
+            await conn.execute(
+                "UPDATE public.api_key_metadata SET validation_status = 'valid', billing_tier = 'verified_free_only', billing_verified_at = now() WHERE id = $1",
+                cred.id,
+            )
+
     return user_id
 
 
@@ -252,6 +273,23 @@ async def test_community_sharing_gated_by_provider_policy(client: httpx.AsyncCli
                 cred_b.id,
             )
 
+        # Give user_a an active qualifying key on openrouter so they pass chat entitlement
+        cred_a_openrouter = await store_credential(
+            owner_id=user_a,
+            provider_id="openrouter",
+            raw_key=f"sk-or-test-{uuid4().hex}",
+            nickname="User A Qualifying OpenRouter",
+            sharing_scope="community_shared",
+            shared_consent=True,
+            status="active",
+        )
+        CREATED_TEST_CREDS.append(cred_a_openrouter.id)
+        async with pool.acquire() as conn:
+            await conn.execute(
+                "UPDATE public.api_key_metadata SET validation_status = 'valid', billing_tier = 'verified_free_only', billing_verified_at = now() WHERE id = $1",
+                cred_a_openrouter.id,
+            )
+
         headers_a = setup_auth_context(user_a, email="user_a2@ragbait.app")
 
         resp = await client.post(
@@ -273,7 +311,7 @@ async def test_community_sharing_gated_by_provider_policy(client: httpx.AsyncCli
             await conn.execute(
                 """
                 UPDATE public.llm_providers
-                SET allows_community_sharing = true
+                SET allows_community_sharing = false
                 WHERE id = 'groq'
                 """
             )

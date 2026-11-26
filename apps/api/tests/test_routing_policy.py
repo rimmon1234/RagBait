@@ -256,17 +256,17 @@ def test_hard_filters_cooldown_active():
     assert rejected[0].rejection_code == "PROVIDER_COOLDOWN_ACTIVE"
 
 
-def test_hard_filters_community_concurrency_exhausted():
-    """Community node candidate with zero concurrency remaining must be rejected."""
-    c_exhausted = _make_candidate(
-        model_id="comm_exhausted",
+def test_hard_filters_community_candidates_always_rejected():
+    """All community node candidates must be rejected under private local inference product architecture."""
+    c_comm_1 = _make_candidate(
+        model_id="comm_1",
         source_type="community",
         credential_id=None,
         max_concurrent_jobs=2,
         active_concurrency=2,
     )
-    c_available = _make_candidate(
-        model_id="comm_available",
+    c_comm_2 = _make_candidate(
+        model_id="comm_2",
         source_type="community",
         credential_id=None,
         max_concurrent_jobs=3,
@@ -274,7 +274,7 @@ def test_hard_filters_community_concurrency_exhausted():
     )
 
     eligible, results = filter_candidates(
-        [c_exhausted, c_available],
+        [c_comm_1, c_comm_2],
         routing_mode="auto",
         community_opt_in=True,
         estimated_input_tokens=50,
@@ -282,7 +282,7 @@ def test_hard_filters_community_concurrency_exhausted():
         stream=True,
     )
 
-    assert len(eligible) == 1
-    assert eligible[0].model_id == "comm_available"
-    rejected = [r for r in results if not r.eligible]
-    assert rejected[0].rejection_code == "COMMUNITY_CONCURRENCY_EXHAUSTED"
+    assert len(eligible) == 0
+    for r in results:
+        assert not r.eligible
+        assert r.rejection_code == "LOCAL_MODEL_SHARING_DISABLED"

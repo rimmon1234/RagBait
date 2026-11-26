@@ -10,12 +10,7 @@ from uuid import UUID, uuid4
 import asyncpg
 
 from app.core.database import get_admin_db_session, get_pool
-from app.core.errors import (
-    AuthorizationError,
-    BadRequestError,
-    ConflictError,
-    NotFoundError,
-)
+from app.core.errors import AuthorizationError, ConflictError, NotFoundError, ValidationError
 from app.modules.admission.cooldown import set_cooldown
 from app.modules.admission.ledger import mark_outcome_unknown_transactional
 from app.modules.admission.schemas import AdmissionRequest, SettlementRequest
@@ -815,12 +810,12 @@ async def dispatch_chat_completion(
     """
     # 1. Provider & Model Registry Validation
     if not req.provider_id:
-        raise BadRequestError("provider_id is required for direct gateway inference")
-    target_model_id = req.model_id or req.model
-    if not target_model_id:
-        raise BadRequestError("model_id is required for direct gateway inference")
-    provider_id: str = req.provider_id
-    model_id: str = target_model_id
+        raise ValidationError("provider_id is required for direct gateway lifecycle")
+    if not req.model_id:
+        raise ValidationError("model_id is required for direct gateway lifecycle")
+
+    provider_id = req.provider_id
+    model_id = req.model_id
 
     provider = await get_provider(provider_id)
     if not provider.is_enabled:
@@ -1132,9 +1127,9 @@ async def dispatch_chat_completion(
             try:
                 await set_cooldown(
                     scope_type="provider",
-                    scope_id=req.provider_id,
+                    scope_id=provider_id,
                     retry_after_seconds=retry_after,
-                    reason=f"Provider {req.provider_id} returned HTTP 429",
+                    reason=f"Provider {provider_id} returned HTTP 429",
                 )
             except Exception:
                 pass

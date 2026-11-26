@@ -1,12 +1,25 @@
 "use client";
 
-import { useEffect } from "react";
-import { useRouter } from "next/navigation";
 import Link from "next/link";
-import { Cpu, ArrowRight } from "lucide-react";
+import { Cpu, Key, ShieldCheck, ArrowRight } from "lucide-react";
 
 export default function CommunityNodesPage() {
-  const router = useRouter();
+  return (
+    <div className="mx-auto max-w-4xl px-4 py-12 sm:px-6 lg:px-8">
+      <div className="rounded-2xl border border-gray-200 bg-white p-8 shadow-sm">
+        <div className="flex items-center gap-3 text-blue-600">
+          <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-blue-50">
+            <ShieldCheck className="h-6 w-6 text-blue-600" />
+          </div>
+          <div>
+            <h1 className="text-2xl font-bold text-gray-900">
+              Community Compute Discontinued
+            </h1>
+            <p className="text-sm text-gray-500">
+              RagBait Product Architecture & Privacy Boundary
+            </p>
+          </div>
+        </div>
 
   useEffect(() => {
     router.replace("/chat");
