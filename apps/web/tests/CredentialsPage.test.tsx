@@ -319,4 +319,48 @@ describe("CredentialsPage", () => {
       );
     });
   });
+
+  it("surfaces duplicate cross-account API key error in the add modal", async () => {
+    vi.mocked(api.fetchWithAuth).mockImplementation(async (url: string, options?: RequestInit) => {
+      if (url.includes("/api/v1/me/api-keys") && options?.method === "POST") {
+        throw new api.ApiError(
+          "CREDENTIAL_ALREADY_EXISTS",
+          "This credential key has already been registered and cannot be reused across accounts",
+          409
+        );
+      }
+      if (url.includes("/api/v1/me/api-keys")) {
+        return { items: [], credentials: [], total: 0 };
+      }
+      if (url.includes("/api/v1/llm/providers")) {
+        return mockProviders;
+      }
+      throw new Error(`Unhandled url ${url}`);
+    });
+
+    render(<CredentialsPage />);
+
+    await waitFor(() => {
+      expect(screen.getByText("No credentials configured")).toBeInTheDocument();
+    });
+
+    fireEvent.click(screen.getAllByRole("button", { name: /Add Credential/i })[0]);
+
+    fireEvent.change(screen.getByPlaceholderText(/e\.g\. My/i), {
+      target: { value: "Reused Key" },
+    });
+    fireEvent.change(screen.getByPlaceholderText(/gsk_/i), {
+      target: { value: "sk-or-v1-reused-key-123" },
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: /Encrypt & Save Key/i }));
+
+    await waitFor(() => {
+      expect(
+        screen.getByText(
+          "This credential key has already been registered and cannot be reused across accounts"
+        )
+      ).toBeInTheDocument();
+    });
+  });
 });

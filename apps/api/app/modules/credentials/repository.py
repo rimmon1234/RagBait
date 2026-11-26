@@ -11,6 +11,7 @@ from app.core.config import settings
 from app.modules.credentials.crypto import (
     build_payload_aad,
     build_wrapping_aad,
+    canonicalize_credential_key,
     compute_fingerprint,
     decrypt_payload,
     encrypt_payload,
@@ -66,7 +67,8 @@ async def store_credential(
     5. Wraps the DEK using the KEK provider bound to distinct wrapping AAD.
     6. Atomically inserts metadata and secrets in a single transaction.
     """
-    if not raw_key or not raw_key.strip():
+    cleaned_key = canonicalize_credential_key(raw_key)
+    if not cleaned_key:
         raise ValueError("Credential key cannot be empty")
 
     data_enc_ver = data_encryption_version or settings.VAULT_DATA_ENCRYPTION_VERSION
@@ -75,110 +77,144 @@ async def store_credential(
 
     provider = kek_provider or LocalHKDFKEKProvider(settings.VAULT_MASTER_KEY)
 
-    # 1. Fingerprint and mask
-    fingerprint = compute_fingerprint(raw_key, settings.VAULT_PEPPER_SECRET)
-    masked = mask_credential(raw_key)
+    # 1. Fingerprint and mask using canonicalized key material
+    fingerprint = compute_fingerprint(cleaned_key, settings.VAULT_PEPPER_SECRET)
+    masked = mask_credential(cleaned_key)
     cred_id = credential_id or uuid4()
 
     async with get_vault_session() as conn:
-        # Check duplicate fingerprint within this provider
-        existing = await conn.fetchval(
-            """
-            SELECT id FROM public.api_key_metadata
-            WHERE provider_id = $1 AND key_fingerprint = $2
-            """,
-            provider_id,
-            fingerprint,
-        )
-        if existing:
-            raise VaultDuplicateError()
-
-        # 2. Build distinct context AADs
-        payload_aad = build_payload_aad(owner_id, cred_id, provider_id, data_enc_ver)
-        wrapping_aad = build_wrapping_aad(owner_id, cred_id, provider_id, kek_ver, wrap_ctx_ver)
-
-        # 3. Generate DEK & encrypt payload
-        dek = generate_dek()
-        ciphertext, nonce = encrypt_payload(raw_key, dek, payload_aad)
-
-        # 4. Wrap DEK with master KEK
-        encrypted_dek, dek_nonce, dek_auth_tag = provider.wrap_dek(dek, wrapping_aad, kek_ver)
-
-        # 5. Insert public metadata (default status: disabled, unvalidated)
-        try:
-            meta_row = await conn.fetchrow(
+        async with conn.transaction():
+            # Check active/existing duplicate fingerprint globally across all providers
+            existing = await conn.fetchval(
                 """
-                INSERT INTO public.api_key_metadata (
-                    id, owner_id, provider_id, nickname, masked_key, key_fingerprint,
-                    status, sharing_scope, shared_consent, sharing_consent_timestamp,
-                    consent_version, validation_status, account_scope_id,
-                    account_scope_verified, account_scope_source, account_scope_verified_at,
-                    daily_request_limit, monthly_request_limit,
-                    daily_spending_limit_cents, monthly_spending_limit_cents
+                SELECT id FROM public.api_key_metadata
+                WHERE key_fingerprint = $1
+                FOR UPDATE
+                """,
+                fingerprint,
+            )
+            if existing:
+                raise VaultDuplicateError()
+
+            # Enforce permanent cross-account claim ownership so deleting/revoking
+            # a key does not allow a second account to reuse it to bypass the gate.
+            claimed_owner = await conn.fetchval(
+                """
+                INSERT INTO private.credential_fingerprint_claims (
+                    key_fingerprint, provider_id, first_owner_id, first_credential_id
                 )
-                VALUES (
-                    $1, $2, $3, $4, $5, $6,
-                    $7, $8, $9, $10,
-                    $11, 'unvalidated', $12,
-                    $13, $14, $15,
-                    $16, $17,
-                    $18, $19
+                VALUES ($1, $2, $3, $4)
+                ON CONFLICT (key_fingerprint) DO NOTHING
+                RETURNING first_owner_id
+                """,
+                fingerprint,
+                provider_id,
+                owner_id,
+                cred_id,
+            )
+            if claimed_owner is None:
+                existing_claim = await conn.fetchrow(
+                    """
+                    SELECT first_owner_id
+                    FROM private.credential_fingerprint_claims
+                    WHERE key_fingerprint = $1
+                    FOR UPDATE
+                    """,
+                    fingerprint,
                 )
-                RETURNING id, owner_id, provider_id, nickname, masked_key, key_fingerprint,
-                          status, sharing_scope, shared_consent, sharing_consent_timestamp,
-                          consent_version, validation_status, last_validated_at,
-                          validation_error_code, account_scope_id,
-                          account_scope_verified, account_scope_source, account_scope_verified_at,
-                          billing_tier, billing_verified_at, billing_verification_error, billing_verification_source,
-                          daily_request_limit, monthly_request_limit,
-                          daily_spending_limit_cents, monthly_spending_limit_cents,
-                          created_at, updated_at
+                if existing_claim and existing_claim["first_owner_id"] != owner_id:
+                    raise VaultDuplicateError(
+                        message=(
+                            "This credential key has already been registered and cannot be reused across accounts"
+                        )
+                    )
+
+            # 2. Build distinct context AADs
+            payload_aad = build_payload_aad(owner_id, cred_id, provider_id, data_enc_ver)
+            wrapping_aad = build_wrapping_aad(owner_id, cred_id, provider_id, kek_ver, wrap_ctx_ver)
+
+            # 3. Generate DEK & encrypt canonical payload
+            dek = generate_dek()
+            ciphertext, nonce = encrypt_payload(cleaned_key, dek, payload_aad)
+
+            # 4. Wrap DEK with master KEK
+            encrypted_dek, dek_nonce, dek_auth_tag = provider.wrap_dek(dek, wrapping_aad, kek_ver)
+
+            # 5. Insert public metadata (default status: disabled, unvalidated)
+            try:
+                meta_row = await conn.fetchrow(
+                    """
+                    INSERT INTO public.api_key_metadata (
+                        id, owner_id, provider_id, nickname, masked_key, key_fingerprint,
+                        status, sharing_scope, shared_consent, sharing_consent_timestamp,
+                        consent_version, validation_status, account_scope_id,
+                        account_scope_verified, account_scope_source, account_scope_verified_at,
+                        daily_request_limit, monthly_request_limit,
+                        daily_spending_limit_cents, monthly_spending_limit_cents
+                    )
+                    VALUES (
+                        $1, $2, $3, $4, $5, $6,
+                        $7, $8, $9, $10,
+                        $11, 'unvalidated', $12,
+                        $13, $14, $15,
+                        $16, $17,
+                        $18, $19
+                    )
+                    RETURNING id, owner_id, provider_id, nickname, masked_key, key_fingerprint,
+                              status, sharing_scope, shared_consent, sharing_consent_timestamp,
+                              consent_version, validation_status, last_validated_at,
+                              validation_error_code, account_scope_id,
+                              account_scope_verified, account_scope_source, account_scope_verified_at,
+                              billing_tier, billing_verified_at, billing_verification_error, billing_verification_source,
+                              daily_request_limit, monthly_request_limit,
+                              daily_spending_limit_cents, monthly_spending_limit_cents,
+                              created_at, updated_at
+                    """,
+                    cred_id,
+                    owner_id,
+                    provider_id,
+                    nickname,
+                    masked,
+                    fingerprint,
+                    status,
+                    sharing_scope,
+                    shared_consent,
+                    sharing_consent_timestamp,
+                    consent_version,
+                    account_scope_id,
+                    account_scope_verified,
+                    account_scope_source,
+                    account_scope_verified_at,
+                    daily_request_limit,
+                    monthly_request_limit,
+                    daily_spending_limit_cents,
+                    monthly_spending_limit_cents,
+                )
+            except asyncpg.UniqueViolationError as err:
+                raise VaultDuplicateError() from err
+
+            # 6. Insert private secret material
+            await conn.execute(
+                """
+                INSERT INTO private.api_key_secrets (
+                    id, encrypted_dek, dek_nonce, dek_auth_tag, ciphertext, nonce,
+                    data_encryption_version, kek_version, wrapping_context_version
+                )
+                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
                 """,
                 cred_id,
-                owner_id,
-                provider_id,
-                nickname,
-                masked,
-                fingerprint,
-                status,
-                sharing_scope,
-                shared_consent,
-                sharing_consent_timestamp,
-                consent_version,
-                account_scope_id,
-                account_scope_verified,
-                account_scope_source,
-                account_scope_verified_at,
-                daily_request_limit,
-                monthly_request_limit,
-                daily_spending_limit_cents,
-                monthly_spending_limit_cents,
+                encrypted_dek,
+                dek_nonce,
+                dek_auth_tag,
+                ciphertext,
+                nonce,
+                data_enc_ver,
+                kek_ver,
+                wrap_ctx_ver,
             )
-        except asyncpg.UniqueViolationError as err:
-            raise VaultDuplicateError() from err
 
-        # 6. Insert private secret material
-        await conn.execute(
-            """
-            INSERT INTO private.api_key_secrets (
-                id, encrypted_dek, dek_nonce, dek_auth_tag, ciphertext, nonce,
-                data_encryption_version, kek_version, wrapping_context_version
-            )
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-            """,
-            cred_id,
-            encrypted_dek,
-            dek_nonce,
-            dek_auth_tag,
-            ciphertext,
-            nonce,
-            data_enc_ver,
-            kek_ver,
-            wrap_ctx_ver,
-        )
-
-        # Explicitly clear plaintext key and DEK from scope
-        del dek
+            # Explicitly clear plaintext key and DEK from scope
+            del dek
 
     logger.info(
         f"Credential {cred_id} securely stored in vault (payload_v: {data_enc_ver}, kek_v: {kek_ver})"

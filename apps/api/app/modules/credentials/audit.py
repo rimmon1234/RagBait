@@ -13,8 +13,8 @@ logger = logging.getLogger("ragbait.credentials.audit")
 async def log_credential_audit(
     actor_id: UUID,
     action: str,
-    credential_id: UUID,
-    provider_id: str,
+    credential_id: UUID | None = None,
+    provider_id: str = "",
     outcome: str = "success",
     details: dict[str, Any] | None = None,
 ) -> None:

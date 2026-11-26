@@ -8,9 +8,11 @@ from uuid import UUID
 from app.core.database import get_pool
 from app.core.errors import ConflictError, NotFoundError, ValidationError
 from app.modules.credentials.audit import log_credential_audit
+from app.modules.credentials.crypto import canonicalize_credential_key, mask_credential
 from app.modules.credentials.errors import (
     VaultAuthorizationError,
     VaultDecryptionError,
+    VaultDuplicateError,
 )
 from app.modules.credentials.repository import (
     delete_credential_secret,
@@ -124,22 +126,39 @@ async def create_user_credential(
     platform_daily_limit = 500
     platform_monthly_limit = 15000
 
-    # Store in vault repository
-    stored = await store_credential(
-        owner_id=owner_id,
-        provider_id=provider["id"],
-        nickname=payload.nickname.strip(),
-        raw_key=payload.api_key.strip(),
-        sharing_scope=sharing_scope,
-        shared_consent=shared_consent,
-        sharing_consent_timestamp=consent_timestamp,
-        consent_version=consent_version,
-        daily_request_limit=platform_daily_limit,
-        monthly_request_limit=platform_monthly_limit,
-        daily_spending_limit_cents=payload.daily_spending_limit_cents,
-        monthly_spending_limit_cents=payload.monthly_spending_limit_cents,
-        status="disabled",  # Credentials start disabled until validated
-    )
+    canonical_key = canonicalize_credential_key(payload.api_key)
+    if not canonical_key:
+        raise ValidationError("API key secret cannot be empty")
+
+    # Store in vault repository (enforces active + cross-account fingerprint uniqueness)
+    try:
+        stored = await store_credential(
+            owner_id=owner_id,
+            provider_id=provider["id"],
+            nickname=payload.nickname.strip(),
+            raw_key=canonical_key,
+            sharing_scope=sharing_scope,
+            shared_consent=shared_consent,
+            sharing_consent_timestamp=consent_timestamp,
+            consent_version=consent_version,
+            daily_request_limit=platform_daily_limit,
+            monthly_request_limit=platform_monthly_limit,
+            daily_spending_limit_cents=payload.daily_spending_limit_cents,
+            monthly_spending_limit_cents=payload.monthly_spending_limit_cents,
+            status="disabled",  # Credentials start disabled until validated
+        )
+    except VaultDuplicateError:
+        await log_credential_audit(
+            actor_id=owner_id,
+            action="credential.duplicate_blocked",
+            provider_id=provider["id"],
+            outcome="failure",
+            details={
+                "reason": "CREDENTIAL_ALREADY_EXISTS",
+                "masked_key": mask_credential(canonical_key),
+            },
+        )
+        raise
 
     await log_credential_audit(
         actor_id=owner_id,
@@ -254,9 +273,15 @@ async def update_user_credential(
 
     # Log audit event for updates
     audit_action = "credential.updated"
-    if updates.get("sharing_scope") == "owner_only" and existing.sharing_scope == "community_shared":
+    if (
+        updates.get("sharing_scope") == "owner_only"
+        and existing.sharing_scope == "community_shared"
+    ):
         audit_action = "credential.consent_withdrawn"
-    elif updates.get("sharing_scope") == "community_shared" and existing.sharing_scope == "owner_only":
+    elif (
+        updates.get("sharing_scope") == "community_shared"
+        and existing.sharing_scope == "owner_only"
+    ):
         audit_action = "credential.consent_granted"
 
     await log_credential_audit(
@@ -558,4 +583,3 @@ async def check_chat_contribution_entitlement(
             return False, "PROVIDER_NOT_ELIGIBLE_FOR_SHARING", 0
 
     return False, "NO_QUALIFYING_CONTRIBUTION", 0
-

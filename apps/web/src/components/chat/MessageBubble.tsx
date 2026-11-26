@@ -39,11 +39,11 @@ export const MessageBubble = React.memo(function MessageBubble({
             </span>
             <span>{timestamp}</span>
           </div>
-          <div className="rounded-2xl rounded-tr-none bg-blue-600 px-4 py-2.5 text-sm leading-relaxed text-white shadow-sm whitespace-pre-wrap break-words">
+          <div className="rounded-2xl rounded-tr-none bg-gradient-to-br from-blue-600 to-indigo-600 px-4 py-2.5 text-sm leading-relaxed text-white shadow-sm shadow-indigo-600/15 whitespace-pre-wrap break-words">
             {message.content}
           </div>
         </div>
-        <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-gray-200 text-gray-700 shadow-sm">
+        <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-slate-200 text-slate-700 shadow-sm">
           <User className="h-4 w-4" />
         </div>
       </div>
@@ -58,7 +58,7 @@ export const MessageBubble = React.memo(function MessageBubble({
 
   return (
     <div className="flex justify-start gap-3" data-testid={`message-${message.id}`}>
-      <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-blue-600 text-white shadow-sm">
+      <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-blue-600 via-indigo-600 to-cyan-500 text-white shadow-sm shadow-indigo-600/20">
         {isStreamingOrPending ? (
           <Loader2 className="h-4 w-4 animate-spin" />
         ) : (
