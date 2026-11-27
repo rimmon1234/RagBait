@@ -1,17 +1,16 @@
 """Execution engine for committed routing candidates (Cloud)."""
 
+import asyncio
 import json
 import logging
-import secrets
 from collections.abc import AsyncIterator, Callable
 from contextlib import suppress
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 from typing import Any
 from uuid import UUID, uuid4
 
 from app.core.database import get_pool
 from app.modules.admission.errors import AdmissionRejectionError
-from app.modules.admission.ledger import mark_outcome_unknown_transactional
 from app.modules.admission.schemas import AdmissionRequest, AdmissionReservation, SettlementRequest
 from app.modules.admission.service import (
     mark_dispatched,
@@ -53,6 +52,72 @@ class PreFirstTokenCandidateError(Exception):
         self.retry_after = retry_after
 
 
+async def _verify_shared_execution_free(
+    candidate: RoutingCandidate,
+    resolved_model: str,
+    actual_cost_microcents: int | None,
+    user_id: UUID,
+) -> None:
+    """Ensure that shared pool executions resolve strictly to approved free models without billing."""
+    if not candidate.is_shared_credential:
+        return
+
+    is_free = False
+    if resolved_model.endswith(":free"):
+        is_free = True
+    else:
+        pool = get_pool()
+        async with pool.acquire() as conn:
+            row = await conn.fetchrow(
+                """
+                SELECT free_tier_eligible, input_cost_per_million_cents, output_cost_per_million_cents
+                FROM public.llm_models
+                WHERE id = $1
+                """,
+                resolved_model,
+            )
+            if (
+                row
+                and row["free_tier_eligible"]
+                and (row["input_cost_per_million_cents"] or 0) == 0
+                and (row["output_cost_per_million_cents"] or 0) == 0
+            ):
+                is_free = True
+
+    if not is_free or (actual_cost_microcents or 0) > 0:
+        logger.critical(
+            f"SECURITY INCIDENT: Shared credential {candidate.credential_id} resolved to non-free model '{resolved_model}' or incurred unexpected cost ({actual_cost_microcents} microcents)"
+        )
+        pool = get_pool()
+        async with pool.acquire() as conn:
+            await conn.execute(
+                """
+                UPDATE public.api_key_metadata
+                SET status = 'disabled', updated_at = now()
+                WHERE id = $1
+                """,
+                candidate.credential_id,
+            )
+            await conn.execute(
+                """
+                INSERT INTO public.audit_logs (actor_id, action, target_type, target_id, payload)
+                VALUES ($1, 'shared_pool.unexpected_billable_usage', 'api_key_metadata', $2, $3::jsonb)
+                """,
+                user_id,
+                candidate.credential_id,
+                json.dumps(
+                    {
+                        "resolved_model": resolved_model,
+                        "cost_microcents": actual_cost_microcents,
+                        "provider_id": candidate.provider_id,
+                    }
+                ),
+            )
+        raise RuntimeError(
+            f"Shared inference execution violation: resolved model '{resolved_model}' is not an approved free-tier model or incurred cost"
+        )
+
+
 async def _prepare_cloud_dispatch(
     user_id: UUID,
     candidate: RoutingCandidate,
@@ -86,6 +151,11 @@ async def _prepare_cloud_dispatch(
 
     try:
         reservation = await reserve_generation(admission_request)
+        if reservation.status not in ("reserved", "dispatched"):
+            raise PreDispatchCandidateError(
+                f"Reservation '{reservation.reservation_id}' cannot be dispatched from status '{reservation.status}'.",
+                is_candidate_specific=True,
+            )
         if payload_hash:
             pool = get_pool()
             async with pool.acquire() as conn:
@@ -240,12 +310,23 @@ async def stream_cloud_candidate_events(
                 usage_source=source,
             )
 
+        if candidate.is_shared_credential:
+            await _verify_shared_execution_free(
+                candidate=candidate,
+                resolved_model=resolved_model,
+                actual_cost_microcents=None,
+                user_id=user_id,
+            )
+
+        actual_cost_micro = (
+            0 if (resolved_model.endswith(":free") or candidate.is_shared_credential) else None
+        )
         settlement = await settle_reservation(
             reservation_id=reservation.reservation_id,
             req=SettlementRequest(
                 actual_input_tokens=usage_received.input_tokens,
                 actual_output_tokens=usage_received.output_tokens,
-                actual_cost_microcents=None,
+                actual_cost_microcents=actual_cost_micro,
                 resolved_model_id=resolved_model,
                 upstream_provider=candidate.provider_id,
                 upstream_generation_id=upstream_gen_id,

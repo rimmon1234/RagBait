@@ -241,7 +241,7 @@ class ChatOrchestrationService:
                 llm_messages=prepared.llm_messages,
                 included_citation_keys=included_keys,
                 included_web_keys=included_web_keys,
-                idempotency_key=request.idempotency_key,
+                idempotency_key=gen_request_id,
                 generation_request_id=gen_request_id,
                 routing_mode=request.routing_mode,
                 provider_id=request.provider_id,

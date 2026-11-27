@@ -697,8 +697,8 @@ export function LocalInferenceWorkspace({
             aria-checked={executionMode === "auto"}
             onClick={() => setExecutionMode("auto")}
             className={`flex flex-col items-start rounded-lg p-3 text-left transition-all ${executionMode === "auto"
-                ? "bg-white shadow-xs border border-indigo-200 text-indigo-950 font-semibold"
-                : "text-gray-600 hover:bg-white/60 hover:text-gray-900 border border-transparent"
+              ? "bg-white shadow-xs border border-indigo-200 text-indigo-950 font-semibold"
+              : "text-gray-600 hover:bg-white/60 hover:text-gray-900 border border-transparent"
               }`}
           >
             <div className="flex items-center gap-2">
@@ -716,8 +716,8 @@ export function LocalInferenceWorkspace({
             aria-checked={executionMode === "owner_only"}
             onClick={() => setExecutionMode("owner_only")}
             className={`flex flex-col items-start rounded-lg p-3 text-left transition-all ${executionMode === "owner_only"
-                ? "bg-white shadow-xs border border-purple-200 text-purple-950 font-semibold"
-                : "text-gray-600 hover:bg-white/60 hover:text-gray-900 border border-transparent"
+              ? "bg-white shadow-xs border border-purple-200 text-purple-950 font-semibold"
+              : "text-gray-600 hover:bg-white/60 hover:text-gray-900 border border-transparent"
               }`}
           >
             <div className="flex items-center gap-2">
@@ -735,8 +735,8 @@ export function LocalInferenceWorkspace({
             aria-checked={executionMode === "private"}
             onClick={() => setExecutionMode("private")}
             className={`flex flex-col items-start rounded-lg p-3 text-left transition-all ${executionMode === "private"
-                ? "bg-white shadow-xs border border-emerald-200 text-emerald-950 font-semibold"
-                : "text-gray-600 hover:bg-white/60 hover:text-gray-900 border border-transparent"
+              ? "bg-white shadow-xs border border-emerald-200 text-emerald-950 font-semibold"
+              : "text-gray-600 hover:bg-white/60 hover:text-gray-900 border border-transparent"
               }`}
           >
             <div className="flex items-center gap-2">
@@ -1011,8 +1011,9 @@ Environment="OLLAMA_ORIGINS=http://localhost:3000,http://127.0.0.1:3000"`}
                   className="rounded-lg border border-gray-300 bg-white px-3 py-1.5 text-sm font-medium text-gray-800 shadow-xs focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
                 >
                   <option value="">Auto (Server Selected Default)</option>
-                  <option value="gemini-3.8-flash">Gemini 3.8 Flash (Free-Tier Eligible)</option>
                   <option value="gemini-3.5-flash-lite">Gemini 3.5 Flash-Lite (Free-Tier Eligible)</option>
+                  <option value="gemini-3.1-flash-lite">Gemini 3.1 Flash-Lite (Free-Tier Eligible)</option>
+                  <option value="gemini-3.1-pro-preview">Gemini 3.1 Pro Preview</option>
                   <option value="openai/gpt-oss-120b">OpenAI GPT-OSS 120B (Groq Free Tier)</option>
                   <option value="openrouter/free">OpenRouter Free Tier</option>
                   <option value="qwen/qwen3.8-27b">Qwen 3.8 27B (Groq Preview)</option>
@@ -1024,8 +1025,8 @@ Environment="OLLAMA_ORIGINS=http://localhost:3000,http://127.0.0.1:3000"`}
               <button
                 onClick={() => setShowConfig(!showConfig)}
                 className={`inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-xs font-medium transition-colors ${showConfig
-                    ? "border-blue-300 bg-blue-50 text-blue-700"
-                    : "border-gray-300 bg-white text-gray-700 hover:bg-gray-50"
+                  ? "border-blue-300 bg-blue-50 text-blue-700"
+                  : "border-gray-300 bg-white text-gray-700 hover:bg-gray-50"
                   }`}
               >
                 <Settings2 className="h-3.5 w-3.5" />
@@ -1138,8 +1139,8 @@ Environment="OLLAMA_ORIGINS=http://localhost:3000,http://127.0.0.1:3000"`}
 
                   <div
                     className={`rounded-2xl px-4 py-3 text-sm max-w-[85%] leading-relaxed ${msg.role === "user"
-                        ? "bg-blue-600 text-white rounded-tr-xs"
-                        : "bg-gray-100 text-gray-800 rounded-tl-xs border border-gray-200/80"
+                      ? "bg-blue-600 text-white rounded-tr-xs"
+                      : "bg-gray-100 text-gray-800 rounded-tl-xs border border-gray-200/80"
                       }`}
                   >
                     <div className="whitespace-pre-wrap font-sans">

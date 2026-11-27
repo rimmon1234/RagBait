@@ -9,7 +9,6 @@ from uuid import UUID, uuid4
 from app.core.config import settings
 from app.core.database import get_admin_db_session
 from app.core.errors import (
-    AuthorizationError,
     BadRequestError,
     ConflictError,
     NotFoundError,
@@ -172,12 +171,6 @@ class KBService:
         user: UserProfile, req: UploadIntentRequest
     ) -> UploadIntentResponse:
         """Initiate document upload reservation with signed storage capability."""
-        if user.role not in ("admin", "super_admin"):
-            raise AuthorizationError(
-                "Knowledge Base uploads are restricted to administrators until parser sandboxing is implemented.",
-                code="ADMIN_REQUIRED",
-            )
-
         # 1. Enforce per-user daily upload quota via Redis (100/day for admins)
         daily_limit = (
             100 if user.role in ("admin", "super_admin") else settings.KB_USER_DAILY_UPLOAD_LIMIT
@@ -263,11 +256,6 @@ class KBService:
     ) -> ConfirmUploadResponse:
         """Independently verify uploaded file in storage, validate structure, and enqueue extraction."""
         is_admin = user.role in ("admin", "super_admin")
-        if not is_admin:
-            raise AuthorizationError(
-                "Knowledge Base uploads are restricted to administrators until parser sandboxing is implemented.",
-                code="ADMIN_REQUIRED",
-            )
 
         # 1. Fetch document and verify authorization & state
         async with get_admin_db_session() as conn:
@@ -438,7 +426,16 @@ class KBService:
         if not doc or doc["is_archived"] or doc["upload_status"] == "deleted":
             raise NotFoundError(f"Document '{document_id}' not found.", code="DOCUMENT_NOT_FOUND")
 
-        if not is_admin and doc["uploader_id"] != user.id:
+        if not is_admin and (doc["uploader_id"] is None or doc["uploader_id"] != user.id):
+            await _log_kb_audit(
+                actor_id=user.id,
+                action="kb_document_delete_denied",
+                document_id=document_id,
+                details={
+                    "reason": "UNAUTHORIZED_DELETION",
+                    "uploader_id": str(doc["uploader_id"]) if doc["uploader_id"] else None,
+                },
+            )
             raise BadRequestError(
                 "You are not authorized to delete this document.",
                 code="UNAUTHORIZED_DELETION",

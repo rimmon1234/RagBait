@@ -261,4 +261,27 @@ describe("DocumentRow", () => {
 
     expect(screen.queryByTitle("Delete study document")).not.toBeInTheDocument();
   });
+
+  it("shows delete button for admins even on documents uploaded by other students", () => {
+    const adminUser: UserProfile = {
+      ...otherUser,
+      id: "user-admin",
+      role: "admin",
+    };
+    render(
+      <table>
+        <tbody>
+          <DocumentRow
+            document={sampleDoc}
+            currentUser={adminUser}
+            onPreview={vi.fn()}
+            onDownload={vi.fn()}
+            onDelete={vi.fn()}
+          />
+        </tbody>
+      </table>
+    );
+
+    expect(screen.getByTitle("Delete study document")).toBeInTheDocument();
+  });
 });

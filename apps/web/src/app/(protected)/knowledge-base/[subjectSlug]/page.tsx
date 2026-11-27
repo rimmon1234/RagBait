@@ -17,6 +17,7 @@ export default function SubjectDetailPage() {
   const subjectSlug = routeParams?.subjectSlug;
   const { user: currentUser } = useCurrentUser();
   const isAdmin = currentUser?.role === "admin" || currentUser?.role === "super_admin";
+  const canUpload = Boolean(currentUser && (isAdmin || currentUser.approval_status === "approved"));
 
   const { subjects, loading: subjectsLoading } = useKnowledgeSubjects();
   const currentSubject = subjects.find((s) => s.slug === subjectSlug);
@@ -83,11 +84,11 @@ export default function SubjectDetailPage() {
             <MessageSquare className="h-4 w-4" />
             <span>AI Chat</span>
           </Link>
-          {isAdmin && (
+          {canUpload && (
             <button
               type="button"
               onClick={() => setIsUploadModalOpen(true)}
-              className="inline-flex items-center gap-2 rounded-xl bg-blue-600 px-4 py-2.5 text-sm font-semibold text-white shadow-sm hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2"
+              className="btn-primary-gradient px-4 py-2.5"
             >
               <UploadCloud className="h-4 w-4" />
               <span>Upload Material</span>

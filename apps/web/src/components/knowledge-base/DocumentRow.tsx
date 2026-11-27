@@ -32,7 +32,9 @@ export function DocumentRow({
   const [deleting, setDeleting] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
 
-  const isOwner = currentUser?.id && document.uploader_id === currentUser.id;
+  const isOwner = Boolean(
+    currentUser?.id && document.uploader_id && document.uploader_id === currentUser.id
+  );
   const isAdmin = currentUser?.role === "admin" || currentUser?.role === "super_admin";
   const canDelete = isOwner || isAdmin;
 

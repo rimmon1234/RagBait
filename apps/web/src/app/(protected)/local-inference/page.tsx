@@ -75,8 +75,9 @@ function isHeavyModel(model?: OllamaTagModel): boolean {
 const FALLBACK_CLOUD_MODELS = [
   { id: "openrouter/free", display_name: "OpenRouter Free Router (Dynamic Alias)" },
   { id: "openrouter/meta-llama/llama-3.3-70b-instruct:free", display_name: "Meta Llama 3.3 70B Instruct (OpenRouter Free)" },
-  { id: "gemini-3.8-flash", display_name: "Google Gemini 3.8 Flash" },
   { id: "gemini-3.5-flash-lite", display_name: "Google Gemini 3.5 Flash-Lite" },
+  { id: "gemini-3.1-flash-lite", display_name: "Google Gemini 3.1 Flash-Lite" },
+  { id: "gemini-3.1-pro-preview", display_name: "Google Gemini 3.1 Pro Preview" },
   { id: "openai/gpt-oss-120b", display_name: "OpenAI GPT-OSS 120B (Groq)" },
   { id: "openai/gpt-oss-20b", display_name: "OpenAI GPT-OSS 20B (Groq)" },
   { id: "qwen/qwen3.8-27b", display_name: "Qwen 3.8 27B (Groq Preview)" },

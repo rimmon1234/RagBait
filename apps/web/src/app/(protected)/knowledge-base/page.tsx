@@ -12,6 +12,7 @@ import { DocumentUploadModal } from "@/components/knowledge-base/DocumentUploadM
 export default function KnowledgeBaseCataloguePage() {
   const { user: currentUser } = useCurrentUser();
   const isAdmin = currentUser?.role === "admin" || currentUser?.role === "super_admin";
+  const canUpload = Boolean(currentUser && (isAdmin || currentUser.approval_status === "approved"));
   const { subjects, loading, error, refetch } = useKnowledgeSubjects();
   const [search, setSearch] = useState("");
   const [isUploadModalOpen, setIsUploadModalOpen] = useState(false);
@@ -42,32 +43,36 @@ export default function KnowledgeBaseCataloguePage() {
                     Knowledge Base
                   </h1>
                     <p className="mt-1.5 max-w-2xl text-sm text-slate-600">
-                      Browse curated lecture notes, syllabus materials, and study guides organized by subject.
+                      Browse and upload lecture notes, syllabus materials, and study guides organized by subject.
                       {isAdmin
-                        ? " Administrators can manage subjects and upload materials directly."
-                        : " Curated materials are published by faculty administrators."}
+                        ? " Administrators can also manage subjects and moderate all materials."
+                        : " You can delete materials that you uploaded."}
                     </p>
                   </div>
 
-                  {isAdmin && (
+                  {(isAdmin || canUpload) && (
                       <div className="flex flex-wrap items-center gap-2.5 self-start sm:self-auto">
-                        <Link
-                          href="/admin/knowledge-base/subjects"
-                          className="inline-flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3.5 py-2.5 text-sm font-semibold text-slate-700 shadow-sm transition-colors hover:bg-slate-50 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2"
-                        >
-                          <Plus className="h-4 w-4 text-indigo-600" />
-                          <span>Manage / Add Subjects</span>
-                        </Link>
-                        <button
-                          type="button"
-                          onClick={() => setIsUploadModalOpen(true)}
-                          className="btn-primary-gradient px-4 py-2.5"
-                        >
-                          <UploadCloud className="h-4 w-4" />
-                          <span>Upload Material</span>
-                        </button>
+                        {isAdmin && (
+                          <Link
+                            href="/admin/knowledge-base/subjects"
+                            className="inline-flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3.5 py-2.5 text-sm font-semibold text-slate-700 shadow-sm transition-colors hover:bg-slate-50 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2"
+                          >
+                            <Plus className="h-4 w-4 text-indigo-600" />
+                            <span>Manage / Add Subjects</span>
+                          </Link>
+                        )}
+                        {canUpload && (
+                          <button
+                            type="button"
+                            onClick={() => setIsUploadModalOpen(true)}
+                            className="btn-primary-gradient px-4 py-2.5"
+                          >
+                            <UploadCloud className="h-4 w-4" />
+                            <span>Upload Material</span>
+                          </button>
+                        )}
                       </div>
-        )}
+                  )}
                     </div>
 
       {/* Search Bar */}
@@ -97,7 +102,7 @@ export default function KnowledgeBaseCataloguePage() {
                   </div>
 
                   {/* Direct Upload Modal */}
-                  {isAdmin && (
+                  {canUpload && (
                     <DocumentUploadModal
                       isOpen={isUploadModalOpen}
                       onClose={() => setIsUploadModalOpen(false)}

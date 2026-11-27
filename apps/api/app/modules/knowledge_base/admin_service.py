@@ -926,12 +926,9 @@ class KBAdminService:
                         "Cannot retry extraction on an archived document. Restore the document first.",
                         code="DOCUMENT_ARCHIVED",
                     )
-                if (
-                    doc["uploader_role"] not in ("admin", "super_admin")
-                    or doc["uploader_status"] != "approved"
-                ):
+                if doc["uploader_status"] != "approved":
                     raise BadRequestError(
-                        "Cannot retry parser extraction on a document uploaded by a non-admin account until parser sandboxing is enabled.",
+                        "Cannot retry parser extraction on a document whose uploader is no longer approved.",
                         code="UNTRUSTED_DOCUMENT_PARSER_BLOCKED",
                     )
 

@@ -221,7 +221,7 @@ async def test_kb_auth_unapproved_student_forbidden(client: httpx.AsyncClient):
 
 @pytest.mark.asyncio
 async def test_kb_auth_non_contributor_approved_student_allowed(client: httpx.AsyncClient):
-    """Approved student with ZERO contributed cloud keys CAN read Knowledge Base, but CANNOT upload."""
+    """Approved student with ZERO contributed cloud keys CAN read and upload to Knowledge Base."""
     subject_id, topic_id, _ = await create_test_taxonomy()
     user_id = await create_db_user(role="user", status="approved")
     headers = setup_auth_context(user_id=user_id, role="user", status="approved")
@@ -243,15 +243,15 @@ async def test_kb_auth_non_contributor_approved_student_allowed(client: httpx.As
         json={
             "subject_id": str(subject_id),
             "topic_id": str(topic_id),
-            "title": "Untrusted Upload",
-            "original_filename": "untrusted.pdf",
+            "title": "Student Contribution Upload",
+            "original_filename": "student_notes.pdf",
             "mime_type": "application/pdf",
             "file_size_bytes": 1024,
         },
         headers=headers,
     )
-    assert upload_resp.status_code == 403
-    assert upload_resp.json()["error"]["code"] == "ADMIN_REQUIRED"
+    assert upload_resp.status_code == 201
+    CREATED_STORAGE_PATHS.append(upload_resp.json()["storage_path"])
 
 
 # ------------------------------------------------------------------------------
@@ -805,13 +805,13 @@ async def test_kb_confirm_upload_unauthorized_user_rejected(client: httpx.AsyncC
     )
     doc_id = intent_resp.json()["document_id"]
 
-    # Switch to non-admin User B
+    # Switch to another approved user (User B) -> confirming User A's upload must be rejected
     headers_b = setup_auth_context(user_id=user_b, role="user")
     confirm_resp = await client.post(
         f"/api/v1/kb/documents/{doc_id}/confirm-upload", headers=headers_b
     )
-    assert confirm_resp.status_code == 403
-    assert confirm_resp.json()["error"]["code"] == "ADMIN_REQUIRED"
+    assert confirm_resp.status_code == 400
+    assert confirm_resp.json()["error"]["code"] == "UNAUTHORIZED_CONFIRMATION"
 
 
 # ------------------------------------------------------------------------------
@@ -1138,6 +1138,148 @@ async def test_kb_delete_document_admin_override(client: httpx.AsyncClient):
     admin_headers = setup_auth_context(user_id=admin_id, role="admin")
     resp = await client.delete(f"/api/v1/kb/documents/{doc_id}", headers=admin_headers)
     assert resp.status_code == 204
+
+
+@pytest.mark.asyncio
+async def test_kb_delete_document_non_owner_blocked(client: httpx.AsyncClient):
+    """Normal users cannot delete documents uploaded by others or orphaned documents."""
+    subject_id, topic_id, _ = await create_test_taxonomy()
+    owner_id = await create_db_user(status="approved", role="user")
+    other_user_id = await create_db_user(status="approved", role="user")
+
+    doc_id = uuid4()
+    orphan_doc_id = uuid4()
+    storage_path = f"documents/{doc_id}/source.txt"
+    orphan_path = f"documents/{orphan_doc_id}/source.txt"
+    CREATED_STORAGE_PATHS.extend([storage_path, orphan_path])
+
+    storage_client = await storage.get_storage_client()
+    await storage_client.storage.from_(settings.KB_STORAGE_BUCKET).upload(
+        storage_path, b"Owner protected study material", {"content-type": "text/plain"}
+    )
+    await storage_client.storage.from_(settings.KB_STORAGE_BUCKET).upload(
+        orphan_path, b"Orphaned study material", {"content-type": "text/plain"}
+    )
+
+    pool = get_pool()
+    async with pool.acquire() as conn:
+        await conn.execute(
+            """
+            INSERT INTO public.kb_documents (
+                id, subject_id, topic_id, uploader_id, title, original_filename,
+                storage_path, mime_type, file_size_bytes, upload_status, extraction_status
+            ) VALUES (
+                $1, $2, $3, $4, 'Protected Doc', 'protected.txt',
+                $5, 'text/plain', 30, 'uploaded', 'completed'
+            )
+            """,
+            doc_id,
+            subject_id,
+            topic_id,
+            owner_id,
+            storage_path,
+        )
+        await conn.execute(
+            """
+            INSERT INTO public.kb_documents (
+                id, subject_id, topic_id, uploader_id, title, original_filename,
+                storage_path, mime_type, file_size_bytes, upload_status, extraction_status
+            ) VALUES (
+                $1, $2, $3, NULL, 'Orphan Doc', 'orphan.txt',
+                $4, 'text/plain', 23, 'uploaded', 'completed'
+            )
+            """,
+            orphan_doc_id,
+            subject_id,
+            topic_id,
+            orphan_path,
+        )
+
+    other_headers = setup_auth_context(user_id=other_user_id, role="user")
+
+    # Non-owner student cannot delete another user's document
+    resp = await client.delete(f"/api/v1/kb/documents/{doc_id}", headers=other_headers)
+    assert resp.status_code == 400
+    assert resp.json()["error"]["code"] == "UNAUTHORIZED_DELETION"
+
+    # Non-owner student cannot delete an orphaned (uploader_id IS NULL) document
+    orphan_resp = await client.delete(
+        f"/api/v1/kb/documents/{orphan_doc_id}", headers=other_headers
+    )
+    assert orphan_resp.status_code == 400
+    assert orphan_resp.json()["error"]["code"] == "UNAUTHORIZED_DELETION"
+
+    # Verify both documents and audit log entries remain intact
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow(
+            "SELECT upload_status, is_archived FROM public.kb_documents WHERE id = $1",
+            doc_id,
+        )
+        assert row is not None
+        assert row["upload_status"] == "uploaded"
+        assert row["is_archived"] is False
+
+        denied_count = await conn.fetchval(
+            """
+            SELECT count(*) FROM public.audit_logs
+            WHERE actor_id = $1 AND action = 'kb_document_delete_denied' AND target_id = $2
+            """,
+            other_user_id,
+            doc_id,
+        )
+        assert denied_count == 1
+
+
+@pytest.mark.asyncio
+async def test_kb_normal_user_upload_confirm_and_own_delete_allowed(client: httpx.AsyncClient):
+    """Approved normal users can upload/confirm their own PDF, cannot delete others', and can delete their own."""
+    subject_id, topic_id, _ = await create_test_taxonomy()
+    student_a = await create_db_user(role="user", status="approved")
+    student_b = await create_db_user(role="user", status="approved")
+
+    headers_a = setup_auth_context(user_id=student_a, role="user")
+    pdf_bytes = b"%PDF-1.4\n1 0 obj\n<< /Type /Catalog >>\nendobj\n%%EOF"
+
+    intent_resp = await client.post(
+        "/api/v1/kb/documents/upload-intent",
+        json={
+            "subject_id": str(subject_id),
+            "topic_id": str(topic_id),
+            "title": "Student A Notes",
+            "original_filename": "student_a.pdf",
+            "mime_type": "application/pdf",
+            "file_size_bytes": len(pdf_bytes),
+        },
+        headers=headers_a,
+    )
+    assert intent_resp.status_code == 201
+    doc_id = intent_resp.json()["document_id"]
+    storage_path = intent_resp.json()["storage_path"]
+    CREATED_STORAGE_PATHS.append(storage_path)
+
+    storage_client = await storage.get_storage_client()
+    await storage_client.storage.from_(settings.KB_STORAGE_BUCKET).upload(
+        storage_path, pdf_bytes, {"content-type": "application/pdf"}
+    )
+
+    confirm_resp = await client.post(
+        f"/api/v1/kb/documents/{doc_id}/confirm-upload",
+        json={"file_size_bytes": len(pdf_bytes)},
+        headers=headers_a,
+    )
+    assert confirm_resp.status_code == 200
+    assert confirm_resp.json()["document"]["upload_status"] == "uploaded"
+
+    # Student B cannot delete Student A's uploaded PDF
+    headers_b = setup_auth_context(user_id=student_b, role="user")
+    del_b = await client.delete(f"/api/v1/kb/documents/{doc_id}", headers=headers_b)
+    assert del_b.status_code == 400
+    assert del_b.json()["error"]["code"] == "UNAUTHORIZED_DELETION"
+
+    # Student A can delete their own uploaded PDF
+    headers_a = setup_auth_context(user_id=student_a, role="user")
+    del_a = await client.delete(f"/api/v1/kb/documents/{doc_id}", headers=headers_a)
+    assert del_a.status_code == 204
 
 
 # ------------------------------------------------------------------------------

@@ -730,7 +730,7 @@ async def stream_cloud_sse_events(
             stream_iter, decision = await stream_grounded_cloud_generation(
                 user_id=plan.user_id,
                 llm_messages=prepared.llm_messages,
-                idempotency_key=plan.request.idempotency_key,
+                idempotency_key=plan.generation_request_id,
                 generation_request_id=plan.generation_request_id,
                 routing_mode=plan.request.routing_mode,
                 provider_id=plan.request.provider_id,
@@ -1077,7 +1077,7 @@ async def stream_cloud_sse_events(
                 included_web_keys=included_web_keys,
                 unknown_keys=validation.unknown_keys,
                 malformed_tokens=validation.malformed_tokens,
-                idempotency_key=plan.request.idempotency_key,
+                idempotency_key=plan.generation_request_id,
                 generation_request_id=plan.generation_request_id,
                 routing_mode=plan.request.routing_mode,
                 provider_id=provider_id,

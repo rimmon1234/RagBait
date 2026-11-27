@@ -9,8 +9,9 @@ from datetime import UTC, datetime
 from typing import Any
 from uuid import UUID, uuid4
 
+from app.core.config import settings
 from app.core.database import get_pool
-from app.core.errors import BadRequestError, ConflictError, NotFoundError
+from app.core.errors import AuthorizationError, BadRequestError, ConflictError, NotFoundError
 from app.modules.llm_gateway.interfaces import GatewayStreamEvent
 from app.modules.llm_gateway.schemas import ChatCompletionRequest, ChatCompletionResponse
 from app.modules.llm_gateway.token_estimation import estimate_generation_tokens
@@ -19,7 +20,6 @@ from app.modules.routing.executor import (
     PreDispatchCandidateError,
     PreFirstTokenCandidateError,
     execute_cloud_candidate,
-    execute_community_candidate,
     stream_cloud_candidate_events,
 )
 from app.modules.routing.policy import filter_candidates, rank_candidates
@@ -31,7 +31,7 @@ from app.modules.routing.schemas import (
 logger = logging.getLogger("ragbait.routing.service")
 
 # Server-controlled default models when client omits model selection
-DEFAULT_CLOUD_MODEL = "gemini-3.8-flash"
+DEFAULT_CLOUD_MODEL = "gemini-3.5-flash-lite"
 DEFAULT_COMMUNITY_MODEL = "llama3.2:3b"
 
 

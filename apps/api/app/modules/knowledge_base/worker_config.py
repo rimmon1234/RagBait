@@ -140,8 +140,8 @@ class WorkerSettings(BaseSettings):
         description="Run Stage 4 conditional OCR inside container sandbox for flagged pages",
     )
     ENABLE_VISUAL_UNDERSTANDING: bool = Field(
-        default=True,
-        description="Run Stage 5 trusted vision understanding for rendered diagrams/tables",
+        default=False,
+        description="Run Stage 5 trusted vision understanding for rendered diagrams/tables (opt-in via KB_WORKER_ENABLE_VISUAL_UNDERSTANDING=true)",
     )
     VISUAL_MAX_CONCURRENCY: int = Field(
         default=4,
